@@ -137,7 +137,7 @@ class AudioProbeActivity : AppCompatActivity() {
             it.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
         }
 
-        testConfigs.forEach { (encoding, sampleRate) -\u003e
+        testConfigs.forEach { (encoding, sampleRate) ->
             val encName = encodingName(encoding)
             try {
                 val format = AudioFormat.Builder()
