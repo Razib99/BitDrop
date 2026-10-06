@@ -24,3 +24,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 [target.'cfg(target_os = "android")'.dependencies]
 oboe = "0.6.1"
 
+
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+cpal = "0.15"
+
