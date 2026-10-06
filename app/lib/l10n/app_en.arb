@@ -1,0 +1,253 @@
+{
+  "@@locale": "en",
+
+  "appTitle": "BitDrop",
+  "tagline": "Your lossless library. Your cloud. No compromises.",
+
+  "tierBitPerfect": "Bit-perfect",
+  "tierNativeRate": "Native rate",
+  "tierResampled": "Resampled",
+  "tierUnknown": "Unknown",
+  "dspShort": "DSP",
+  "dspActive": "DSP active",
+  "@dspActive": { "description": "Shown wherever processing alters the samples." },
+
+  "availCloudOnly": "Streams from cloud",
+  "availPartial": "{percent}% cached",
+  "@availPartial": { "placeholders": { "percent": { "type": "int" } } },
+  "availCached": "Cached on device",
+  "availPinned": "Pinned for offline",
+  "availDownloading": "Downloading",
+  "availUnavailable": "Not available offline",
+  "availUnsupported": "Format not supported",
+  "availMissing": "Removed from cloud",
+
+  "actionPlay": "Play",
+  "actionPause": "Pause",
+  "actionShuffle": "Shuffle",
+  "actionNext": "Next track",
+  "actionPrevious": "Previous track",
+  "actionPlayNext": "Play next",
+  "actionAddToQueue": "Add to queue",
+  "actionAddToPlaylist": "Add to playlist",
+  "actionPinOffline": "Pin offline",
+  "actionUnpin": "Unpin",
+  "actionClose": "Close",
+  "actionDismiss": "Dismiss",
+  "actionCancel": "Cancel",
+  "actionDone": "Done",
+  "actionBack": "Back",
+  "actionRetry": "Retry",
+  "actionReconnect": "Reconnect",
+  "actionRescan": "Rescan",
+  "actionRemove": "Remove",
+  "actionSave": "Save",
+  "actionApply": "Apply",
+  "actionImport": "Import",
+  "actionSkip": "Skip",
+  "actionContinue": "Continue",
+  "actionGetStarted": "Get started",
+  "actionGoToAlbum": "Go to album",
+  "actionGoToArtist": "Go to artist",
+  "actionOpenFolder": "Open folder",
+  "actionMore": "More",
+  "actionMoreFor": "More options for {title}",
+  "@actionMoreFor": { "placeholders": { "title": { "type": "String" } } },
+  "actionShuffleRemaining": "Shuffle remaining",
+  "actionSaveAsPlaylist": "Save as playlist",
+  "actionClear": "Clear",
+  "actionUndo": "Undo",
+  "actionSelectAll": "Select all",
+
+  "repeatOff": "Repeat off",
+  "repeatAll": "Repeat all",
+  "repeatOne": "Repeat one",
+  "shuffleOn": "Shuffle on",
+  "shuffleOff": "Shuffle off",
+
+  "seekPosition": "Playback position",
+  "seekCached": "Cached",
+  "seekWillStream": "Will stream",
+  "seekRemainingHint": "Remaining time. Tap for total duration.",
+  "seekTotalHint": "Total duration. Tap for remaining time.",
+  "bufferingLabel": "Buffering",
+  "bufferingSlow": "Slow connection — building a bigger buffer",
+  "bufferingDetail": "Buffering · {buffered} s of {target} s",
+  "@bufferingDetail": {
+    "placeholders": {
+      "buffered": { "type": "String" },
+      "target": { "type": "String" }
+    }
+  },
+  "bufferAhead": "Buffer {seconds} s",
+  "@bufferAhead": { "placeholders": { "seconds": { "type": "String" } } },
+
+  "navHome": "Home",
+  "navLibrary": "Library",
+  "navSearch": "Search",
+  "navSources": "Sources",
+  "navSettings": "Settings",
+  "navQueue": "Queue",
+  "navEq": "EQ",
+  "navOutput": "Output",
+  "navLyrics": "Lyrics",
+
+  "signalPathTitle": "Signal path",
+  "signalSource": "Source",
+  "signalDecoder": "Decoder",
+  "signalDsp": "DSP",
+  "signalVolume": "Volume",
+  "signalOutput": "Output",
+  "signalDevice": "Device",
+  "signalDspOff": "Off — bypassed",
+  "signalDspOffDetail": "True bypass: samples pass through untouched.",
+  "signalDspOnDetail": "Processing changes the samples, so bit-perfect is not possible while this is on.",
+  "signalVolumeDac": "DAC hardware",
+  "signalVolumeSoftware": "Software, 24-bit dithered",
+  "signalVolumeSystem": "System",
+  "signalVolumeDacDetail": "BitDrop applies no digital gain. Use the volume keys.",
+  "signalVolumeSoftwareDetail": "Digital gain is applied before output.",
+  "signalVolumeSystemDetail": "Android controls the level.",
+  "signalOutputBitPerfect": "Bit-perfect USB",
+  "signalOutputNative": "Native rate",
+  "signalOutputResampled": "Android mixer → {rate}",
+  "@signalOutputResampled": { "placeholders": { "rate": { "type": "String" } } },
+  "signalFormatsMatch": "Requested format matched exactly.",
+  "signalFormatsDiffer": "Requested {requested}, got {actual}.",
+  "@signalFormatsDiffer": {
+    "placeholders": {
+      "requested": { "type": "String" },
+      "actual": { "type": "String" }
+    }
+  },
+  "signalNoDevice": "No device",
+  "signalCachedStreaming": "{percent}% cached · streaming {rate}",
+  "@signalCachedStreaming": {
+    "placeholders": {
+      "percent": { "type": "int" },
+      "rate": { "type": "String" }
+    }
+  },
+  "signalCachedOffline": "{percent}% cached · offline",
+  "@signalCachedOffline": { "placeholders": { "percent": { "type": "int" } } },
+  "signalSourceBitrate": "{rate} source bitrate",
+  "@signalSourceBitrate": { "placeholders": { "rate": { "type": "String" } } },
+  "signalDeviceCaps": "Supports {rates} kHz · {depths}-bit · Hardware volume: {volume}",
+  "@signalDeviceCaps": {
+    "placeholders": {
+      "rates": { "type": "String" },
+      "depths": { "type": "String" },
+      "volume": { "type": "String" }
+    }
+  },
+  "requestedVsActual": "Requested vs. actual",
+  "colRequested": "Requested",
+  "colActual": "Actual",
+  "rowCodec": "Codec",
+  "rowBitDepth": "Bit depth",
+  "rowSampleRate": "Sample rate",
+  "rowChannels": "Channels",
+  "rowVolume": "Volume",
+  "turnOffEqForBitPerfect": "Turn off EQ for bit-perfect",
+  "runSafetyCheck": "Run safety check",
+  "openDiagnostics": "Open diagnostics",
+
+  "hwVolumeYes": "Yes",
+  "hwVolumeNo": "No",
+  "hwVolumeUnknown": "Unknown",
+  "hardwareVolume": "Hardware volume",
+  "sampleRatesUnit": "Sample rates (kHz)",
+  "bitDepthsUnit": "Bit depths (bit)",
+  "savedProfile": "Saved profile",
+
+  "unsupportedExplain": "{reason}. BitDrop plays FLAC, ALAC, WAV, AIFF, MP3 and AAC.",
+  "@unsupportedExplain": { "placeholders": { "reason": { "type": "String" } } },
+  "missingExplain": "\"{title}\" was removed from Google Drive.",
+  "@missingExplain": { "placeholders": { "title": { "type": "String" } } },
+  "removedFromDrive": "Removed from Google Drive",
+  "formatNotSupported": "Format not supported",
+
+  "nowPlayingLabel": "Now playing",
+  "artworkFor": "Artwork for {title}",
+  "@artworkFor": { "placeholders": { "title": { "type": "String" } } },
+  "albumArtwork": "Album artwork",
+  "outputIs": "Output: {tier}",
+  "@outputIs": { "placeholders": { "tier": { "type": "String" } } },
+
+  "preamp": "Preamp",
+  "preampAuto": "Auto {db}",
+  "@preampAuto": { "placeholders": { "db": { "type": "String" } } },
+  "clippingSamples": "Clipping · {count} samples",
+  "@clippingSamples": { "placeholders": { "count": { "type": "String" } } },
+  "clippingRisk": "Peak {db} · clipping risk",
+  "@clippingRisk": { "placeholders": { "db": { "type": "String" } } },
+  "noClipping": "No clipping",
+  "eqBypassed": "BYPASSED",
+  "eqGraphHint": "Equaliser response graph. {count} bands. Use the band list below to edit values precisely.",
+  "@eqGraphHint": { "placeholders": { "count": { "type": "int" } } },
+  "eqBandEnabled": "Band {id} enabled",
+  "@eqBandEnabled": { "placeholders": { "id": { "type": "int" } } },
+  "eqRemoveBand": "Remove band {id}",
+  "@eqRemoveBand": { "placeholders": { "id": { "type": "int" } } },
+  "filterTypeIs": "Filter type: {filter}",
+  "@filterTypeIs": { "placeholders": { "filter": { "type": "String" } } },
+  "peakMeters": "Peak meters. Left {left}, right {right}",
+  "@peakMeters": {
+    "placeholders": {
+      "left": { "type": "String" },
+      "right": { "type": "String" }
+    }
+  },
+  "spectrumLabel": "Spectrum analyser",
+
+  "advanced": "Advanced",
+  "less": "Less",
+  "storageLabel": "Storage",
+  "storageFree": "Free {size}",
+  "@storageFree": { "placeholders": { "size": { "type": "String" } } },
+
+  "scenarioSwitcher": "Scenarios",
+  "componentGallery": "Component gallery",
+  "themeSystem": "System",
+  "themeLight": "Light",
+  "themeDark": "Dark",
+  "textScale": "Text size",
+  "devTools": "Developer",
+
+  "sourceUpToDate": "Up to date",
+  "sourceSyncing": "Syncing",
+  "sourceNeedsReconnect": "Needs reconnection",
+  "sourceRateLimited": "Paused · Drive is limiting requests",
+  "sourceOffline": "Offline",
+  "sourceError": "Error",
+  "syncedSummary": "Synced {when} · {tracks} tracks · {folders} folders",
+  "@syncedSummary": {
+    "placeholders": {
+      "when": { "type": "String" },
+      "tracks": { "type": "String" },
+      "folders": { "type": "int" }
+    }
+  },
+  "retryingIn": "{activity} · retrying in {seconds}s",
+  "@retryingIn": {
+    "placeholders": {
+      "activity": { "type": "String" },
+      "seconds": { "type": "int" }
+    }
+  },
+  "changesSinceSync": "Changes since last sync: {changes}",
+  "@changesSinceSync": { "placeholders": { "changes": { "type": "String" } } },
+  "editFolders": "Edit folders",
+
+  "playFolder": "Play folder",
+  "pinFolder": "Pin folder for offline",
+  "folderSummary": "{count} items · {size}",
+  "@folderSummary": {
+    "placeholders": {
+      "count": { "type": "int" },
+      "size": { "type": "String" }
+    }
+  },
+
+  "noOutputDevice": "No output device"
+}
