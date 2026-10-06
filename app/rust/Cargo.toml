@@ -13,5 +13,14 @@ lazy_static = "1.5.1"
 
 symphonia = { version = "0.5.3", features = ["all"] }
 
+
+tokio = { version = "1.38", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+byteorder = "1.5"
+anyhow = "1.0"
+
+rusqlite = { version = "0.31", features = ["bundled"] }
+
 [target.'cfg(target_os = "android")'.dependencies]
 oboe = "0.6.1"
+

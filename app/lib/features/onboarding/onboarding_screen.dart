@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core_api/commands.dart';
+import '../storage/google_drive_service.dart';
 import '../../l10n/l10n.dart';
 import '../../providers/core_providers.dart';
 import '../../routing/routes.dart';
@@ -207,8 +208,31 @@ class _PrivacyPromise extends StatelessWidget {
       );
 }
 
-class _ConnectSource extends StatelessWidget {
+class _ConnectSource extends StatefulWidget {
   const _ConnectSource();
+  @override
+  State<_ConnectSource> createState() => _ConnectSourceState();
+}
+
+class _ConnectSourceState extends State<_ConnectSource> {
+  final _driveService = GoogleDriveService();
+  bool _isSigningIn = false;
+
+  @override
+  void dispose() {
+    _driveService.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleDriveLogin() async {
+    setState(() => _isSigningIn = true);
+    await _driveService.signIn();
+    setState(() => _isSigningIn = false);
+    // Move to next page or show success if they successfully logged in
+    if (_driveService.currentUser != null) {
+      debugPrint("Successfully signed in as ${_driveService.currentUser?.email}");
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -253,17 +277,26 @@ class _ConnectSource extends StatelessWidget {
           ),
         ),
         const SizedBox(height: Spacing.md),
-        const _ProviderRow(
-            icon: Icons.add_to_drive, name: 'Google Drive', ready: true),
-        const _ProviderRow(
-            icon: Icons.cloud_outlined, name: 'S3-compatible', ready: false),
-        const _ProviderRow(
-            icon: Icons.dns_outlined, name: 'WebDAV', ready: false),
-        const _ProviderRow(
-          icon: Icons.library_music_outlined,
-          name: 'OpenSubsonic / Navidrome',
-          ready: false,
-        ),
+        if (_isSigningIn) const Center(child: CircularProgressIndicator()),
+        if (!_isSigningIn) ...[
+          _ProviderRow(
+            icon: Icons.add_to_drive, 
+            name: _driveService.currentUser != null 
+                ? 'Google Drive (${_driveService.currentUser!.email})' 
+                : 'Google Drive', 
+            ready: true,
+            onTap: _handleDriveLogin,
+          ),
+          const _ProviderRow(
+              icon: Icons.cloud_outlined, name: 'S3-compatible', ready: false),
+          const _ProviderRow(
+              icon: Icons.dns_outlined, name: 'WebDAV', ready: false),
+          const _ProviderRow(
+            icon: Icons.library_music_outlined,
+            name: 'OpenSubsonic / Navidrome',
+            ready: false,
+          ),
+        ]
       ],
     );
   }
@@ -404,42 +437,50 @@ class _ProviderRow extends StatelessWidget {
     required this.icon,
     required this.name,
     required this.ready,
+    this.onTap,
   });
 
   final IconData icon;
   final String name;
   final bool ready;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final c = context.c;
     return Opacity(
       opacity: ready ? 1 : 0.5,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: Spacing.xs),
-        padding: const EdgeInsets.all(Spacing.sm),
-        decoration: BoxDecoration(
-          color: c.surface1,
-          borderRadius: Radii.cardR,
-          border: Border.all(color: ready ? c.accent : c.outline),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: ready ? c.accent : c.textTertiary),
-            const SizedBox(width: Spacing.sm),
-            Expanded(child: Text(name, style: context.t.titleSmall)),
-            if (!ready)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: c.surface3,
-                  borderRadius: Radii.badgeR,
-                ),
-                child: Text('Coming soon',
-                    style:
-                        context.t.monoLabel.copyWith(color: c.textSecondary)),
-              ),
-          ],
+      child: InkWell(
+        onTap: ready ? onTap : null,
+        borderRadius: Radii.cardR,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: Spacing.xs),
+          padding: const EdgeInsets.all(Spacing.sm),
+          decoration: BoxDecoration(
+            color: c.surface1,
+            borderRadius: Radii.cardR,
+            border: Border.all(color: ready ? c.accent : c.outline),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: ready ? c.accent : c.textTertiary),
+              const SizedBox(width: Spacing.sm),
+              Expanded(child: Text(name, style: context.t.titleSmall)),
+              if (!ready)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: c.surface3,
+                    borderRadius: Radii.badgeR,
+                  ),
+                  child: Text('Coming soon',
+                      style:
+                          context.t.monoLabel.copyWith(color: c.textSecondary)),
+                )
+              else
+                Icon(Icons.chevron_right, color: c.textTertiary),
+            ],
+          ),
         ),
       ),
     );

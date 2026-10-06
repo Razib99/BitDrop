@@ -22,6 +22,10 @@ dependencies:
   audio_service: ^0.18.17
   audio_session: ^0.1.25
   rxdart: ^0.28.0
+  google_sign_in: ^6.2.2
+  googleapis: ^13.2.0
+  extension_google_sign_in_as_googleapis_auth: ^2.0.13
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

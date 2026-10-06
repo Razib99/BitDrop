@@ -9,9 +9,9 @@
 - [x] **Task 4: DSP Engine (Rust)** - Implement 10-band Graphic EQ Biquad filter chain in the Oboe output callback.
 
 ## Track A: Google Drive Cloud Architecture (Friend)
-- [ ] **Task 1: OAuth2 Authentication** - Set up Google Cloud Platform client credentials and Flutter `google_sign_in` / `extension_google_sign_in_as_googleapis_auth`.
-- [ ] **Task 2: Drive API Integration** - Connect to `googleapis` for `drive.readonly` to list files and folders.
-- [ ] **Task 3: Byte-Range Fetcher** - Implement a Rust trait for making HTTP Range requests to the Drive API download URLs.
-- [ ] **Task 4: LRU Chunk Cache** - Build a sparse file caching layer in Rust to cache 8-16MB chunks of FLAC files locally.
-- [ ] **Task 5: Cloud Metadata Scanner** - Wire Symphonia to probe the Drive files via the byte-range fetcher without downloading the whole file.
-- [ ] **Task 6: SQLite Database** - Persist scanned metadata into a local database for fast UI loading.
+- [x] **Task 1: OAuth2 Authentication** - Set up Google Cloud Platform client credentials and Flutter `google_sign_in` / `extension_google_sign_in_as_googleapis_auth`.
+- [x] **Task 2: Drive API Integration** - Connect to `googleapis` for `drive.readonly` to list files and folders.
+- [x] **Task 3: Byte-Range Fetcher** - Implement a Rust trait for making HTTP Range requests to the Drive API download URLs.
+- [x] **Task 4: LRU Chunk Cache** - Build a sparse file caching layer in Rust to cache 8-16MB chunks of FLAC files locally.
+- [x] **Task 5: Cloud Metadata Scanner** - Wire Symphonia to probe the Drive files via the byte-range fetcher without downloading the whole file.
+- [x] **Task 6: SQLite Database** - Persist scanned metadata into a local database for fast UI loading.
