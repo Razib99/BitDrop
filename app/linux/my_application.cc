@@ -1,5 +1,7 @@
 #include "my_application.h"
 
+#include <cstdlib>
+
 #include <flutter_linux/flutter_linux.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
@@ -48,8 +50,16 @@ static void my_application_activate(GApplication* application) {
   }
 
   // BitDrop reference frame: Samsung Galaxy S10+ (412 x 869 dp).
-  // Resize the window to exercise the tablet/rail layout.
-  gtk_window_set_default_size(window, 412, 869);
+  // BITDROP_W / BITDROP_H override it, so the same binary can be captured in
+  // landscape and at tablet width without a rebuild.
+  int win_w = 412, win_h = 869;
+  const char* env_w = g_getenv("BITDROP_W");
+  const char* env_h = g_getenv("BITDROP_H");
+  if (env_w != nullptr && *env_w != '\0') win_w = atoi(env_w);
+  if (env_h != nullptr && *env_h != '\0') win_h = atoi(env_h);
+  if (win_w < 240) win_w = 412;
+  if (win_h < 240) win_h = 869;
+  gtk_window_set_default_size(window, win_w, win_h);
   gtk_widget_show(GTK_WIDGET(window));
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();

@@ -92,8 +92,14 @@ class _MarqueeState extends State<Marquee> with SingleTickerProviderStateMixin {
       );
     }
 
+    // The line box has to grow with the user's text scale, or the glyphs are
+    // clipped at large sizes.
+    final scaler = MediaQuery.textScalerOf(context);
+    final lineHeight = scaler.scale(widget.style.fontSize ?? 16) *
+        (widget.style.height ?? 1.3);
+
     return SizedBox(
-      height: (widget.style.fontSize ?? 16) * (widget.style.height ?? 1.3),
+      height: lineHeight,
       child: SingleChildScrollView(
         controller: _controller,
         scrollDirection: Axis.horizontal,

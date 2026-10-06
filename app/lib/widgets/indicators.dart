@@ -138,12 +138,16 @@ class TierChip extends StatelessWidget {
         children: [
           Icon(iconFor(tier), size: dense ? 11 : 13, color: color),
           const SizedBox(width: 5),
-          Text(tier.label,
-              style: context.t.monoLabel.copyWith(color: color)),
-          if (detail != null) ...[
-            Text(' · ', style: context.t.monoLabel.copyWith(color: color)),
-            Text(detail!, style: context.t.monoLabel.copyWith(color: color)),
-          ],
+          // Flexible so a long device name ellipsizes instead of overflowing
+          // the chip at large text scales.
+          Flexible(
+            child: Text(
+              detail == null ? tier.label : '${tier.label} · $detail',
+              style: context.t.monoLabel.copyWith(color: color),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
