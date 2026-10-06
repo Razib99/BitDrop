@@ -1,0 +1,11 @@
+[package]
+name = "spike-drive"
+version = "0.1.0"
+edition = "2021"
+description = "Phase 0 Spike 2: Progressive FLAC metadata parser and HTTP range fetcher"
+
+[dependencies]
+tokio = { version = "1.38", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+byteorder = "1.5"
+anyhow = "1.0"

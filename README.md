@@ -98,7 +98,7 @@ Rather than making false promises, BitDrop dynamically detects the operating sys
 - [ ] **Phase 0: Feasibility Spikes** *(In Progress)*
   - [x] Spike 1: Audio Output Capability Probe (`spike-audio/` Kotlin Android App)
   - [ ] Spike 1 Testing: Probe Samsung S10+ & DUNU Titan X over USB
-  - [ ] Spike 2: Google Drive Range Fetch & Progressive Header Parser Prototype
+  - [x] Spike 2: Progressive FLAC Header Parser & Range Fetcher (`spike-drive/` Rust CLI)
   - [ ] Spike 3: Rust FFI Bridge Spikes (UniFFI + flutter_rust_bridge v2)
 - [ ] **Phase 1: Local Engine & Native Shell**
   - [ ] Symphonia decoding pipeline + `rtrb` lock-free PCM ring buffer
