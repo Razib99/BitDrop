@@ -1,0 +1,14 @@
+[
+    {
+        "merged": "com.bitdrop.spike.audio.app-debug-31:/xml_data_extraction_rules.xml.flat",
+        "source": "com.bitdrop.spike.audio.app-main-33:/xml/data_extraction_rules.xml"
+    },
+    {
+        "merged": "com.bitdrop.spike.audio.app-debug-31:/layout_activity_probe.xml.flat",
+        "source": "com.bitdrop.spike.audio.app-main-33:/layout/activity_probe.xml"
+    },
+    {
+        "merged": "com.bitdrop.spike.audio.app-debug-31:/xml_backup_rules.xml.flat",
+        "source": "com.bitdrop.spike.audio.app-main-33:/xml/backup_rules.xml"
+    }
+]

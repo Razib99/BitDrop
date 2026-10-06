@@ -1,0 +1,14 @@
+R_DEF: Internal format may change without notice
+local
+color black
+color white
+id btn_copy
+id btn_probe
+id btn_share
+id toolbar
+id tv_results
+layout activity_probe
+string app_name
+style Theme.SpikeAudio
+xml backup_rules
+xml data_extraction_rules

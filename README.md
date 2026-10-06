@@ -128,6 +128,8 @@ BitDrop/
 ├── README.md                 # Project vision, architecture & roadmap
 ├── SETUP.md                  # Development environment bootstrap guide
 ├── bitdrop_audit.md          # Architectural review, risk register & findings
+├── docs/                     # Project documentation and specifications
+│   └── UI_UX_DESIGN_BRIEF.md # Comprehensive UI/UX prompt for external agents
 ├── spike-audio/              # Phase 0: Android USB audio probe app
 │   ├── app/src/main/java/com/bitdrop/spike/audio/
 │   │   ├── AudioDeviceProbe.kt        # USB device & capability enumeration
