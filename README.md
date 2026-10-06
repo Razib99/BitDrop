@@ -93,31 +93,31 @@ Rather than making false promises, BitDrop dynamically detects the operating sys
 
 ---
 
-## 🗺️ Phased Roadmap
+## 🗺️ Phased Roadmap & Work Split
 
-- [ ] **Phase 0: Feasibility Spikes** *(In Progress)*
-  - [x] Spike 1: Audio Output Capability Probe (`spike-audio/` Kotlin Android App)
-  - [ ] Spike 1 Testing: Probe Samsung S10+ & DUNU Titan X over USB
-  - [x] Spike 2: Progressive FLAC Header Parser & Range Fetcher (`spike-drive/` Rust CLI)
-  - [ ] Spike 3: Rust FFI Bridge Spikes (UniFFI + flutter_rust_bridge v2)
-- [ ] **Phase 1: Local Engine & Native Shell**
-  - [ ] Symphonia decoding pipeline + `rtrb` lock-free PCM ring buffer
-  - [ ] Kotlin Media3 Foreground Service (`MediaLibraryService`)
-  - [ ] Tier C / B / A output routing and volume safety gate
+The project is actively being built in two parallel tracks by a 2-person team:
+
+### Track B: Audio Engine & UI Wiring (Completed ✅)
+- [x] **Spike 3:** Rust FFI Bridge (flutter_rust_bridge v2)
+- [x] **Spike 4:** NDK Oboe Audio Output bridge (AAudio)
+- [x] **Phase 1: Local Engine & Native Shell**
+  - [x] Symphonia decoding pipeline & crossbeam-channel buffering
+  - [x] Android Foreground Service (`audio_service` / MediaSession)
+  - [x] Explicit Tier output routing (Exclusive -> Shared fallback)
+  - [x] Queue Management and seamless gap-aware playback
+- [x] **Phase 4 (Partial): DSP & Polish**
+  - [x] 10-band Graphic EQ (Transposed Direct Form II Biquad filters) processing at real-time in Rust
+
+### Track A: Google Drive Architecture (Next Up 🚀)
 - [ ] **Phase 2: Cloud Streaming Core**
-  - [ ] `StorageProvider` trait (Google Drive client)
-  - [ ] Sparse disk cache & dynamic fetch scheduler
-  - [ ] Mid-stream OAuth token auto-refresh
+  - [ ] GCP OAuth2 authentication flow in Flutter
+  - [ ] `StorageProvider` Google Drive integration (REST API)
+  - [ ] Sparse disk cache (LRU chunking) for progressive `.flac` buffering
+  - [ ] HTTP byte-range requests for metadata scanning without full download
 - [ ] **Phase 3: Library & Metadata Engine**
-  - [ ] Format-aware progressive tag scanner
-  - [ ] SQLite + FTS5 full-text search database
-  - [ ] Flutter cross-platform user interface
-- [ ] **Phase 4: Audiophile DSP & Polish**
-  - [ ] 64-bit float biquad Parametric EQ with AutoEQ profile import
-  - [ ] TPDF dithered digital volume control & gapless playback
-- [ ] **Phase 5: Multi-Cloud & iOS Expansion**
-  - [ ] S3-compatible, WebDAV, and OpenSubsonic backends
-  - [ ] iOS shell (`AVAudioSession` + CoreAudio pull sink)
+  - [ ] Recursive folder scanning and tag extraction (`symphonia` over cloud cache)
+  - [ ] SQLite local metadata persistence
+
 
 ---
 
