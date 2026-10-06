@@ -5,11 +5,15 @@ import '../core_mock/dev_env.dart';
 import '../features/album/album_screen.dart';
 import '../features/artist/artist_screen.dart';
 import '../features/dev/component_gallery.dart';
+import '../features/equalizer/autoeq_sheet.dart';
+import '../features/equalizer/equalizer_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/library/library_screen.dart';
 import '../features/now_playing/now_playing_screen.dart';
+import '../features/output/output_screen.dart';
 import '../features/playlists/playlist_screen.dart';
 import '../features/queue/queue_screen.dart';
+import '../features/safety/safety_check_screen.dart';
 import '../features/search/search_screen.dart';
 import '../features/shell/app_shell.dart';
 import '../features/sources/sources_screen.dart';
@@ -62,6 +66,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/playlist/:id',
         builder: (c, s) =>
             PlaylistScreen(playlistId: s.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: Routes.equalizer,
+        builder: (c, s) => const EqualizerScreen(),
+      ),
+      GoRoute(path: Routes.autoEq, builder: (c, s) => const AutoEqScreen()),
+      GoRoute(path: Routes.output, builder: (c, s) => const OutputScreen()),
+      GoRoute(
+        path: Routes.safety,
+        builder: (c, s) => const SafetyCheckScreen(),
       ),
       GoRoute(path: Routes.gallery, builder: (c, s) => const ComponentGallery()),
     ],

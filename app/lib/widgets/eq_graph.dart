@@ -78,22 +78,23 @@ class _EqGraphState extends State<EqGraph> {
         child: LayoutBuilder(
           builder: (context, box) {
             final size = Size(box.maxWidth, box.maxHeight);
+            // Scale is a superset of pan, so this uses only the scale
+            // recognizer: one finger drags frequency and gain, two fingers
+            // set Q.
             return GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTapDown: widget.interactive
                   ? (d) => _selectNearest(d.localPosition, size)
                   : null,
-              onPanStart: widget.interactive
-                  ? (d) => _selectNearest(d.localPosition, size)
+              onScaleStart: widget.interactive
+                  ? (d) => _onScaleStart(d, size)
                   : null,
-              onPanUpdate: widget.interactive
-                  ? (d) => _dragNode(d.localPosition, size)
+              onScaleUpdate: widget.interactive
+                  ? (d) => _onScaleUpdate(d, size)
                   : null,
-              onPanEnd: widget.interactive
+              onScaleEnd: widget.interactive
                   ? (_) => setState(() => _draggingId = null)
                   : null,
-              onScaleStart: widget.interactive ? _onScaleStart : null,
-              onScaleUpdate: widget.interactive ? _onScaleUpdate : null,
               child: CustomPaint(
                 size: size,
                 painter: _EqPainter(
@@ -191,26 +192,33 @@ class _EqGraphState extends State<EqGraph> {
     ]);
   }
 
-  void _onScaleStart(ScaleStartDetails d) {
+  void _onScaleStart(ScaleStartDetails d, Size size) {
+    _selectNearest(d.localFocalPoint, size);
     final id = _draggingId ?? widget.selectedBandId;
-    if (id == null) return;
     final band =
         widget.bands.where((b) => b.id == id).cast<EqBand?>().firstOrNull;
     if (band != null) _scaleStartQ = band.q;
   }
 
-  /// Pinch sets Q on the selected band.
-  void _onScaleUpdate(ScaleUpdateDetails d) {
+  void _onScaleUpdate(ScaleUpdateDetails d, Size size) {
     final id = _draggingId ?? widget.selectedBandId;
-    if (id == null || d.pointerCount < 2) return;
-    final q = (_scaleStartQ * d.horizontalScale).clamp(0.2, 12.0);
-    widget.onChanged([
-      for (final b in widget.bands)
-        if (b.id == id)
-          b.copyWith(q: double.parse(q.toStringAsFixed(2)))
-        else
-          b,
-    ]);
+    if (id == null) return;
+
+    // Two fingers: pinch horizontally to widen or narrow the band.
+    if (d.pointerCount >= 2) {
+      final q = (_scaleStartQ * d.horizontalScale).clamp(0.2, 12.0);
+      widget.onChanged([
+        for (final b in widget.bands)
+          if (b.id == id)
+            b.copyWith(q: double.parse(q.toStringAsFixed(2)))
+          else
+            b,
+      ]);
+      return;
+    }
+
+    // One finger: drag frequency and gain.
+    _dragNode(d.localFocalPoint, size);
   }
 }
 
@@ -451,65 +459,81 @@ class EqBandRow extends StatelessWidget {
         color: selected ? c.accent.withOpacity(0.08) : null,
         padding: const EdgeInsets.symmetric(
             horizontal: Spacing.md, vertical: Spacing.xs),
-        child: Row(
+        child: Column(
           children: [
-            Semantics(
-              label: 'Band ${band.id} enabled',
-              child: Switch(
-                value: band.enabled,
-                onChanged: (v) => onChanged(band.copyWith(enabled: v)),
-              ),
+            Row(
+              children: [
+                Semantics(
+                  label: 'Band ${band.id} enabled',
+                  child: Switch(
+                    value: band.enabled,
+                    onChanged: (v) => onChanged(band.copyWith(enabled: v)),
+                  ),
+                ),
+                const SizedBox(width: Spacing.xs),
+                _TypeMenu(
+                  value: band.type,
+                  onChanged: (t) => onChanged(band.copyWith(type: t)),
+                ),
+                const SizedBox(width: Spacing.xs),
+                Expanded(
+                  child: Text(
+                    Fmt.biquadLong(band.type),
+                    style: context.t.bodySmall
+                        .copyWith(color: c.textSecondary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  onPressed: onRemove,
+                  icon: const Icon(Icons.remove_circle_outline, size: 18),
+                  tooltip: 'Remove band ${band.id}',
+                  color: c.textSecondary,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
             ),
-            const SizedBox(width: Spacing.xs),
-            SizedBox(
-              width: 58,
-              child: _TypeMenu(
-                value: band.type,
-                onChanged: (t) => onChanged(band.copyWith(type: t)),
-              ),
-            ),
-            const SizedBox(width: Spacing.xs),
-            Expanded(
-              child: _Stepper(
-                label: 'Hz',
-                value: band.frequencyHz,
-                digits: 0,
-                step: band.frequencyHz < 200 ? 5 : 25,
-                min: Biquad.minHz,
-                max: Biquad.maxHz,
-                onChanged: (v) => onChanged(band.copyWith(frequencyHz: v)),
-              ),
-            ),
-            const SizedBox(width: Spacing.xxs),
-            Expanded(
-              child: _Stepper(
-                label: 'dB',
-                value: band.gainDb,
-                digits: 1,
-                step: 0.5,
-                min: -EqGraph.maxDb,
-                max: EqGraph.maxDb,
-                onChanged: (v) => onChanged(band.copyWith(gainDb: v)),
-              ),
-            ),
-            const SizedBox(width: Spacing.xxs),
-            Expanded(
-              child: _Stepper(
-                label: 'Q',
-                value: band.q,
-                digits: 2,
-                step: 0.1,
-                min: 0.2,
-                max: 12,
-                onChanged: (v) => onChanged(band.copyWith(q: v)),
-              ),
-            ),
-            IconButton(
-              onPressed: onRemove,
-              icon: const Icon(Icons.remove_circle_outline, size: 18),
-              tooltip: 'Remove band ${band.id}',
-              color: c.textSecondary,
-              visualDensity: VisualDensity.compact,
+            const SizedBox(height: Spacing.xxs),
+            Row(
+              children: [
+                Expanded(
+                  child: _Stepper(
+                    label: 'Hz',
+                    value: band.frequencyHz,
+                    digits: 0,
+                    step: band.frequencyHz < 200 ? 5 : 25,
+                    min: Biquad.minHz,
+                    max: Biquad.maxHz,
+                    onChanged: (v) =>
+                        onChanged(band.copyWith(frequencyHz: v)),
+                  ),
+                ),
+                const SizedBox(width: Spacing.xs),
+                Expanded(
+                  child: _Stepper(
+                    label: 'dB',
+                    value: band.gainDb,
+                    digits: 1,
+                    step: 0.5,
+                    min: -EqGraph.maxDb,
+                    max: EqGraph.maxDb,
+                    onChanged: (v) => onChanged(band.copyWith(gainDb: v)),
+                  ),
+                ),
+                const SizedBox(width: Spacing.xs),
+                Expanded(
+                  child: _Stepper(
+                    label: 'Q',
+                    value: band.q,
+                    digits: 2,
+                    step: 0.1,
+                    min: 0.2,
+                    max: 12,
+                    onChanged: (v) => onChanged(band.copyWith(q: v)),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -600,18 +624,22 @@ class _Stepper extends StatelessWidget {
               onTap: () => onChanged((value - step).clamp(min, max)),
             ),
             Flexible(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    text,
-                    style: context.t.monoReadout,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(label,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text(text, style: context.t.monoReadout),
+                    const SizedBox(width: 2),
+                    Text(
+                      label,
                       style: context.t.monoLabel
-                          .copyWith(color: c.textTertiary, fontSize: 9)),
-                ],
+                          .copyWith(color: c.textTertiary),
+                    ),
+                  ],
+                ),
               ),
             ),
             _Tick(
