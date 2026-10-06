@@ -6,5 +6,34 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-String playAudioFileAndroid({required String path}) =>
+// These types are ignored because they are not used by any `pub` functions: `Biquad`, `CMD_SENDER`, `DecoderCmd`, `GraphicEq`, `PLAYER_STATE`, `PlayerState`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `default`, `default`, `deref`, `deref`, `initialize`, `initialize`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `new`, `process_stereo`, `process`, `set_peaking`, `update_gains`
+
+Future<void> initEngine() =>
+    RustLib.instance.api.crateApiAudioEngineInitEngine();
+
+void enginePlay({required String path}) =>
+    RustLib.instance.api.crateApiAudioEngineEnginePlay(path: path);
+
+void enginePause() => RustLib.instance.api.crateApiAudioEngineEnginePause();
+
+void engineResume() => RustLib.instance.api.crateApiAudioEngineEngineResume();
+
+void engineSeek({required int positionMs}) =>
+    RustLib.instance.api.crateApiAudioEngineEngineSeek(positionMs: positionMs);
+
+int engineGetPosition() =>
+    RustLib.instance.api.crateApiAudioEngineEngineGetPosition();
+
+bool engineIsPlaying() =>
+    RustLib.instance.api.crateApiAudioEngineEngineIsPlaying();
+
+Future<String> playAudioFileAndroid({required String path}) =>
     RustLib.instance.api.crateApiAudioEnginePlayAudioFileAndroid(path: path);
+
+void engineSetEq({required List<double> gains}) =>
+    RustLib.instance.api.crateApiAudioEngineEngineSetEq(gains: gains);
+
+void engineSetEqEnabled({required bool enabled}) => RustLib.instance.api
+    .crateApiAudioEngineEngineSetEqEnabled(enabled: enabled);

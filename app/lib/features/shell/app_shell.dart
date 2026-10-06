@@ -35,13 +35,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     final l = context.l10n;
 
     // One-shot core events become snackbars.
-    ref.listen(coreEventsProvider, (_, next) {
-      final event = next.valueOrNull;
-      if (event == null || !mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(event.message)));
-    });
+    
 
     final destinations = <_Dest>[
       _Dest(Routes.home, Icons.home_outlined, Icons.home, l.navHome),

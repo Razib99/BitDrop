@@ -8,14 +8,21 @@ import '../core_api/settings.dart';
 import '../core_mock/dev_env.dart';
 import '../core_mock/mock_core.dart';
 import '../core_mock/scenarios.dart';
+import '../core_live/live_core.dart';
+import '../core_live/audio_handler.dart';
+import 'package:audio_service/audio_service.dart' hide PlaybackState;
+
+late final BitDropAudioHandler globalAudioHandler;
+
 
 /// The single core instance. In production this is replaced by the
 /// flutter_rust_bridge handle; nothing above this line changes.
-final coreProvider = Provider<MockBitDropCore>((ref) {
-  final core = MockBitDropCore(scenario: _startScenario);
+final coreProvider = Provider<BitDropCore>((ref) {
+  final core = LiveBitDropCore(globalAudioHandler);
   ref.onDispose(core.dispose);
   return core;
 });
+
 
 /// Debug runs may open in a specific scenario (see `DevEnv`).
 final Scenario _startScenario = DevEnv.scenarioId == null
@@ -34,7 +41,7 @@ final currentScenarioProvider =
 
 /// Switches the whole simulated world.
 void switchScenario(WidgetRef ref, Scenario s) {
-  ref.read(coreProvider).switchScenario(s);
+  // ref.read(coreProvider).switchScenario(s);
   ref.read(currentScenarioProvider.notifier).state = s;
   ref.read(scenarioRevisionProvider.notifier).state++;
 }
@@ -98,13 +105,10 @@ final settingsProvider =
 final settingsValueProvider = Provider<AppSettings>((ref) {
   return ref.watch(settingsProvider).maybeWhen(
         data: (s) => s,
-        orElse: () => ref.watch(coreProvider).settingsValue,
+        orElse: () => const AppSettings(themeMode: AppThemeMode.system, oledBlack: false, textScale: 1.0, reduceMotion: false),
       );
 });
 
-/// One-shot core events (skips, confirmations) surfaced as snackbars.
-final coreEventsProvider =
-    StreamProvider<CoreEvent>((ref) => ref.watch(coreProvider).events);
 
 // ---- Query providers -------------------------------------------------------
 
