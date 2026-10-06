@@ -43,6 +43,26 @@ class LibraryFilters {
       (!showUnsupported ? 1 : 0) +
       (genre != null ? 1 : 0);
 
+  @override
+  bool operator ==(Object other) =>
+      other is LibraryFilters &&
+      _sameSet(other.codecs, codecs) &&
+      other.quality == quality &&
+      other.availability == availability &&
+      other.showUnsupported == showUnsupported &&
+      other.genre == genre &&
+      other.artistId == artistId;
+
+  @override
+  int get hashCode => Object.hash(
+        Object.hashAllUnordered(codecs),
+        quality,
+        availability,
+        showUnsupported,
+        genre,
+        artistId,
+      );
+
   LibraryFilters copyWith({
     Set<Codec>? codecs,
     QualityFilter? quality,
@@ -79,6 +99,20 @@ class AlbumQuery {
   final int offset;
   final int limit;
   final String? artistId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is AlbumQuery &&
+      other.sort == sort &&
+      other.descending == descending &&
+      other.filters == filters &&
+      other.offset == offset &&
+      other.limit == limit &&
+      other.artistId == artistId;
+
+  @override
+  int get hashCode =>
+      Object.hash(sort, descending, filters, offset, limit, artistId);
 
   AlbumQuery copyWith({
     AlbumSort? sort,
@@ -118,6 +152,21 @@ class TrackQuery {
   final String? albumId;
   final String? playlistId;
 
+  @override
+  bool operator ==(Object other) =>
+      other is TrackQuery &&
+      other.sort == sort &&
+      other.descending == descending &&
+      other.filters == filters &&
+      other.offset == offset &&
+      other.limit == limit &&
+      other.albumId == albumId &&
+      other.playlistId == playlistId;
+
+  @override
+  int get hashCode => Object.hash(
+      sort, descending, filters, offset, limit, albumId, playlistId);
+
   TrackQuery copyWith({
     TrackSort? sort,
     bool? descending,
@@ -142,6 +191,16 @@ class ArtistQuery {
   final int offset;
   final int limit;
   final bool descending;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ArtistQuery &&
+      other.offset == offset &&
+      other.limit == limit &&
+      other.descending == descending;
+
+  @override
+  int get hashCode => Object.hash(offset, limit, descending);
 }
 
 @immutable
@@ -159,6 +218,17 @@ class SearchFilters {
   bool get isActive =>
       codecs.isNotEmpty || quality != QualityFilter.any || offlineOnly;
 
+  @override
+  bool operator ==(Object other) =>
+      other is SearchFilters &&
+      _sameSet(other.codecs, codecs) &&
+      other.quality == quality &&
+      other.offlineOnly == offlineOnly;
+
+  @override
+  int get hashCode =>
+      Object.hash(Object.hashAllUnordered(codecs), quality, offlineOnly);
+
   SearchFilters copyWith({
     Set<Codec>? codecs,
     QualityFilter? quality,
@@ -170,3 +240,7 @@ class SearchFilters {
         offlineOnly: offlineOnly ?? this.offlineOnly,
       );
 }
+
+/// Set equality without pulling in a collection dependency.
+bool _sameSet<T>(Set<T> a, Set<T> b) =>
+    a.length == b.length && a.every(b.contains);

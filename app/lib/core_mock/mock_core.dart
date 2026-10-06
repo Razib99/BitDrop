@@ -1104,6 +1104,10 @@ class MockBitDropCore implements BitDropCore {
   }
 
   bool _matchesTrack(Track t, LibraryFilters f) {
+    if (f.artistId != null &&
+        MockCatalog.albumById(t.albumId)?.artistId != f.artistId) {
+      return false;
+    }
     if (!f.showUnsupported && !t.format.codec.isSupported) return false;
     if (!_settings.value.showUnsupportedFiles && !t.format.codec.isSupported) {
       return false;
