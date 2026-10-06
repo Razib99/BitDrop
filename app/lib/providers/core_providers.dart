@@ -5,16 +5,22 @@ import '../core_api/commands.dart';
 import '../core_api/models.dart';
 import '../core_api/queries.dart';
 import '../core_api/settings.dart';
+import '../core_mock/dev_env.dart';
 import '../core_mock/mock_core.dart';
 import '../core_mock/scenarios.dart';
 
 /// The single core instance. In production this is replaced by the
 /// flutter_rust_bridge handle; nothing above this line changes.
 final coreProvider = Provider<MockBitDropCore>((ref) {
-  final core = MockBitDropCore();
+  final core = MockBitDropCore(scenario: _startScenario);
   ref.onDispose(core.dispose);
   return core;
 });
+
+/// Debug runs may open in a specific scenario (see `DevEnv`).
+final Scenario _startScenario = DevEnv.scenarioId == null
+    ? Scenarios.initial
+    : Scenarios.byId(DevEnv.scenarioId!);
 
 /// Convenience alias so feature code can depend on the interface, not the mock.
 final coreApiProvider = Provider<BitDropCore>((ref) => ref.watch(coreProvider));
@@ -23,7 +29,8 @@ final coreApiProvider = Provider<BitDropCore>((ref) => ref.watch(coreProvider));
 /// not need this — they re-emit on their own.
 final scenarioRevisionProvider = StateProvider<int>((ref) => 0);
 
-final currentScenarioProvider = StateProvider<Scenario>((ref) => Scenarios.initial);
+final currentScenarioProvider =
+    StateProvider<Scenario>((ref) => _startScenario);
 
 /// Switches the whole simulated world.
 void switchScenario(WidgetRef ref, Scenario s) {

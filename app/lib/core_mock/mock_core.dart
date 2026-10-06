@@ -8,6 +8,7 @@ import '../core_api/models.dart';
 import '../core_api/queries.dart';
 import '../core_api/settings.dart';
 import 'catalog.dart';
+import 'dev_env.dart';
 import 'scenarios.dart';
 import 'value_stream.dart';
 
@@ -45,7 +46,14 @@ class MockBitDropCore implements BitDropCore {
   late final ValueStream<DiagnosticsSnapshot> _diagnostics;
   final _visualizer = ValueStream<VisualizerFrame>(VisualizerFrame.silent);
   final _deviceProfiles = ValueStream<List<DeviceProfile>>(const []);
-  final _settings = ValueStream<AppSettings>(const AppSettings());
+  final _settings = ValueStream<AppSettings>(AppSettings(
+    themeMode: switch (DevEnv.theme) {
+      'light' => AppThemeMode.light,
+      'dark' => AppThemeMode.dark,
+      _ => AppThemeMode.system,
+    },
+    textScale: DevEnv.textScale ?? 1.0,
+  ));
 
   @override
   Stream<PlaybackState> get playback => _playback.stream;
