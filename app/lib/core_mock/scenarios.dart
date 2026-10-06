@@ -239,8 +239,7 @@ abstract final class Scenarios {
     tier: OutputTier.resampled,
     volumeMode: VolumeMode.system,
     hasSources: false,
-    explanation:
-        'The phone speaker runs at a fixed 48 kHz, 16-bit.',
+    explanation: 'The phone speaker runs at a fixed 48 kHz, 16-bit.',
   );
 
   static const scanning = Scenario(

@@ -243,8 +243,8 @@ class _ConnectSource extends StatelessWidget {
                       'shows a warning screen. Choose Advanced, then '
                       'continue. You may also be asked to sign in again '
                       'about once a week.',
-                      style: context.t.bodySmall
-                          .copyWith(color: c.textSecondary),
+                      style:
+                          context.t.bodySmall.copyWith(color: c.textSecondary),
                     ),
                   ],
                 ),
@@ -388,8 +388,8 @@ class _Point extends StatelessWidget {
                 Text(title, style: context.t.titleSmall),
                 const SizedBox(height: 2),
                 Text(body,
-                    style: context.t.bodySmall
-                        .copyWith(color: c.textSecondary)),
+                    style:
+                        context.t.bodySmall.copyWith(color: c.textSecondary)),
               ],
             ),
           ),
@@ -430,15 +430,14 @@ class _ProviderRow extends StatelessWidget {
             Expanded(child: Text(name, style: context.t.titleSmall)),
             if (!ready)
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: c.surface3,
                   borderRadius: Radii.badgeR,
                 ),
                 child: Text('Coming soon',
-                    style: context.t.monoLabel
-                        .copyWith(color: c.textSecondary)),
+                    style:
+                        context.t.monoLabel.copyWith(color: c.textSecondary)),
               ),
           ],
         ),

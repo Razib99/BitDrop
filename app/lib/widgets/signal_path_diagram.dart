@@ -415,11 +415,13 @@ class _RequestedVsActualState extends State<_RequestedVsActual> {
                       mismatch: p.requested.bitDepth != p.actual.bitDepth),
                   _row(context, 'Sample rate', Fmt.kHz(p.requested.sampleRate),
                       Fmt.kHz(p.actual.sampleRate),
-                      mismatch:
-                          p.requested.sampleRate != p.actual.sampleRate),
+                      mismatch: p.requested.sampleRate != p.actual.sampleRate),
                   _row(context, 'Channels', '${p.requested.channels}',
                       '${p.actual.channels}'),
-                  _row(context, 'Volume', '—',
+                  _row(
+                      context,
+                      'Volume',
+                      '—',
                       switch (p.volume) {
                         VolumeMode.dacHardware => 'DAC',
                         VolumeMode.softwareDithered => 'Software',
@@ -465,12 +467,14 @@ class _RequestedVsActualState extends State<_RequestedVsActual> {
             children: [
               Text(
                 actual,
-                style: mismatch ? style.copyWith(color: c.tierResampled) : style,
+                style:
+                    mismatch ? style.copyWith(color: c.tierResampled) : style,
               ),
               if (mismatch)
                 Padding(
                   padding: const EdgeInsets.only(left: 4),
-                  child: Icon(Icons.swap_vert, size: 13, color: c.tierResampled),
+                  child:
+                      Icon(Icons.swap_vert, size: 13, color: c.tierResampled),
                 )
               else if (!header)
                 Padding(

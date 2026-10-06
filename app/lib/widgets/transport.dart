@@ -21,7 +21,8 @@ class TransportControls extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final playback = ref.watch(playbackProvider).valueOrNull ?? const IdleState();
+    final playback =
+        ref.watch(playbackProvider).valueOrNull ?? const IdleState();
     final queue = ref.watch(queueProvider).valueOrNull ?? QueueState.empty;
     final size = compact ? 56.0 : Sizes.playButton;
 
@@ -31,9 +32,8 @@ class TransportControls extends ConsumerWidget {
         _ToggleIcon(
           icon: Icons.shuffle,
           active: queue.shuffle,
-          tooltip: queue.shuffle
-              ? context.l10n.shuffleOn
-              : context.l10n.shuffleOff,
+          tooltip:
+              queue.shuffle ? context.l10n.shuffleOn : context.l10n.shuffleOff,
           onTap: () => sendCommand(ref, SetShuffle(!queue.shuffle)),
         ),
         IconButton(
@@ -56,9 +56,8 @@ class TransportControls extends ConsumerWidget {
           tooltip: context.l10n.actionNext,
         ),
         _ToggleIcon(
-          icon: queue.repeat == RepeatMode.one
-              ? Icons.repeat_one
-              : Icons.repeat,
+          icon:
+              queue.repeat == RepeatMode.one ? Icons.repeat_one : Icons.repeat,
           active: queue.repeat != RepeatMode.off,
           tooltip: switch (queue.repeat) {
             RepeatMode.off => context.l10n.repeatOff,

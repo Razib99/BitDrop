@@ -153,7 +153,8 @@ class AppSettings {
   AppSettings withKey(String key, Object? value) => switch (key) {
         'themeMode' => copyWith(themeMode: value as AppThemeMode),
         'oledBlack' => copyWith(oledBlack: value as bool),
-        'nowPlayingStyle' => copyWith(nowPlayingStyle: value as NowPlayingStyle),
+        'nowPlayingStyle' =>
+          copyWith(nowPlayingStyle: value as NowPlayingStyle),
         'adaptiveColor' => copyWith(adaptiveColor: value as bool),
         'reduceMotion' => copyWith(reduceMotion: value as bool),
         'textScale' => copyWith(textScale: value as double),
@@ -171,7 +172,8 @@ class AppSettings {
           copyWith(resumeOnHeadsetConnect: value as bool),
         'sleepTimerDefaultMinutes' =>
           copyWith(sleepTimerDefaultMinutes: value as int),
-        'mobileDataPolicy' => copyWith(mobileDataPolicy: value as MobileDataPolicy),
+        'mobileDataPolicy' =>
+          copyWith(mobileDataPolicy: value as MobileDataPolicy),
         'prefetchPolicy' => copyWith(prefetchPolicy: value as PrefetchPolicy),
         'bufferProfile' => copyWith(bufferProfile: value as BufferProfile),
         'showUnsupportedFiles' => copyWith(showUnsupportedFiles: value as bool),

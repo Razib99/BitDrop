@@ -54,8 +54,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             focusNode: _focus,
             autofocus: false,
             textInputAction: TextInputAction.search,
-            onChanged: (v) =>
-                ref.read(searchQueryProvider.notifier).state = v,
+            onChanged: (v) => ref.read(searchQueryProvider.notifier).state = v,
             decoration: InputDecoration(
               hintText: 'Tracks, albums, artists, folders',
               prefixIcon: const Icon(Icons.search),
@@ -126,8 +125,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       ? EmptyState(
                           icon: Icons.search_off,
                           title: 'No results for "$query"',
-                          message:
-                              'Check the spelling, or search by format.',
+                          message: 'Check the spelling, or search by format.',
                           hints: const ['24/192', 'ALAC', 'hi-res', 'flac'],
                         )
                       : _Results(results: r, query: query),
@@ -159,8 +157,7 @@ class _RecentAndTips extends ConsumerWidget {
             ListTile(
               leading: const Icon(Icons.history, size: 20),
               title: Text(r),
-              onTap: () =>
-                  ref.read(searchQueryProvider.notifier).state = r,
+              onTap: () => ref.read(searchQueryProvider.notifier).state = r,
             ),
         ],
         const SectionHeader(
@@ -173,8 +170,15 @@ class _RecentAndTips extends ConsumerWidget {
             spacing: Spacing.xs,
             runSpacing: Spacing.xs,
             children: [
-              for (final hint in ['24/192', '24/96', '16/44.1', 'flac',
-                'alac', 'wav', 'hi-res'])
+              for (final hint in [
+                '24/192',
+                '24/96',
+                '16/44.1',
+                'flac',
+                'alac',
+                'wav',
+                'hi-res'
+              ])
                 BitChip(
                   label: hint,
                   mono: true,

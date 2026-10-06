@@ -26,8 +26,7 @@ class AlbumScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final albumAsync = ref.watch(albumProvider(albumId));
-    final tracksAsync =
-        ref.watch(tracksProvider(TrackQuery(albumId: albumId)));
+    final tracksAsync = ref.watch(tracksProvider(TrackQuery(albumId: albumId)));
 
     return Scaffold(
       body: albumAsync.when(
@@ -50,8 +49,7 @@ class AlbumScreen extends ConsumerWidget {
             slivers: [
               _Header(album: album),
               SliverToBoxAdapter(child: _Summary(album: album)),
-              SliverToBoxAdapter(
-                  child: _Actions(album: album, tracks: tracks)),
+              SliverToBoxAdapter(child: _Actions(album: album, tracks: tracks)),
               if (album.mixedFormats && album.formatVarianceNote != null)
                 SliverToBoxAdapter(
                   child: StatusBanner(
@@ -148,8 +146,7 @@ class _Header extends StatelessWidget {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final tint = hsl
         .withSaturation((hsl.saturation * 0.5).clamp(0.0, 0.6))
-        .withLightness(
-            dark ? (hsl.lightness * 0.3).clamp(0.06, 0.16) : 0.92)
+        .withLightness(dark ? (hsl.lightness * 0.3).clamp(0.06, 0.16) : 0.92)
         .toColor();
 
     return SliverAppBar(
@@ -181,8 +178,7 @@ class _Header extends StatelessWidget {
                 ),
                 const SizedBox(height: Spacing.md),
                 Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: Spacing.md),
+                  padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
                   child: Column(
                     children: [
                       Text(
@@ -268,7 +264,8 @@ class _Actions extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.c;
     final l = context.l10n;
-    final playable = tracks.where((t) => t.isPlayable).map((t) => t.id).toList();
+    final playable =
+        tracks.where((t) => t.isPlayable).map((t) => t.id).toList();
     final pinned = album.availability == Availability.pinned;
     final downloading = album.availability == Availability.downloading;
 
@@ -336,7 +333,9 @@ class _Actions extends ConsumerWidget {
                       ),
                     )
                   : Icon(
-                      pinned ? Icons.push_pin : Icons.download_for_offline_outlined,
+                      pinned
+                          ? Icons.push_pin
+                          : Icons.download_for_offline_outlined,
                       color: pinned ? c.success : null,
                     ),
             ),

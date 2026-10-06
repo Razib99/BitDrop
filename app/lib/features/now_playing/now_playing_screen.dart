@@ -60,7 +60,9 @@ class NowPlayingScreen extends ConsumerWidget {
               Expanded(
                 child: landscape
                     ? _LandscapeLayout(
-                        nowPlaying: np, signal: signal, style: settings.nowPlayingStyle)
+                        nowPlaying: np,
+                        signal: signal,
+                        style: settings.nowPlayingStyle)
                     : switch (settings.nowPlayingStyle) {
                         NowPlayingStyle.classic =>
                           _ClassicLayout(nowPlaying: np, signal: signal),
@@ -361,7 +363,8 @@ class _MinimalLayout extends ConsumerWidget {
               _TechLine(label: 'SOURCE', value: signal!.source.badgeLabel),
               _TechLine(label: 'OUTPUT', value: signal!.actual.longLabel),
               _TechLine(
-                  label: 'BITRATE', value: Fmt.kbps(signal!.source.bitrateKbps)),
+                  label: 'BITRATE',
+                  value: Fmt.kbps(signal!.source.bitrateKbps)),
               _TechLine(
                 label: 'DEVICE',
                 value: signal!.device?.name ?? context.l10n.signalNoDevice,
@@ -418,7 +421,8 @@ class _StudioLayout extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Marquee(text: nowPlaying.track.title, style: context.t.title),
+                    Marquee(
+                        text: nowPlaying.track.title, style: context.t.title),
                     const SizedBox(height: 2),
                     Text(
                       '${nowPlaying.track.artist} · '
@@ -455,8 +459,7 @@ class _StudioLayout extends ConsumerWidget {
               child: Column(
                 children: [
                   _TechLine(
-                      label: 'SOURCE FORMAT',
-                      value: signal!.source.badgeLabel),
+                      label: 'SOURCE FORMAT', value: signal!.source.badgeLabel),
                   _TechLine(
                       label: 'OUTPUT FORMAT', value: signal!.actual.longLabel),
                   _TechLine(
@@ -699,8 +702,8 @@ class _VolumeHint extends ConsumerWidget {
           Flexible(
             child: Text(
               'Volume is controlled by your DAC. Use the volume keys.',
-              style: context.t.bodySmall
-                  .copyWith(color: context.c.textSecondary),
+              style:
+                  context.t.bodySmall.copyWith(color: context.c.textSecondary),
               textAlign: TextAlign.center,
             ),
           ),

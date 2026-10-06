@@ -48,8 +48,8 @@ void sendCommand(WidgetRef ref, PlayerCommand cmd) {
 
 // ---- State streams ---------------------------------------------------------
 
-final playbackProvider = StreamProvider<PlaybackState>(
-    (ref) => ref.watch(coreProvider).playback);
+final playbackProvider =
+    StreamProvider<PlaybackState>((ref) => ref.watch(coreProvider).playback);
 
 /// ~30 Hz. **Only** the seek bar and its time labels may watch this.
 final positionProvider =
@@ -64,8 +64,8 @@ final signalPathProvider =
 final queueProvider =
     StreamProvider<QueueState>((ref) => ref.watch(coreProvider).queue);
 
-final outputDeviceProvider =
-    StreamProvider<OutputDevice?>((ref) => ref.watch(coreProvider).outputDevice);
+final outputDeviceProvider = StreamProvider<OutputDevice?>(
+    (ref) => ref.watch(coreProvider).outputDevice);
 
 final sourcesProvider = StreamProvider<List<SourceAccount>>(
     (ref) => ref.watch(coreProvider).sources);
@@ -156,8 +156,8 @@ final autoEqSearchProvider =
   return ref.watch(coreProvider).searchAutoEq(model);
 });
 
-final recentSearchesProvider =
-    FutureProvider<List<String>>((ref) => ref.watch(coreProvider).recentSearches());
+final recentSearchesProvider = FutureProvider<List<String>>(
+    (ref) => ref.watch(coreProvider).recentSearches());
 
 // ---- Search ---------------------------------------------------------------
 
@@ -177,7 +177,8 @@ final searchResultsProvider = FutureProvider<SearchResults>((ref) async {
 
 enum LibraryTab { albums, artists, tracks, folders, genres, playlists }
 
-final libraryTabProvider = StateProvider<LibraryTab>((ref) => LibraryTab.albums);
+final libraryTabProvider =
+    StateProvider<LibraryTab>((ref) => LibraryTab.albums);
 final libraryFiltersProvider =
     StateProvider<LibraryFilters>((ref) => const LibraryFilters());
 final albumSortProvider = StateProvider<AlbumSort>((ref) => AlbumSort.title);

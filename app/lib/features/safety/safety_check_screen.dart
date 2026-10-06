@@ -126,8 +126,7 @@ class _StepRemove extends StatelessWidget {
               color: c.tierResampled.withOpacity(0.12),
               shape: BoxShape.circle,
             ),
-            child: Icon(Icons.headset_off,
-                size: 56, color: c.tierResampled),
+            child: Icon(Icons.headset_off, size: 56, color: c.tierResampled),
           ),
         ),
         const SizedBox(height: Spacing.xl),
@@ -226,8 +225,8 @@ class _StepVolumeKeys extends StatelessWidget {
                 style: OutlinedButton.styleFrom(
                   backgroundColor:
                       answer == true ? c.success.withOpacity(0.16) : null,
-                  side: BorderSide(
-                      color: answer == true ? c.success : c.outline),
+                  side:
+                      BorderSide(color: answer == true ? c.success : c.outline),
                 ),
                 child: const Text('Yes, it changed'),
               ),
@@ -323,8 +322,8 @@ class _StepResult extends StatelessWidget {
                     const SizedBox(width: Spacing.xs),
                     Text(
                       'Safety attenuation recommended',
-                      style: context.t.titleSmall
-                          .copyWith(color: c.tierResampled),
+                      style:
+                          context.t.titleSmall.copyWith(color: c.tierResampled),
                     ),
                   ],
                 ),
@@ -334,8 +333,7 @@ class _StepResult extends StatelessWidget {
                   'attenuation. That is a change to the samples, so the '
                   'output will show as Native rate, not Bit-perfect. You can '
                   'turn it off in Output & Devices.',
-                  style:
-                      context.t.bodySmall.copyWith(color: c.textSecondary),
+                  style: context.t.bodySmall.copyWith(color: c.textSecondary),
                 ),
               ],
             ),

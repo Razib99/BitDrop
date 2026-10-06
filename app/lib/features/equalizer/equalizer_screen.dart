@@ -258,8 +258,9 @@ class _ParametricControls extends ConsumerWidget {
               ? () {
                   final nextId = (eq.bands.isEmpty
                           ? 0
-                          : eq.bands.map((b) => b.id).reduce(
-                              (a, b) => a > b ? a : b)) +
+                          : eq.bands
+                              .map((b) => b.id)
+                              .reduce((a, b) => a > b ? a : b)) +
                       1;
                   sendCommand(
                     ref,
@@ -285,7 +286,8 @@ class _ParametricControls extends ConsumerWidget {
             onChanged: (nb) => sendCommand(
               ref,
               SetEqBands([
-                for (final x in eq.bands) if (x.id == nb.id) nb else x,
+                for (final x in eq.bands)
+                  if (x.id == nb.id) nb else x,
               ]),
             ),
             onRemove: () => sendCommand(
@@ -305,9 +307,8 @@ class _GraphicControls extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final gains = eq.graphicGains.isEmpty
-        ? List.filled(10, 0.0)
-        : eq.graphicGains;
+    final gains =
+        eq.graphicGains.isEmpty ? List.filled(10, 0.0) : eq.graphicGains;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -353,8 +354,7 @@ class _GraphicControls extends ConsumerWidget {
                         ),
                       ),
                       Text(
-                        Fmt.hzShort(
-                            MockCatalog.graphicBands[i].toDouble()),
+                        Fmt.hzShort(MockCatalog.graphicBands[i].toDouble()),
                         style: context.t.monoLabel
                             .copyWith(color: context.c.textSecondary),
                       ),
@@ -482,8 +482,7 @@ class _DspSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final bitPerfectPossible =
-        signal?.device?.maxTier == OutputTier.bitPerfect;
+    final bitPerfectPossible = signal?.device?.maxTier == OutputTier.bitPerfect;
     const note = 'Applies digital gain, so bit-perfect is not possible '
         'while this is on.';
 

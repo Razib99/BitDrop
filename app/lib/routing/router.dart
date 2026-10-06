@@ -68,8 +68,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/playlist/:id',
-        builder: (c, s) =>
-            PlaylistScreen(playlistId: s.pathParameters['id']!),
+        builder: (c, s) => PlaylistScreen(playlistId: s.pathParameters['id']!),
       ),
       GoRoute(
         path: Routes.equalizer,
@@ -94,7 +93,8 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: Routes.diagnostics,
         builder: (c, s) => const DiagnosticsScreen(),
       ),
-      GoRoute(path: Routes.gallery, builder: (c, s) => const ComponentGallery()),
+      GoRoute(
+          path: Routes.gallery, builder: (c, s) => const ComponentGallery()),
     ],
   );
 });

@@ -38,8 +38,7 @@ class StorageScreen extends ConsumerWidget {
           if (storage.nearlyFull)
             StatusBanner(
               kind: BannerKind.warning,
-              message:
-                  'Only ${Fmt.bytes(storage.freeBytes)} free. Pinning is '
+              message: 'Only ${Fmt.bytes(storage.freeBytes)} free. Pinning is '
                   'paused until there is room.',
               actionLabel: 'Clear cache',
               onAction: () => _confirmClear(context, ref, storage),
@@ -49,11 +48,7 @@ class StorageScreen extends ConsumerWidget {
             child: StorageBar(
               totalBytes: storage.totalBytes,
               segments: [
-                (
-                  label: 'Pinned',
-                  bytes: storage.pinnedBytes,
-                  color: c.success
-                ),
+                (label: 'Pinned', bytes: storage.pinnedBytes, color: c.success),
                 (label: 'Cache', bytes: storage.cacheBytes, color: c.accent),
                 (
                   label: 'Artwork',
@@ -100,7 +95,8 @@ class StorageScreen extends ConsumerWidget {
                     min: 1,
                     max: 64,
                     divisions: 63,
-                    label: '${(storage.cacheLimitBytes / 1000000000).round()} GB',
+                    label:
+                        '${(storage.cacheLimitBytes / 1000000000).round()} GB',
                     onChanged: (v) => sendCommand(
                       ref,
                       SetCacheLimit((v * 1000000000).round()),
@@ -110,8 +106,7 @@ class StorageScreen extends ConsumerWidget {
                 Text(
                   'Using ${Fmt.bytes(storage.cacheBytes)} of '
                   '${Fmt.bytes(storage.cacheLimitBytes)}',
-                  style:
-                      context.t.bodySmall.copyWith(color: c.textSecondary),
+                  style: context.t.bodySmall.copyWith(color: c.textSecondary),
                 ),
                 const SizedBox(height: Spacing.xs),
                 OutlinedButton.icon(
@@ -124,8 +119,7 @@ class StorageScreen extends ConsumerWidget {
           ),
           if (storage.downloads.isNotEmpty) ...[
             const SectionHeader(title: 'Download queue'),
-            for (final d in storage.downloads)
-              _DownloadRow(job: d),
+            for (final d in storage.downloads) _DownloadRow(job: d),
           ],
           SectionHeader(
             title: 'Pinned for offline',
@@ -165,8 +159,8 @@ class StorageScreen extends ConsumerWidget {
           const SectionHeader(title: 'Data rules'),
           SwitchListTile(
             value: storage.wifiOnlyDownloads,
-            onChanged: (v) => sendCommand(
-                ref, SetSetting(key: 'scanWifiOnly', value: v)),
+            onChanged: (v) =>
+                sendCommand(ref, SetSetting(key: 'scanWifiOnly', value: v)),
             secondary: const Icon(Icons.wifi),
             title: const Text('Download only on Wi-Fi'),
             subtitle: const Text(

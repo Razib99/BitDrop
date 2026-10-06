@@ -142,8 +142,8 @@ class DeviceCard extends StatelessWidget {
                   const SizedBox(height: Spacing.xs),
                   Divider(height: Spacing.md, color: c.outline),
                   Text('Saved profile',
-                      style: context.t.monoLabel
-                          .copyWith(color: c.textSecondary)),
+                      style:
+                          context.t.monoLabel.copyWith(color: c.textSecondary)),
                   const SizedBox(height: Spacing.xxs),
                   Text(
                     [
@@ -204,8 +204,7 @@ class _CapRow extends StatelessWidget {
           children: [
             for (final v in chips)
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: c.surface2,
                   borderRadius: Radii.badgeR,
@@ -500,8 +499,8 @@ class OutputSummaryCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       '${device?.typeLabel ?? '—'} · $detail',
-                      style: context.t.bodySmall
-                          .copyWith(color: c.textSecondary),
+                      style:
+                          context.t.bodySmall.copyWith(color: c.textSecondary),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),

@@ -35,8 +35,8 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
       padding: const EdgeInsets.only(bottom: Spacing.xxl),
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(
-              Spacing.md, Spacing.xs, Spacing.xs, 0),
+          padding:
+              const EdgeInsets.fromLTRB(Spacing.md, Spacing.xs, Spacing.xs, 0),
           child: Row(
             children: [
               Text(l.navSources, style: context.t.headline),
@@ -55,8 +55,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
             child: EmptyState(
               icon: Icons.cloud_off,
               title: 'No sources connected',
-              message:
-                  'BitDrop plays from your own cloud storage. Nothing is '
+              message: 'BitDrop plays from your own cloud storage. Nothing is '
                   'uploaded, and there is no BitDrop server in between.',
               actionLabel: 'Connect Google Drive',
               onAction: () => context.push(Routes.onboarding),
@@ -114,8 +113,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     final ok = await ConfirmDialog.show(
       context,
       title: 'Remove ${s.provider}?',
-      message:
-          'Your library index and any cached music for this account are '
+      message: 'Your library index and any cached music for this account are '
           'deleted from this device. Nothing in your Drive changes.',
       confirmLabel: context.l10n.actionRemove,
       destructive: true,
@@ -157,15 +155,14 @@ class _ProviderTile extends StatelessWidget {
         trailing: available
             ? const Icon(Icons.check_circle_outline)
             : Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: c.surface3,
                   borderRadius: Radii.badgeR,
                 ),
                 child: Text('Soon',
-                    style: context.t.monoLabel
-                        .copyWith(color: c.textSecondary)),
+                    style:
+                        context.t.monoLabel.copyWith(color: c.textSecondary)),
               ),
         enabled: available,
       ),

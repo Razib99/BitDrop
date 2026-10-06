@@ -588,8 +588,9 @@ class QueueState {
     repeat: RepeatMode.off,
   );
 
-  QueueItem? get current =>
-      currentIndex >= 0 && currentIndex < items.length ? items[currentIndex] : null;
+  QueueItem? get current => currentIndex >= 0 && currentIndex < items.length
+      ? items[currentIndex]
+      : null;
 
   List<QueueItem> get upNext =>
       currentIndex < 0 ? const [] : items.skip(currentIndex + 1).toList();
@@ -628,7 +629,14 @@ class SourceAccount {
   final int? retryInSeconds;
 }
 
-enum SourceStatus { upToDate, syncing, needsReconnect, rateLimited, offline, error }
+enum SourceStatus {
+  upToDate,
+  syncing,
+  needsReconnect,
+  rateLimited,
+  offline,
+  error
+}
 
 @immutable
 class SyncStatus {

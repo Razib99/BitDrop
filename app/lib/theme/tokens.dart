@@ -180,7 +180,8 @@ class BitDropColors extends ThemeExtension<BitDropColors> {
       success: Color.lerp(success, other.success, t)!,
       cacheFill: Color.lerp(cacheFill, other.cacheFill, t)!,
       shimmerBase: Color.lerp(shimmerBase, other.shimmerBase, t)!,
-      shimmerHighlight: Color.lerp(shimmerHighlight, other.shimmerHighlight, t)!,
+      shimmerHighlight:
+          Color.lerp(shimmerHighlight, other.shimmerHighlight, t)!,
     );
   }
 }
@@ -212,8 +213,10 @@ abstract final class Radii {
   static const BorderRadius badgeR = BorderRadius.all(Radius.circular(badge));
   static const BorderRadius chipR = BorderRadius.all(Radius.circular(chip));
   static const BorderRadius cardR = BorderRadius.all(Radius.circular(card));
-  static const BorderRadius gridArtR = BorderRadius.all(Radius.circular(gridArt));
-  static const BorderRadius heroArtR = BorderRadius.all(Radius.circular(heroArt));
+  static const BorderRadius gridArtR =
+      BorderRadius.all(Radius.circular(gridArt));
+  static const BorderRadius heroArtR =
+      BorderRadius.all(Radius.circular(heroArt));
   static const BorderRadius sheetR =
       BorderRadius.vertical(top: Radius.circular(sheet));
 }

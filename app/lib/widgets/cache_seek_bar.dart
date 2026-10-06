@@ -40,10 +40,10 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
     final playback = ref.watch(playbackProvider).valueOrNull;
     final buffering = playback is BufferingState ? playback : null;
 
-    final duration = widget.durationMs > 0 ? widget.durationMs : info.durationMs;
-    final liveFraction = duration <= 0
-        ? 0.0
-        : (info.positionMs / duration).clamp(0.0, 1.0);
+    final duration =
+        widget.durationMs > 0 ? widget.durationMs : info.durationMs;
+    final liveFraction =
+        duration <= 0 ? 0.0 : (info.positionMs / duration).clamp(0.0, 1.0);
     final fraction = _dragFraction ?? liveFraction;
     final scrubMs = (fraction * duration).round();
     final willStream = !info.isCachedAt(scrubMs);
@@ -84,8 +84,10 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
           excludeSemantics: true,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onHorizontalDragStart: (d) => _updateDrag(d.localPosition.dx, context),
-            onHorizontalDragUpdate: (d) => _updateDrag(d.localPosition.dx, context),
+            onHorizontalDragStart: (d) =>
+                _updateDrag(d.localPosition.dx, context),
+            onHorizontalDragUpdate: (d) =>
+                _updateDrag(d.localPosition.dx, context),
             onHorizontalDragEnd: (_) => _commitDrag(duration),
             onTapDown: (d) => _updateDrag(d.localPosition.dx, context),
             onTapUp: (_) => _commitDrag(duration),
@@ -148,7 +150,8 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
                 onTap: () => setState(() => _showRemaining = !_showRemaining),
                 borderRadius: Radii.badgeR,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                   child: Semantics(
                     button: true,
                     label: _showRemaining
@@ -211,8 +214,7 @@ class _ScrubBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.c;
     return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: Spacing.xs, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: Spacing.xs, vertical: 3),
       decoration: BoxDecoration(
         color: c.surface3,
         borderRadius: Radii.badgeR,
@@ -283,8 +285,7 @@ class _SeekPainter extends CustomPainter {
         final right = (r.endMs / durationMs).clamp(0.0, 1.0) * size.width;
         if (right - left < 0.5) continue;
         canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromLTRB(left, y, right, y + h), radius),
+          RRect.fromRectAndRadius(Rect.fromLTRB(left, y, right, y + h), radius),
           paint,
         );
       }

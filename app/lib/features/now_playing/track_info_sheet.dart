@@ -80,7 +80,8 @@ class TrackInfoSheet extends StatelessWidget {
             if (track.year != null) _InfoRow('Year', '${track.year}'),
             if (track.genre != null) _InfoRow('Genre', track.genre!),
             const SizedBox(height: Spacing.sm),
-            Text('Source', style: context.t.monoLabel.copyWith(color: c.accent)),
+            Text('Source',
+                style: context.t.monoLabel.copyWith(color: c.accent)),
             const SizedBox(height: Spacing.xxs),
             Text(
               track.folderPath,

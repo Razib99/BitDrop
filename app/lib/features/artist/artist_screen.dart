@@ -71,8 +71,7 @@ class ArtistScreen extends ConsumerWidget {
                                       trackIds:
                                           popular.map((t) => t.id).toList(),
                                       shuffle: true,
-                                      contextLabel:
-                                          'Artist · ${artist.name}',
+                                      contextLabel: 'Artist · ${artist.name}',
                                     ),
                                   ),
                           icon: const Icon(Icons.shuffle),
@@ -124,15 +123,13 @@ class ArtistScreen extends ConsumerWidget {
                   ),
                 ),
               ],
-              const SliverToBoxAdapter(
-                  child: SizedBox(height: Spacing.xxl)),
+              const SliverToBoxAdapter(child: SizedBox(height: Spacing.xxl)),
             ],
           );
         },
       ),
     );
   }
-
 }
 
 class _Header extends StatelessWidget {
@@ -205,8 +202,7 @@ class _Header extends StatelessWidget {
                     '${artist.albumCount == 1 ? '' : 's'} · '
                     '${artist.trackCount} tracks'
                     '${artist.genres.isEmpty ? '' : ' · ${artist.genres.join(', ')}'}',
-                    style:
-                        context.t.bodySmall.copyWith(color: c.textSecondary),
+                    style: context.t.bodySmall.copyWith(color: c.textSecondary),
                   ),
                 ],
               ),

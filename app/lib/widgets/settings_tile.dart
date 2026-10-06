@@ -52,7 +52,8 @@ sealed class SettingsTile extends StatelessWidget {
           child: Opacity(
             opacity: enabled ? 1 : 0.6,
             child: Container(
-              constraints: const BoxConstraints(minHeight: Sizes.touchTarget + 8),
+              constraints:
+                  const BoxConstraints(minHeight: Sizes.touchTarget + 8),
               padding: const EdgeInsets.symmetric(
                   horizontal: Spacing.md, vertical: Spacing.xs),
               child: Row(
@@ -72,9 +73,8 @@ sealed class SettingsTile extends StatelessWidget {
                           Text(
                             effectiveSubtitle,
                             style: context.t.bodySmall.copyWith(
-                              color: enabled
-                                  ? c.textSecondary
-                                  : c.tierResampled,
+                              color:
+                                  enabled ? c.textSecondary : c.tierResampled,
                             ),
                           ),
                         ],
@@ -365,9 +365,7 @@ class _SettingsGroupState extends State<SettingsGroup> {
                     child: Row(
                       children: [
                         Icon(
-                          _advancedOpen
-                              ? Icons.expand_less
-                              : Icons.expand_more,
+                          _advancedOpen ? Icons.expand_less : Icons.expand_more,
                           size: 18,
                           color: c.textSecondary,
                         ),

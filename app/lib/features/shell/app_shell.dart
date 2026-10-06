@@ -152,7 +152,8 @@ class _BannerStack extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final banners = ref.watch(bannersProvider).valueOrNull ?? const <AppBanner>[];
+    final banners =
+        ref.watch(bannersProvider).valueOrNull ?? const <AppBanner>[];
     if (banners.isEmpty) return const SizedBox.shrink();
 
     return Padding(

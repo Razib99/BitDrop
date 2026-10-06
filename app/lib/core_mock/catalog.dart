@@ -35,8 +35,7 @@ abstract final class MockCatalog {
       case Codec.opus:
         kbps = 160;
       default:
-        kbps =
-            (sampleRate * bitDepth * 2 * _compression(codec) / 1000).round();
+        kbps = (sampleRate * bitDepth * 2 * _compression(codec) / 1000).round();
     }
     return AudioFormat(
       codec: codec,
@@ -76,7 +75,8 @@ abstract final class MockCatalog {
       genre: 'Ambient',
       format: flac2496,
       dominantColor: 0xFF2E5A7A,
-      folder: 'Drive › Music › Hi-Res › Aurora Fields › Northern Lights Sessions',
+      folder:
+          'Drive › Music › Hi-Res › Aurora Fields › Northern Lights Sessions',
       availability: Availability.cached,
       titles: [
         'First Light Over Kiruna',
@@ -90,7 +90,18 @@ abstract final class MockCatalog {
         'Returning',
         'Last Light',
       ],
-      durations: [412000, 268000, 356000, 301000, 489000, 224000, 537000, 198000, 332000, 445000],
+      durations: [
+        412000,
+        268000,
+        356000,
+        301000,
+        489000,
+        224000,
+        537000,
+        198000,
+        332000,
+        445000
+      ],
     ),
     _AlbumSpec(
       id: 'al-quiet',
@@ -115,7 +126,18 @@ abstract final class MockCatalog {
         'Cooling Tower',
         'Shutdown',
       ],
-      durations: [204000, 238000, 186000, 311000, 265000, 222000, 198000, 254000, 289000, 341000],
+      durations: [
+        204000,
+        238000,
+        186000,
+        311000,
+        265000,
+        222000,
+        198000,
+        254000,
+        289000,
+        341000
+      ],
     ),
     _AlbumSpec(
       id: 'al-glass',
@@ -141,7 +163,18 @@ abstract final class MockCatalog {
         'Harbour Lights (Reprise)',
         'Open Sea',
       ],
-      durations: [347000, 412000, 278000, 522000, 189000, 456000, 298000, 367000, 143000, 601000],
+      durations: [
+        347000,
+        412000,
+        278000,
+        522000,
+        189000,
+        456000,
+        298000,
+        367000,
+        143000,
+        601000
+      ],
     ),
     _AlbumSpec(
       id: 'al-midnight',
@@ -166,7 +199,18 @@ abstract final class MockCatalog {
         'Four in the Morning',
         'First Train',
       ],
-      durations: [398000, 467000, 312000, 589000, 345000, 278000, 423000, 356000, 512000, 289000],
+      durations: [
+        398000,
+        467000,
+        312000,
+        589000,
+        345000,
+        278000,
+        423000,
+        356000,
+        512000,
+        289000
+      ],
     ),
     _AlbumSpec(
       id: 'al-field',
@@ -191,7 +235,18 @@ abstract final class MockCatalog {
         'Dawn Chorus',
         'Silence (Room Tone)',
       ],
-      durations: [723000, 456000, 389000, 512000, 267000, 634000, 345000, 478000, 556000, 189000],
+      durations: [
+        723000,
+        456000,
+        389000,
+        512000,
+        267000,
+        634000,
+        345000,
+        478000,
+        556000,
+        189000
+      ],
     ),
     _AlbumSpec(
       id: 'al-loworbit',
@@ -217,7 +272,18 @@ abstract final class MockCatalog {
         'Docking Sequence',
         'Return Vehicle',
       ],
-      durations: [312000, 289000, 401000, 356000, 467000, 234000, 198000, 523000, 378000, 445000],
+      durations: [
+        312000,
+        289000,
+        401000,
+        356000,
+        467000,
+        234000,
+        198000,
+        523000,
+        378000,
+        445000
+      ],
     ),
     _AlbumSpec(
       id: 'al-paper',
@@ -243,7 +309,18 @@ abstract final class MockCatalog {
         'Recession',
         'Silence After',
       ],
-      durations: [178000, 234000, 267000, 198000, 389000, 312000, 445000, 223000, 156000, 98000],
+      durations: [
+        178000,
+        234000,
+        267000,
+        198000,
+        389000,
+        312000,
+        445000,
+        223000,
+        156000,
+        98000
+      ],
     ),
     _AlbumSpec(
       id: 'al-concrete',
@@ -268,7 +345,18 @@ abstract final class MockCatalog {
         'Fire Escape',
         'Sunrise, Sixth Floor',
       ],
-      durations: [198000, 212000, 187000, 234000, 201000, 178000, 223000, 245000, 189000, 267000],
+      durations: [
+        198000,
+        212000,
+        187000,
+        234000,
+        201000,
+        178000,
+        223000,
+        245000,
+        189000,
+        267000
+      ],
     ),
     _AlbumSpec(
       id: 'al-archive',
@@ -294,7 +382,18 @@ abstract final class MockCatalog {
         'Oxide',
         'End of Tape',
       ],
-      durations: [312000, 289000, 356000, 198000, 145000, 423000, 234000, 378000, 267000, 189000],
+      durations: [
+        312000,
+        289000,
+        356000,
+        198000,
+        145000,
+        423000,
+        234000,
+        378000,
+        267000,
+        189000
+      ],
     ),
     _AlbumSpec(
       id: 'al-sunday',
@@ -320,7 +419,18 @@ abstract final class MockCatalog {
         'Last Call',
         'Walk Home Slow',
       ],
-      durations: [267000, 312000, 423000, 198000, 356000, 289000, 234000, 378000, 445000, 301000],
+      durations: [
+        267000,
+        312000,
+        423000,
+        198000,
+        356000,
+        289000,
+        234000,
+        378000,
+        445000,
+        301000
+      ],
     ),
   ];
 
@@ -351,7 +461,18 @@ abstract final class MockCatalog {
       'Clean Channel',
       'Sign Off',
     ],
-    durations: [234000, 312000, 289000, 198000, 423000, 267000, 356000, 245000, 378000, 189000],
+    durations: [
+      234000,
+      312000,
+      289000,
+      198000,
+      423000,
+      267000,
+      356000,
+      245000,
+      378000,
+      189000
+    ],
     trackArtists: [
       'Aurora Fields',
       'The Lowlands',
@@ -366,18 +487,26 @@ abstract final class MockCatalog {
     ],
     // Alternating CD and Hi-Res — the source of the sample-rate changes.
     perTrackFormats: [
-      0, 1, 0, 1, 0, 1, 0, 1, 0, 1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
     ],
   );
 
   // ---- Built catalogue -----------------------------------------------------
 
-  static final List<Album> albums = _buildAlbums();
-  static final List<Track> tracks = _buildTracks();
+  static List<Album> albums = _buildAlbums();
+  static List<Track> tracks = _buildTracks();
 
-  static Map<String, List<Track>>? _byAlbumCache;
-  static Map<String, List<Track>> get tracksByAlbum =>
-      _byAlbumCache ??= {
+  static Map<String, List<Track>>? _byAlbumCache; static void resetCache() { _byAlbumCache = null; }
+  static Map<String, List<Track>> get tracksByAlbum => _byAlbumCache ??= {
         for (final a in albums)
           a.id: tracks.where((t) => t.albumId == a.id).toList(),
       };
@@ -422,16 +551,16 @@ abstract final class MockCatalog {
               avail == Availability.downloading ? spec.downloadProgress : null,
           hasLyrics: i.isEven && spec.format.codec != Codec.wav,
           favorite: i == 2 && spec.id == 'al-glass',
-          unsupportedReason: avail == Availability.unsupported
-              ? spec.unsupportedReason
-              : null,
+          unsupportedReason:
+              avail == Availability.unsupported ? spec.unsupportedReason : null,
           replayGainDb: -6.4 + (i % 5) * 0.8,
         ));
       }
     }
     // One tombstoned track: removed from Drive since the last sync.
     final ghost = out.firstWhere((t) => t.id == 'al-midnight-t7');
-    out[out.indexOf(ghost)] = ghost.copyWith(availability: Availability.missing);
+    out[out.indexOf(ghost)] =
+        ghost.copyWith(availability: Availability.missing);
     return out;
   }
 
@@ -582,7 +711,16 @@ abstract final class MockCatalog {
     id: 'dev-ka17',
     name: 'FiiO KA17',
     type: DeviceType.usb,
-    supportedRates: [44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000],
+    supportedRates: [
+      44100,
+      48000,
+      88200,
+      96000,
+      176400,
+      192000,
+      352800,
+      384000
+    ],
     bitDepths: [16, 24, 32],
     hardwareVolume: HardwareVolume.yes,
     maxTier: OutputTier.bitPerfect,
@@ -631,13 +769,48 @@ abstract final class MockCatalog {
       target: 'Harman IE 2019',
       suggestedPreampDb: -6.2,
       bands: [
-        EqBand(id: 1, type: BiquadType.lowShelf, frequencyHz: 105, gainDb: 3.4, q: 0.7),
-        EqBand(id: 2, type: BiquadType.peak, frequencyHz: 212, gainDb: -1.8, q: 1.1),
-        EqBand(id: 3, type: BiquadType.peak, frequencyHz: 1150, gainDb: 1.2, q: 1.4),
-        EqBand(id: 4, type: BiquadType.peak, frequencyHz: 2900, gainDb: -2.6, q: 2.2),
-        EqBand(id: 5, type: BiquadType.peak, frequencyHz: 5200, gainDb: 2.1, q: 2.8),
-        EqBand(id: 6, type: BiquadType.peak, frequencyHz: 7800, gainDb: -3.2, q: 3.4),
-        EqBand(id: 7, type: BiquadType.highShelf, frequencyHz: 10500, gainDb: 1.6, q: 0.7),
+        EqBand(
+            id: 1,
+            type: BiquadType.lowShelf,
+            frequencyHz: 105,
+            gainDb: 3.4,
+            q: 0.7),
+        EqBand(
+            id: 2,
+            type: BiquadType.peak,
+            frequencyHz: 212,
+            gainDb: -1.8,
+            q: 1.1),
+        EqBand(
+            id: 3,
+            type: BiquadType.peak,
+            frequencyHz: 1150,
+            gainDb: 1.2,
+            q: 1.4),
+        EqBand(
+            id: 4,
+            type: BiquadType.peak,
+            frequencyHz: 2900,
+            gainDb: -2.6,
+            q: 2.2),
+        EqBand(
+            id: 5,
+            type: BiquadType.peak,
+            frequencyHz: 5200,
+            gainDb: 2.1,
+            q: 2.8),
+        EqBand(
+            id: 6,
+            type: BiquadType.peak,
+            frequencyHz: 7800,
+            gainDb: -3.2,
+            q: 3.4),
+        EqBand(
+            id: 7,
+            type: BiquadType.highShelf,
+            frequencyHz: 10500,
+            gainDb: 1.6,
+            q: 0.7),
       ],
     ),
     AutoEqProfile(
@@ -647,17 +820,53 @@ abstract final class MockCatalog {
       target: 'Diffuse Field',
       suggestedPreampDb: -4.8,
       bands: [
-        EqBand(id: 1, type: BiquadType.lowShelf, frequencyHz: 80, gainDb: 2.2, q: 0.7),
-        EqBand(id: 2, type: BiquadType.peak, frequencyHz: 420, gainDb: -1.1, q: 1.0),
-        EqBand(id: 3, type: BiquadType.peak, frequencyHz: 3400, gainDb: 3.8, q: 1.9),
-        EqBand(id: 4, type: BiquadType.peak, frequencyHz: 6100, gainDb: -2.4, q: 3.1),
-        EqBand(id: 5, type: BiquadType.highShelf, frequencyHz: 12000, gainDb: 0.9, q: 0.7),
+        EqBand(
+            id: 1,
+            type: BiquadType.lowShelf,
+            frequencyHz: 80,
+            gainDb: 2.2,
+            q: 0.7),
+        EqBand(
+            id: 2,
+            type: BiquadType.peak,
+            frequencyHz: 420,
+            gainDb: -1.1,
+            q: 1.0),
+        EqBand(
+            id: 3,
+            type: BiquadType.peak,
+            frequencyHz: 3400,
+            gainDb: 3.8,
+            q: 1.9),
+        EqBand(
+            id: 4,
+            type: BiquadType.peak,
+            frequencyHz: 6100,
+            gainDb: -2.4,
+            q: 3.1),
+        EqBand(
+            id: 5,
+            type: BiquadType.highShelf,
+            frequencyHz: 12000,
+            gainDb: 0.9,
+            q: 0.7),
       ],
     ),
   ];
 
   /// ISO 10-band centre frequencies for the graphic EQ.
-  static const graphicBands = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+  static const graphicBands = [
+    31,
+    62,
+    125,
+    250,
+    500,
+    1000,
+    2000,
+    4000,
+    8000,
+    16000
+  ];
 
   static final List<String> recentSearches = [
     '24/192',
@@ -727,7 +936,9 @@ class _AlbumSpec {
       case Availability.downloading:
         return availability;
       case Availability.cached:
-        return i >= titles.length - 2 ? Availability.cloudOnly : Availability.cached;
+        return i >= titles.length - 2
+            ? Availability.cloudOnly
+            : Availability.cached;
       case Availability.partiallyCached:
         if (i < 3) return Availability.cached;
         if (i < 5) return Availability.partiallyCached;

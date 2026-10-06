@@ -86,12 +86,10 @@ class _EqGraphState extends State<EqGraph> {
               onTapDown: widget.interactive
                   ? (d) => _selectNearest(d.localPosition, size)
                   : null,
-              onScaleStart: widget.interactive
-                  ? (d) => _onScaleStart(d, size)
-                  : null,
-              onScaleUpdate: widget.interactive
-                  ? (d) => _onScaleUpdate(d, size)
-                  : null,
+              onScaleStart:
+                  widget.interactive ? (d) => _onScaleStart(d, size) : null,
+              onScaleUpdate:
+                  widget.interactive ? (d) => _onScaleUpdate(d, size) : null,
               onScaleEnd: widget.interactive
                   ? (_) => setState(() => _draggingId = null)
                   : null,
@@ -111,7 +109,8 @@ class _EqGraphState extends State<EqGraph> {
                   label: c.textSecondary,
                   target: c.dspActive,
                   nodeFill: c.surface1,
-                  textStyle: context.t.monoLabel.copyWith(color: c.textSecondary),
+                  textStyle:
+                      context.t.monoLabel.copyWith(color: c.textSecondary),
                 ),
               ),
             );
@@ -255,7 +254,18 @@ class _EqPainter extends CustomPainter {
   final Color nodeFill;
   final TextStyle textStyle;
 
-  static const _decades = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+  static const _decades = [
+    20,
+    50,
+    100,
+    200,
+    500,
+    1000,
+    2000,
+    5000,
+    10000,
+    20000
+  ];
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -283,8 +293,8 @@ class _EqPainter extends CustomPainter {
     }
     for (final hz in [100, 1000, 10000]) {
       final x = hzToX(hz.toDouble());
-      _text(canvas, Fmt.hzShort(hz.toDouble()),
-          Offset(x + 3, size.height - 16));
+      _text(
+          canvas, Fmt.hzShort(hz.toDouble()), Offset(x + 3, size.height - 16));
     }
 
     // 0 dB reference, drawn stronger than the rest.
@@ -479,8 +489,7 @@ class EqBandRow extends StatelessWidget {
                 Expanded(
                   child: Text(
                     Fmt.biquadLong(band.type),
-                    style: context.t.bodySmall
-                        .copyWith(color: c.textSecondary),
+                    style: context.t.bodySmall.copyWith(color: c.textSecondary),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -505,8 +514,7 @@ class EqBandRow extends StatelessWidget {
                     step: band.frequencyHz < 200 ? 5 : 25,
                     min: Biquad.minHz,
                     max: Biquad.maxHz,
-                    onChanged: (v) =>
-                        onChanged(band.copyWith(frequencyHz: v)),
+                    onChanged: (v) => onChanged(band.copyWith(frequencyHz: v)),
                   ),
                 ),
                 const SizedBox(width: Spacing.xs),
@@ -598,9 +606,8 @@ class _Stepper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.c;
-    final text = digits == 0
-        ? value.round().toString()
-        : value.toStringAsFixed(digits);
+    final text =
+        digits == 0 ? value.round().toString() : value.toStringAsFixed(digits);
 
     return Semantics(
       slider: true,
@@ -635,8 +642,8 @@ class _Stepper extends StatelessWidget {
                     const SizedBox(width: 2),
                     Text(
                       label,
-                      style: context.t.monoLabel
-                          .copyWith(color: c.textTertiary),
+                      style:
+                          context.t.monoLabel.copyWith(color: c.textTertiary),
                     ),
                   ],
                 ),

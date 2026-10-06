@@ -34,8 +34,7 @@ class QueueScreen extends ConsumerWidget {
             icon: const Icon(Icons.more_vert),
             onSelected: (v) => _handle(context, ref, v),
             itemBuilder: (_) => [
-              PopupMenuItem(
-                  value: 'save', child: Text(l.actionSaveAsPlaylist)),
+              PopupMenuItem(value: 'save', child: Text(l.actionSaveAsPlaylist)),
               PopupMenuItem(
                   value: 'shuffle', child: Text(l.actionShuffleRemaining)),
               PopupMenuItem(value: 'clear', child: Text(l.actionClear)),
@@ -97,8 +96,7 @@ class QueueScreen extends ConsumerWidget {
                 ),
                 if (queue.history.isNotEmpty)
                   SliverToBoxAdapter(child: _History(items: queue.history)),
-                const SliverToBoxAdapter(
-                    child: SizedBox(height: Spacing.xxl)),
+                const SliverToBoxAdapter(child: SizedBox(height: Spacing.xxl)),
               ],
             ),
     );
@@ -218,8 +216,7 @@ class _QueueRow extends ConsumerWidget {
                 Spacing.md, Spacing.xxs, Spacing.md, Spacing.xxs),
             child: Row(
               children: [
-                Icon(Icons.linear_scale,
-                    size: 13, color: c.tierResampled),
+                Icon(Icons.linear_scale, size: 13, color: c.tierResampled),
                 const SizedBox(width: Spacing.xxs),
                 Text(
                   'Short gap · ${item.gapReason}',
@@ -314,8 +311,8 @@ class _QueueRow extends ConsumerWidget {
                   const SizedBox(width: Spacing.xs),
                   Text(
                     Fmt.duration(track.durationMs),
-                    style: context.t.monoReadout
-                        .copyWith(color: c.textSecondary),
+                    style:
+                        context.t.monoReadout.copyWith(color: c.textSecondary),
                   ),
                 ],
               ),
@@ -338,8 +335,8 @@ class _Readiness extends StatelessWidget {
     final c = context.c;
     final track = item.track;
 
-    final (IconData icon, String label, Color color) = switch (
-        track.availability) {
+    final (IconData icon, String label, Color color) =
+        switch (track.availability) {
       Availability.unsupported => (
           Icons.block,
           track.unsupportedReason ?? 'Will be skipped',
@@ -413,8 +410,8 @@ class _HistoryState extends State<_History> {
                 Text('History', style: context.t.titleSmall),
                 const SizedBox(width: Spacing.xs),
                 Text('${widget.items.length}',
-                    style: context.t.monoLabel
-                        .copyWith(color: c.textSecondary)),
+                    style:
+                        context.t.monoLabel.copyWith(color: c.textSecondary)),
               ],
             ),
           ),

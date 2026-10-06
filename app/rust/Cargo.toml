@@ -1,0 +1,17 @@
+[package]
+name = "rust_lib_bitdrop"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+crossbeam-channel = "0.5.17"
+flutter_rust_bridge = "=2.0.0"
+lazy_static = "1.5.1"
+
+symphonia = { version = "0.5.3", features = ["all"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+oboe = "0.6.1"

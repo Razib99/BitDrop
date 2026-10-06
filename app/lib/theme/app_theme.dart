@@ -8,8 +8,8 @@ import 'typography.dart';
 abstract final class AppTheme {
   static ThemeData light() => _build(BitDropColors.light, Brightness.light);
 
-  static ThemeData dark({bool oled = false}) =>
-      _build(oled ? BitDropColors.dark.oled : BitDropColors.dark, Brightness.dark);
+  static ThemeData dark({bool oled = false}) => _build(
+      oled ? BitDropColors.dark.oled : BitDropColors.dark, Brightness.dark);
 
   static ThemeData _build(BitDropColors c, Brightness brightness) {
     const text = BitDropText.scale;
@@ -140,13 +140,15 @@ abstract final class AppTheme {
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected) ? c.onAccent : c.textSecondary,
+          (s) =>
+              s.contains(WidgetState.selected) ? c.onAccent : c.textSecondary,
         ),
         trackColor: WidgetStateProperty.resolveWith(
           (s) => s.contains(WidgetState.selected) ? c.accent : c.surface3,
         ),
         trackOutlineColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected) ? Colors.transparent : c.outline,
+          (s) =>
+              s.contains(WidgetState.selected) ? Colors.transparent : c.outline,
         ),
       ),
       sliderTheme: SliderThemeData(
@@ -199,7 +201,8 @@ abstract final class AppTheme {
         ),
         iconTheme: WidgetStateProperty.resolveWith(
           (s) => IconThemeData(
-            color: s.contains(WidgetState.selected) ? c.accent : c.textSecondary,
+            color:
+                s.contains(WidgetState.selected) ? c.accent : c.textSecondary,
           ),
         ),
       ),

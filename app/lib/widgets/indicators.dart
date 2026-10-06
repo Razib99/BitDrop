@@ -40,7 +40,8 @@ class FormatBadge extends StatelessWidget {
     final lossless = format.codec.isLossless;
     final hiRes = format.isHiRes;
 
-    final (Color fg, Color bg, Color border) = switch ((supported, lossless, hiRes)) {
+    final (Color fg, Color bg, Color border) =
+        switch ((supported, lossless, hiRes)) {
       (false, _, _) => (c.textTertiary, Colors.transparent, c.outline),
       (true, true, true) => (c.onAccent, c.accent, c.accent),
       (true, true, false) => (c.textSecondary, Colors.transparent, c.outline),
@@ -459,8 +460,7 @@ class BufferingIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.c;
     final message = messageFor(context);
-    final detail =
-        '${(state.bufferedMs / 1000).toStringAsFixed(1)} s of '
+    final detail = '${(state.bufferedMs / 1000).toStringAsFixed(1)} s of '
         '${(state.targetMs / 1000).toStringAsFixed(0)} s';
     return Semantics(
       liveRegion: true,

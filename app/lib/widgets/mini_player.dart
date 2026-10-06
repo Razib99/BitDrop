@@ -29,7 +29,8 @@ class MiniPlayer extends ConsumerWidget {
     if (np == null) return const SizedBox.shrink();
 
     final c = context.c;
-    final playback = ref.watch(playbackProvider).valueOrNull ?? const IdleState();
+    final playback =
+        ref.watch(playbackProvider).valueOrNull ?? const IdleState();
     final signal = ref.watch(signalPathProvider).valueOrNull;
     final isPlaying = playback is PlayingState;
 
@@ -101,8 +102,7 @@ class MiniPlayer extends ConsumerWidget {
                                 children: [
                                   if (signal != null)
                                     Padding(
-                                      padding:
-                                          const EdgeInsets.only(right: 5),
+                                      padding: const EdgeInsets.only(right: 5),
                                       child: _TierDot(tier: signal.tier),
                                     ),
                                   Expanded(
@@ -143,8 +143,8 @@ class MiniPlayer extends ConsumerWidget {
                             sendCommand(ref,
                                 isPlaying ? const Pause() : const Resume());
                           },
-                          icon: Icon(
-                              isPlaying ? Icons.pause : Icons.play_arrow),
+                          icon:
+                              Icon(isPlaying ? Icons.pause : Icons.play_arrow),
                           iconSize: 28,
                           tooltip: isPlaying
                               ? context.l10n.actionPause

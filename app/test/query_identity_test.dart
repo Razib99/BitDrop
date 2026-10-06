@@ -35,7 +35,8 @@ void main() {
 
   test('TrackQuery, ArtistQuery and SearchFilters compare by value', () {
     expect(const TrackQuery(albumId: 'x'), const TrackQuery(albumId: 'x'));
-    expect(const TrackQuery(albumId: 'x'), isNot(const TrackQuery(albumId: 'y')));
+    expect(
+        const TrackQuery(albumId: 'x'), isNot(const TrackQuery(albumId: 'y')));
     expect(const ArtistQuery(limit: 10), const ArtistQuery(limit: 10));
     expect(
       const SearchFilters(quality: QualityFilter.hiRes),

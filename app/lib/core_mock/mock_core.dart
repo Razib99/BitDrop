@@ -141,7 +141,8 @@ class MockBitDropCore implements BitDropCore {
       _eq = ValueStream<EqState>(_eqForScenario(s));
       _storage = ValueStream<StorageState>(_storageForScenario(s));
       _signalPath = ValueStream<SignalPath>(
-        _computeSignalPath(track: _initialTrack(s), device: device, eq: _eqForScenario(s)),
+        _computeSignalPath(
+            track: _initialTrack(s), device: device, eq: _eqForScenario(s)),
       );
       _diagnostics = ValueStream<DiagnosticsSnapshot>(_computeDiagnostics());
     } else {
@@ -231,7 +232,8 @@ class MockBitDropCore implements BitDropCore {
     _nowPlaying.emit(NowPlaying(
       track: items.first,
       album: MockCatalog.albumById(items.first.albumId),
-      contextLabel: s.offline ? 'Available offline' : 'Album · ${items.first.albumTitle}',
+      contextLabel:
+          s.offline ? 'Available offline' : 'Album · ${items.first.albumTitle}',
       contextId: items.first.albumId,
     ));
     _playback.emit(s.weakNetwork
@@ -252,7 +254,8 @@ class MockBitDropCore implements BitDropCore {
       if (i > 0) {
         final prev = tracks[i - 1];
         if (prev.format.sampleRate != t.format.sampleRate) {
-          gap = '${_khz(prev.format.sampleRate)} → ${_khz(t.format.sampleRate)} kHz';
+          gap =
+              '${_khz(prev.format.sampleRate)} → ${_khz(t.format.sampleRate)} kHz';
         } else if (t.availability == Availability.cached ||
             t.availability == Availability.pinned ||
             t.cachedPercent > 20) {
@@ -317,11 +320,17 @@ class MockBitDropCore implements BitDropCore {
   }
 
   static const _defaultBands = [
-    EqBand(id: 1, type: BiquadType.lowShelf, frequencyHz: 100, gainDb: 0, q: 0.7),
+    EqBand(
+        id: 1, type: BiquadType.lowShelf, frequencyHz: 100, gainDb: 0, q: 0.7),
     EqBand(id: 2, type: BiquadType.peak, frequencyHz: 400, gainDb: 0, q: 1.0),
     EqBand(id: 3, type: BiquadType.peak, frequencyHz: 1200, gainDb: 0, q: 1.2),
     EqBand(id: 4, type: BiquadType.peak, frequencyHz: 3500, gainDb: 0, q: 1.6),
-    EqBand(id: 5, type: BiquadType.highShelf, frequencyHz: 9000, gainDb: 0, q: 0.7),
+    EqBand(
+        id: 5,
+        type: BiquadType.highShelf,
+        frequencyHz: 9000,
+        gainDb: 0,
+        q: 0.7),
   ];
 
   StorageState _storageForScenario(Scenario s) {
@@ -422,7 +431,8 @@ class MockBitDropCore implements BitDropCore {
           SyncPhase.paused => 'Paused',
           _ => null,
         },
-        activityProgress: s.syncTotal > 0 ? s.syncProcessed / s.syncTotal : null,
+        activityProgress:
+            s.syncTotal > 0 ? s.syncProcessed / s.syncTotal : null,
         changesSinceLastSync: '+24 new, 3 changed, 1 removed',
         retryInSeconds: s.retryInSeconds,
       ),
@@ -435,7 +445,8 @@ class MockBitDropCore implements BitDropCore {
       out.add(const AppBanner(
         id: 'b-reconnect',
         kind: BannerKind.warning,
-        message: 'Google Drive needs you to reconnect. Cached music keeps playing.',
+        message:
+            'Google Drive needs you to reconnect. Cached music keeps playing.',
         actionLabel: 'Reconnect',
         actionCommandId: 'reconnect',
         dismissible: false,
@@ -445,8 +456,7 @@ class MockBitDropCore implements BitDropCore {
       out.add(AppBanner(
         id: 'b-ratelimit',
         kind: BannerKind.info,
-        message:
-            'Google Drive is limiting requests. Scanning will resume in '
+        message: 'Google Drive is limiting requests. Scanning will resume in '
             '${s.retryInSeconds ?? 30} s. Playback is not affected.',
         dismissible: false,
       ));
@@ -649,17 +659,19 @@ class MockBitDropCore implements BitDropCore {
     final growth = _scenario.weakNetwork ? 300 : 1400;
     if (idx >= 0) {
       final r = ranges[idx];
-      ranges[idx] = CachedRange(r.startMs, math.min(durationMs, r.endMs + growth));
+      ranges[idx] =
+          CachedRange(r.startMs, math.min(durationMs, r.endMs + growth));
     } else {
-      ranges.add(CachedRange(_positionMs, math.min(durationMs, _positionMs + growth)));
+      ranges.add(
+          CachedRange(_positionMs, math.min(durationMs, _positionMs + growth)));
     }
     ranges.sort((a, b) => a.startMs.compareTo(b.startMs));
     // Merge any ranges that now touch.
     final merged = <CachedRange>[];
     for (final r in ranges) {
       if (merged.isNotEmpty && r.startMs <= merged.last.endMs) {
-        merged[merged.length - 1] =
-            CachedRange(merged.last.startMs, math.max(merged.last.endMs, r.endMs));
+        merged[merged.length - 1] = CachedRange(
+            merged.last.startMs, math.max(merged.last.endMs, r.endMs));
       } else {
         merged.add(r);
       }
@@ -708,7 +720,8 @@ class MockBitDropCore implements BitDropCore {
         total: sync.total,
         wifiOnly: sync.wifiOnly,
       ));
-    } else if (sync.phase == SyncPhase.paused && (sync.retryInSeconds ?? 0) > 0) {
+    } else if (sync.phase == SyncPhase.paused &&
+        (sync.retryInSeconds ?? 0) > 0) {
       final next = (sync.retryInSeconds ?? 1) - 1;
       _syncStatus.emit(SyncStatus(
         phase: next <= 0 ? SyncPhase.tags : SyncPhase.paused,
@@ -758,7 +771,9 @@ class MockBitDropCore implements BitDropCore {
       actual: actual,
       deviceName: _outputDevice.value?.name ?? 'No device',
       bufferAheadSeconds: _bufferAheadMs / 1000,
-      pcmFillPercent: sp.weakNetwork ? 18 + _rand.nextDouble() * 20 : 78 + _rand.nextDouble() * 14,
+      pcmFillPercent: sp.weakNetwork
+          ? 18 + _rand.nextDouble() * 20
+          : 78 + _rand.nextDouble() * 14,
       underrunCount: _underruns,
       speedMbps: _throughputHistory.isEmpty ? 0 : _throughputHistory.last,
       activeRangeRequests: sp.offline ? 0 : (sp.weakNetwork ? 1 : 2),
@@ -789,7 +804,8 @@ class MockBitDropCore implements BitDropCore {
   int _cachedPercentOfCurrent() {
     final dur = _nowPlaying.value?.track.durationMs ?? 0;
     if (dur <= 0) return 0;
-    final cached = _ranges.fold<int>(0, (sum, r) => sum + (r.endMs - r.startMs));
+    final cached =
+        _ranges.fold<int>(0, (sum, r) => sum + (r.endMs - r.startMs));
     return ((cached / dur) * 100).clamp(0, 100).round();
   }
 
@@ -842,7 +858,8 @@ class MockBitDropCore implements BitDropCore {
         ));
         continue;
       }
-      if (_scenario.offline && candidate.availability == Availability.cloudOnly) {
+      if (_scenario.offline &&
+          candidate.availability == Availability.cloudOnly) {
         _events.add(CoreEvent.snack(
           'Skipped "${candidate.title}" — not available offline.',
         ));
@@ -896,7 +913,8 @@ class MockBitDropCore implements BitDropCore {
   @override
   Future<Paged<Album>> albums(AlbumQuery q) async {
     await _latency();
-    var list = MockCatalog.albums.where((a) => _matchesAlbum(a, q.filters)).toList();
+    var list =
+        MockCatalog.albums.where((a) => _matchesAlbum(a, q.filters)).toList();
     if (q.artistId != null) {
       list = list.where((a) => a.artistId == q.artistId).toList();
     }
@@ -904,8 +922,8 @@ class MockBitDropCore implements BitDropCore {
           AlbumSort.title => _sortKey(a.title).compareTo(_sortKey(b.title)),
           AlbumSort.artist => a.artist.compareTo(b.artist),
           AlbumSort.year => (a.year ?? 0).compareTo(b.year ?? 0),
-          AlbumSort.recentlyAdded =>
-            (b.addedAt ?? DateTime(2000)).compareTo(a.addedAt ?? DateTime(2000)),
+          AlbumSort.recentlyAdded => (b.addedAt ?? DateTime(2000))
+              .compareTo(a.addedAt ?? DateTime(2000)),
           AlbumSort.sampleRate =>
             a.format.sampleRate.compareTo(b.format.sampleRate),
           AlbumSort.bitDepth => a.format.bitDepth.compareTo(b.format.bitDepth),
@@ -926,7 +944,8 @@ class MockBitDropCore implements BitDropCore {
   @override
   Future<Paged<Track>> tracks(TrackQuery q) async {
     await _latency();
-    var list = MockCatalog.tracks.where((t) => _matchesTrack(t, q.filters)).toList();
+    var list =
+        MockCatalog.tracks.where((t) => _matchesTrack(t, q.filters)).toList();
     if (q.albumId != null) {
       list = MockCatalog.tracksByAlbum[q.albumId!] ?? const [];
       list = list.toList();
@@ -1019,7 +1038,8 @@ class MockBitDropCore implements BitDropCore {
           t.availability != Availability.cached) {
         return false;
       }
-      if (f.codecs.isNotEmpty && !f.codecs.contains(t.format.codec)) return false;
+      if (f.codecs.isNotEmpty && !f.codecs.contains(t.format.codec))
+        return false;
       if (!_matchesQuality(t.format, f.quality)) return false;
       return true;
     }
@@ -1131,20 +1151,41 @@ class MockBitDropCore implements BitDropCore {
   // ---- Folder tree ---------------------------------------------------------
 
   List<FolderEntry> _allFolders() => const [
-        FolderEntry(id: 'fo-music', name: 'Music', isDirectory: true, itemCount: 4),
-        FolderEntry(id: 'fo-hires', name: 'Hi-Res', isDirectory: true, itemCount: 4),
-        FolderEntry(id: 'fo-lossless', name: 'Lossless', isDirectory: true, itemCount: 2),
-        FolderEntry(id: 'fo-jazz', name: 'Jazz', isDirectory: true, itemCount: 1),
-        FolderEntry(id: 'fo-lossy', name: 'Lossy', isDirectory: true, itemCount: 1),
-        FolderEntry(id: 'fo-archive', name: 'Archive', isDirectory: true, itemCount: 1),
+        FolderEntry(
+            id: 'fo-music', name: 'Music', isDirectory: true, itemCount: 4),
+        FolderEntry(
+            id: 'fo-hires', name: 'Hi-Res', isDirectory: true, itemCount: 4),
+        FolderEntry(
+            id: 'fo-lossless',
+            name: 'Lossless',
+            isDirectory: true,
+            itemCount: 2),
+        FolderEntry(
+            id: 'fo-jazz', name: 'Jazz', isDirectory: true, itemCount: 1),
+        FolderEntry(
+            id: 'fo-lossy', name: 'Lossy', isDirectory: true, itemCount: 1),
+        FolderEntry(
+            id: 'fo-archive', name: 'Archive', isDirectory: true, itemCount: 1),
         FolderEntry(id: 'fo-dsd', name: 'DSD', isDirectory: true, itemCount: 1),
-        FolderEntry(id: 'fo-comp', name: 'Compilations', isDirectory: true, itemCount: 1),
+        FolderEntry(
+            id: 'fo-comp',
+            name: 'Compilations',
+            isDirectory: true,
+            itemCount: 1),
       ];
 
   /// Folder hierarchy mirroring the catalogue's `folderPath` strings.
   static const _tree = <String, List<String>>{
     'root': ['fo-music'],
-    'fo-music': ['fo-hires', 'fo-lossless', 'fo-jazz', 'fo-lossy', 'fo-archive', 'fo-dsd', 'fo-comp'],
+    'fo-music': [
+      'fo-hires',
+      'fo-lossless',
+      'fo-jazz',
+      'fo-lossy',
+      'fo-archive',
+      'fo-dsd',
+      'fo-comp'
+    ],
     'fo-hires': ['al-northern', 'al-glass', 'al-field', 'al-loworbit'],
     'fo-lossless': ['al-quiet', 'al-paper'],
     'fo-jazz': ['al-midnight'],
@@ -1170,8 +1211,9 @@ class MockBitDropCore implements BitDropCore {
     final childIds = _tree[key] ?? const [];
     final folders = _allFolders();
 
-    FolderEntry? named(String id) =>
-        folders.cast<FolderEntry?>().firstWhere((f) => f!.id == id, orElse: () => null);
+    FolderEntry? named(String id) => folders
+        .cast<FolderEntry?>()
+        .firstWhere((f) => f!.id == id, orElse: () => null);
 
     final entries = <FolderEntry>[];
     for (final id in childIds) {
@@ -1225,15 +1267,15 @@ class MockBitDropCore implements BitDropCore {
       if (cursor.startsWith('alfo-')) {
         final a = MockCatalog.albumById(cursor.substring(5));
         if (a != null) {
-          crumbs.insert(0, FolderEntry(id: cursor, name: a.title, isDirectory: true));
+          crumbs.insert(
+              0, FolderEntry(id: cursor, name: a.title, isDirectory: true));
         }
         // Album folders sit under their genre folder.
-        final parent = _tree.entries
-            .cast<MapEntry<String, List<String>>?>()
-            .firstWhere(
-              (e) => e!.value.contains(cursor!.substring(5)),
-              orElse: () => null,
-            );
+        final parent =
+            _tree.entries.cast<MapEntry<String, List<String>>?>().firstWhere(
+                  (e) => e!.value.contains(cursor!.substring(5)),
+                  orElse: () => null,
+                );
         cursor = parent?.key;
         continue;
       }
@@ -1245,7 +1287,8 @@ class MockBitDropCore implements BitDropCore {
       cursor = _parents[cursor];
     }
 
-    return FolderListing(folderId: folderId, breadcrumb: crumbs, entries: entries);
+    return FolderListing(
+        folderId: folderId, breadcrumb: crumbs, entries: entries);
   }
 
   Future<void> _latency({int ms = 40}) =>
@@ -1256,11 +1299,14 @@ class MockBitDropCore implements BitDropCore {
   @override
   Future<void> send(PlayerCommand cmd) async {
     switch (cmd) {
-      case PlayContext(:final trackIds, :final startIndex, :final contextLabel, :final shuffle):
-        final tracks = trackIds
-            .map(MockCatalog.trackById)
-            .whereType<Track>()
-            .toList();
+      case PlayContext(
+          :final trackIds,
+          :final startIndex,
+          :final contextLabel,
+          :final shuffle
+        ):
+        final tracks =
+            trackIds.map(MockCatalog.trackById).whereType<Track>().toList();
         if (tracks.isEmpty) return;
         final ordered = shuffle ? (tracks.toList()..shuffle(_rand)) : tracks;
         _queue.emit(QueueState(
@@ -1274,13 +1320,15 @@ class MockBitDropCore implements BitDropCore {
         _playAtOrSkip(shuffle ? 0 : startIndex);
 
       case Pause():
-        if (_playback.value is PlayingState) _playback.emit(const PausedState());
+        if (_playback.value is PlayingState)
+          _playback.emit(const PausedState());
 
       case Resume():
         if (_nowPlaying.value != null) _playback.emit(const PlayingState());
 
       case Seek(:final positionMs):
-        _positionMs = positionMs.clamp(0, _nowPlaying.value?.track.durationMs ?? 0);
+        _positionMs =
+            positionMs.clamp(0, _nowPlaying.value?.track.durationMs ?? 0);
         if (!_isCached(_positionMs) && !_scenario.offline) {
           _bufferAttempt = 1;
           _bufferRemainingMs = 1200;
@@ -1357,7 +1405,8 @@ class MockBitDropCore implements BitDropCore {
         final items = [...q.items]..removeAt(idx);
         _queue.emit(QueueState(
           items: _rebuildGaps(items),
-          currentIndex: idx < q.currentIndex ? q.currentIndex - 1 : q.currentIndex,
+          currentIndex:
+              idx < q.currentIndex ? q.currentIndex - 1 : q.currentIndex,
           shuffle: q.shuffle,
           repeat: q.repeat,
           contextLabel: q.contextLabel,
@@ -1423,7 +1472,8 @@ class MockBitDropCore implements BitDropCore {
         _recomputeSignalPath();
 
       case SetReplayGain(:final mode, :final preampDb):
-        _eq.emit(_eq.value.copyWith(replayGain: mode, replayGainPreampDb: preampDb));
+        _eq.emit(
+            _eq.value.copyWith(replayGain: mode, replayGainPreampDb: preampDb));
         _settings.emit(_settings.value.copyWith(replayGain: mode));
         _recomputeSignalPath();
 
@@ -1516,7 +1566,8 @@ class MockBitDropCore implements BitDropCore {
                   )
                 : s)
             .toList());
-        _banners.emit(_banners.value.where((b) => b.id != 'b-reconnect').toList());
+        _banners
+            .emit(_banners.value.where((b) => b.id != 'b-reconnect').toList());
         _events.add(const CoreEvent.snack('Google Drive reconnected.'));
 
       case RemoveSource(:final sourceId):
@@ -1595,8 +1646,7 @@ class MockBitDropCore implements BitDropCore {
         ));
 
       case DismissBanner(:final bannerId):
-        _banners.emit(
-            _banners.value.where((b) => b.id != bannerId).toList());
+        _banners.emit(_banners.value.where((b) => b.id != bannerId).toList());
 
       case CreatePlaylist(:final name):
         _events.add(CoreEvent.snack('Created playlist "$name".'));
@@ -1644,10 +1694,12 @@ class MockBitDropCore implements BitDropCore {
 
   void _insertTracks(List<String> trackIds, {required bool atEnd}) {
     final q = _queue.value;
-    final tracks = trackIds.map(MockCatalog.trackById).whereType<Track>().toList();
+    final tracks =
+        trackIds.map(MockCatalog.trackById).whereType<Track>().toList();
     if (tracks.isEmpty) return;
     final items = [...q.items];
-    final insertAt = atEnd ? items.length : (q.currentIndex + 1).clamp(0, items.length);
+    final insertAt =
+        atEnd ? items.length : (q.currentIndex + 1).clamp(0, items.length);
     final newItems = _buildQueueItems(tracks, prefix: 'add${items.length}')
         .map((i) => QueueItem(
               track: i.track,
@@ -1702,9 +1754,10 @@ class MockBitDropCore implements BitDropCore {
   void _applyPin(String id, String kind, {required bool pinned}) {
     final label = switch (kind) {
       'album' => MockCatalog.albumById(id)?.title ?? 'Album',
-      'playlist' =>
-        MockCatalog.playlists.firstWhere((p) => p.id == id,
-            orElse: () => MockCatalog.playlists.first).name,
+      'playlist' => MockCatalog.playlists
+          .firstWhere((p) => p.id == id,
+              orElse: () => MockCatalog.playlists.first)
+          .name,
       _ => 'Item',
     };
     _events.add(CoreEvent.snack(

@@ -56,16 +56,15 @@ class _ImportEqSheetState extends ConsumerState<ImportEqSheet> {
             Text(
               'Paste the file contents. Filters marked OFF are imported but '
               'left disabled.',
-              style: context.t.bodySmall
-                  .copyWith(color: context.c.textSecondary),
+              style:
+                  context.t.bodySmall.copyWith(color: context.c.textSecondary),
             ),
             const SizedBox(height: Spacing.md),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () =>
-                        _controller.text = _sample,
+                    onPressed: () => _controller.text = _sample,
                     icon: const Icon(Icons.description_outlined, size: 18),
                     label: const Text('Paste a sample'),
                   ),

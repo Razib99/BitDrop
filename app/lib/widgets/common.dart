@@ -137,8 +137,7 @@ class StatusBanner extends StatelessWidget {
                   onPressed: onAction,
                   style: TextButton.styleFrom(
                     minimumSize: const Size(0, 32),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: Spacing.xs),
+                    padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
                     foregroundColor: accent,
                   ),
                   child: Text(actionLabel!, style: context.t.label),
@@ -401,8 +400,8 @@ class _Segment extends StatelessWidget {
           decoration: BoxDecoration(
             color: selected ? colors.accent : colors.surface2,
             borderRadius: Radii.chipR,
-            border: Border.all(
-                color: selected ? colors.accent : colors.outline),
+            border:
+                Border.all(color: selected ? colors.accent : colors.outline),
           ),
           alignment: Alignment.center,
           child: Text(
@@ -427,8 +426,7 @@ class FilterChipRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        padding: padding ??
-            const EdgeInsets.symmetric(horizontal: Spacing.md),
+        padding: padding ?? const EdgeInsets.symmetric(horizontal: Spacing.md),
         child: Row(
           children: [
             for (final child in children)

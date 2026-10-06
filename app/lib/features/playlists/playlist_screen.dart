@@ -43,7 +43,8 @@ class PlaylistScreen extends ConsumerWidget {
     }
 
     final tracks = tracksAsync.valueOrNull?.items ?? const <Track>[];
-    final playable = tracks.where((t) => t.isPlayable).map((t) => t.id).toList();
+    final playable =
+        tracks.where((t) => t.isPlayable).map((t) => t.id).toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -142,8 +143,7 @@ class PlaylistScreen extends ConsumerWidget {
                   ),
                 ),
                 Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: Spacing.md),
+                  padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
                   child: Row(
                     children: [
                       Expanded(

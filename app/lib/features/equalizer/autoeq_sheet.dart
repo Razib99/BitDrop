@@ -99,8 +99,7 @@ class _ProfileCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.c;
     return Container(
-      margin: const EdgeInsets.fromLTRB(
-          Spacing.md, 0, Spacing.md, Spacing.sm),
+      margin: const EdgeInsets.fromLTRB(Spacing.md, 0, Spacing.md, Spacing.sm),
       decoration: BoxDecoration(
         color: c.surface1,
         borderRadius: Radii.cardR,
@@ -137,8 +136,8 @@ class _ProfileCard extends ConsumerWidget {
                             .copyWith(color: c.textSecondary)),
                     Text(
                       'preamp ${Fmt.db(profile.suggestedPreampDb)}',
-                      style: context.t.monoLabel
-                          .copyWith(color: c.textSecondary),
+                      style:
+                          context.t.monoLabel.copyWith(color: c.textSecondary),
                     ),
                   ],
                 ),

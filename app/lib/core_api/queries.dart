@@ -2,7 +2,16 @@ import 'package:flutter/foundation.dart';
 
 import 'enums.dart';
 
-enum AlbumSort { title, artist, year, recentlyAdded, sampleRate, bitDepth, size, duration }
+enum AlbumSort {
+  title,
+  artist,
+  year,
+  recentlyAdded,
+  sampleRate,
+  bitDepth,
+  size,
+  duration
+}
 
 enum TrackSort { title, artist, album, duration, sampleRate }
 
@@ -187,7 +196,8 @@ class TrackQuery {
 
 @immutable
 class ArtistQuery {
-  const ArtistQuery({this.offset = 0, this.limit = 200, this.descending = false});
+  const ArtistQuery(
+      {this.offset = 0, this.limit = 200, this.descending = false});
   final int offset;
   final int limit;
   final bool descending;

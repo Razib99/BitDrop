@@ -53,10 +53,14 @@ class DiagnosticsScreen extends ConsumerWidget {
                 _Card(
                   title: 'Buffer',
                   rows: [
-                    ('Decodable ahead',
-                        '${d.bufferAheadSeconds.toStringAsFixed(1)} s'),
-                    ('PCM ring fill',
-                        '${d.pcmFillPercent.toStringAsFixed(0)}%'),
+                    (
+                      'Decodable ahead',
+                      '${d.bufferAheadSeconds.toStringAsFixed(1)} s'
+                    ),
+                    (
+                      'PCM ring fill',
+                      '${d.pcmFillPercent.toStringAsFixed(0)}%'
+                    ),
                     ('Underruns', '${d.underrunCount}'),
                   ],
                   sparkline: d.bufferHistory,
@@ -93,12 +97,11 @@ class DiagnosticsScreen extends ConsumerWidget {
                   title: 'Decoder',
                   rows: [
                     ('Format', d.requested.badgeLabel),
-                    ('Decode load',
-                        '${d.decodeLoadPercent.toStringAsFixed(1)}%'),
                     (
-                      'Source bitrate',
-                      Fmt.kbps(d.requested.bitrateKbps)
+                      'Decode load',
+                      '${d.decodeLoadPercent.toStringAsFixed(1)}%'
                     ),
+                    ('Source bitrate', Fmt.kbps(d.requested.bitrateKbps)),
                   ],
                 ),
                 const SizedBox(height: Spacing.sm),
@@ -163,8 +166,8 @@ class _Card extends StatelessWidget {
                   Expanded(
                     child: Text(
                       label,
-                      style: context.t.bodySmall
-                          .copyWith(color: c.textSecondary),
+                      style:
+                          context.t.bodySmall.copyWith(color: c.textSecondary),
                     ),
                   ),
                   Text(value, style: context.t.monoReadout),
@@ -186,8 +189,7 @@ class _Card extends StatelessWidget {
                 Expanded(
                   child: Text(
                     warning!,
-                    style: context.t.bodySmall
-                        .copyWith(color: c.tierResampled),
+                    style: context.t.bodySmall.copyWith(color: c.tierResampled),
                   ),
                 ),
               ],

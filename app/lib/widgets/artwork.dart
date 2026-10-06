@@ -32,8 +32,8 @@ class AlbumArtwork extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final radius = borderRadius ??
-        (size >= 200 ? Radii.heroArtR : Radii.gridArtR);
+    final radius =
+        borderRadius ?? (size >= 200 ? Radii.heroArtR : Radii.gridArtR);
     return Semantics(
       label: title == null
           ? context.l10n.albumArtwork
@@ -76,7 +76,8 @@ class AlbumArtwork extends StatelessWidget {
   static String _initials(String title) {
     final words = title
         .split(RegExp(r'[\s,·]+'))
-        .where((w) => w.isNotEmpty && w[0].toUpperCase() == w[0] || w.isNotEmpty)
+        .where(
+            (w) => w.isNotEmpty && w[0].toUpperCase() == w[0] || w.isNotEmpty)
         .toList();
     if (words.isEmpty) return '?';
     if (words.length == 1) return words.first.substring(0, 1).toUpperCase();
@@ -151,8 +152,10 @@ class _ArtworkPainter extends CustomPainter {
       default:
         final step = size.width / 5;
         for (var i = 1; i < 5; i++) {
-          canvas.drawLine(Offset(step * i, 0), Offset(step * i, size.height), ink);
-          canvas.drawLine(Offset(0, step * i), Offset(size.width, step * i), ink);
+          canvas.drawLine(
+              Offset(step * i, 0), Offset(step * i, size.height), ink);
+          canvas.drawLine(
+              Offset(0, step * i), Offset(size.width, step * i), ink);
         }
     }
 

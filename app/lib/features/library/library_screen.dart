@@ -83,12 +83,10 @@ class _Toolbar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final showsGridToggle = tab == LibraryTab.albums;
-    final showsSort =
-        tab == LibraryTab.albums || tab == LibraryTab.tracks;
+    final showsSort = tab == LibraryTab.albums || tab == LibraryTab.tracks;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-          Spacing.md, Spacing.xs, Spacing.xs, 0),
+      padding: const EdgeInsets.fromLTRB(Spacing.md, Spacing.xs, Spacing.xs, 0),
       child: Row(
         children: [
           Text(context.l10n.navLibrary, style: context.t.headline),
@@ -168,15 +166,14 @@ class _ActiveFilterSummary extends ConsumerWidget {
     ];
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-          Spacing.md, 0, Spacing.md, Spacing.xs),
+      padding: const EdgeInsets.fromLTRB(Spacing.md, 0, Spacing.md, Spacing.xs),
       child: Row(
         children: [
           Expanded(
             child: Text(
               'Filtered: ${parts.join(' · ')}',
-              style: context.t.monoLabel
-                  .copyWith(color: context.c.textSecondary),
+              style:
+                  context.t.monoLabel.copyWith(color: context.c.textSecondary),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -243,8 +240,7 @@ class _AlbumsTab extends ConsumerWidget {
             (width - margin * 2 - Spacing.sm * (columns - 1)) / columns;
 
         return GridView.builder(
-          padding: EdgeInsets.fromLTRB(
-              margin, Spacing.xs, margin, Spacing.xxl),
+          padding: EdgeInsets.fromLTRB(margin, Spacing.xs, margin, Spacing.xxl),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
             mainAxisSpacing: Spacing.md,
@@ -340,8 +336,8 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
           children: [
             ListView.builder(
               controller: _controller,
-              padding: const EdgeInsets.only(
-                  right: Spacing.lg, bottom: Spacing.xxl),
+              padding:
+                  const EdgeInsets.only(right: Spacing.lg, bottom: Spacing.xxl),
               itemCount: paged.items.length,
               itemExtent: 64,
               itemBuilder: (context, i) {
@@ -356,8 +352,7 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
                             ref,
                             PlayContext(
                               contextId: 'tracks',
-                              trackIds:
-                                  paged.items.map((x) => x.id).toList(),
+                              trackIds: paged.items.map((x) => x.id).toList(),
                               startIndex: i,
                               contextLabel: 'All tracks',
                             ),
@@ -394,9 +389,8 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
   Map<String, int> _letters(List<Track> tracks) {
     final out = <String, int>{};
     for (var i = 0; i < tracks.length; i++) {
-      final ch = tracks[i].title.isEmpty
-          ? '#'
-          : tracks[i].title[0].toUpperCase();
+      final ch =
+          tracks[i].title.isEmpty ? '#' : tracks[i].title[0].toUpperCase();
       final key = RegExp(r'[A-Z]').hasMatch(ch) ? ch : '#';
       out.putIfAbsent(key, () => i);
     }

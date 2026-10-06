@@ -101,8 +101,7 @@ class _ComponentGalleryState extends ConsumerState<ComponentGallery> {
               children: [
                 TierChip(tier: OutputTier.bitPerfect, detail: '24/96'),
                 TierChip(tier: OutputTier.nativeRate, detail: '24/96'),
-                TierChip(
-                    tier: OutputTier.resampled, detail: '96 → 48 kHz'),
+                TierChip(tier: OutputTier.resampled, detail: '96 → 48 kHz'),
                 TierChip(tier: OutputTier.unknown),
                 TierChip(tier: OutputTier.bitPerfect, dense: true),
                 DspBadge(),
@@ -240,8 +239,7 @@ class _ComponentGalleryState extends ConsumerState<ComponentGallery> {
                 ),
                 StatusBanner(
                   kind: BannerKind.warning,
-                  message:
-                      'Google Drive needs you to reconnect. Cached music '
+                  message: 'Google Drive needs you to reconnect. Cached music '
                       'keeps playing.',
                   actionLabel: context.l10n.actionReconnect,
                   onAction: () {},
@@ -316,14 +314,11 @@ class _ComponentGalleryState extends ConsumerState<ComponentGallery> {
                         icon: Icons.tune,
                         trailingCount: 2,
                         onTap: () {}),
-                    BitChip(
-                        label: 'Hi-Res', selected: true, onTap: () {}),
+                    BitChip(label: 'Hi-Res', selected: true, onTap: () {}),
                     BitChip(label: 'Lossless only', onTap: () {}),
                     BitChip(label: 'FLAC', mono: true, onTap: () {}),
                     BitChip(
-                        label: 'Offline',
-                        icon: Icons.push_pin,
-                        onTap: () {}),
+                        label: 'Offline', icon: Icons.push_pin, onTap: () {}),
                   ],
                 ),
               ],
@@ -339,9 +334,7 @@ class _ComponentGalleryState extends ConsumerState<ComponentGallery> {
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     ActionPill(
-                        icon: Icons.queue_music,
-                        label: 'Queue',
-                        onTap: () {}),
+                        icon: Icons.queue_music, label: 'Queue', onTap: () {}),
                     ActionPill(
                         icon: Icons.graphic_eq,
                         label: 'EQ',
@@ -412,7 +405,8 @@ class _ComponentGalleryState extends ConsumerState<ComponentGallery> {
                     onSelect: () => setState(() => _selectedBand = b.id),
                     onChanged: (nb) => setState(() {
                       _bands = [
-                        for (final x in _bands) if (x.id == nb.id) nb else x
+                        for (final x in _bands)
+                          if (x.id == nb.id) nb else x
                       ];
                     }),
                     onRemove: () {},
@@ -490,8 +484,8 @@ class _ComponentGalleryState extends ConsumerState<ComponentGallery> {
                     trackCount: 12480,
                     folderCount: 2,
                     status: SourceStatus.syncing,
-                    lastSync: DateTime.now()
-                        .subtract(const Duration(minutes: 5)),
+                    lastSync:
+                        DateTime.now().subtract(const Duration(minutes: 5)),
                     activityLabel: 'Reading tags',
                     activityProgress: 0.66,
                     changesSinceLastSync: '+24 new, 3 changed, 1 removed',
@@ -508,8 +502,7 @@ class _ComponentGalleryState extends ConsumerState<ComponentGallery> {
                     trackCount: 12480,
                     folderCount: 2,
                     status: SourceStatus.needsReconnect,
-                    lastSync: DateTime.now()
-                        .subtract(const Duration(days: 7)),
+                    lastSync: DateTime.now().subtract(const Duration(days: 7)),
                   ),
                   onReconnect: () {},
                 ),
@@ -587,8 +580,7 @@ class _ComponentGalleryState extends ConsumerState<ComponentGallery> {
                   onPressed: () => ConfirmDialog.show(
                     context,
                     title: 'Clear cache?',
-                    message:
-                        'Frees 6.8 GB. Pinned albums stay on your device.',
+                    message: 'Frees 6.8 GB. Pinned albums stay on your device.',
                     confirmLabel: 'Clear cache',
                   ),
                   child: const Text('Standard'),
@@ -621,15 +613,14 @@ class _ComponentGalleryState extends ConsumerState<ComponentGallery> {
                 Text('titleSmall 16/24', style: context.t.titleSmall),
                 Text('body 15/22 — the quick brown fox', style: context.t.body),
                 Text('bodySmall 13/18 — metadata line',
-                    style: context.t.bodySmall
-                        .copyWith(color: c.textSecondary)),
+                    style:
+                        context.t.bodySmall.copyWith(color: c.textSecondary)),
                 Text('label 12/16', style: context.t.label),
                 Text('MONOLABEL 11/14 · FLAC 24/96',
                     style: context.t.monoLabel),
                 Text('monoReadout 13/18 · 03:41 · −6.2 dB · 8.4 Mbps',
                     style: context.t.monoReadout),
-                Text('monoLarge 20/26 · 192.0 kHz',
-                    style: context.t.monoLarge),
+                Text('monoLarge 20/26 · 192.0 kHz', style: context.t.monoLarge),
               ],
             ),
           ),
@@ -742,8 +733,8 @@ class _Labelled extends StatelessWidget {
           SizedBox(height: 24, child: Center(child: child)),
           const SizedBox(height: 4),
           Text(label,
-              style: context.t.monoLabel
-                  .copyWith(color: context.c.textSecondary)),
+              style:
+                  context.t.monoLabel.copyWith(color: context.c.textSecondary)),
         ],
       );
 }

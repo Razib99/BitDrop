@@ -65,8 +65,8 @@ class _FolderBrowserState extends ConsumerState<FolderBrowser> {
                             ? () => _playFolder(listing, e)
                             : null,
                         onPin: e.isDirectory
-                            ? () => sendCommand(
-                                ref, Pin(id: e.id, kind: 'folder'))
+                            ? () =>
+                                sendCommand(ref, Pin(id: e.id, kind: 'folder'))
                             : null,
                       );
                     },
@@ -89,7 +89,8 @@ class _FolderBrowserState extends ConsumerState<FolderBrowser> {
         contextId: listing.folderId ?? 'root',
         trackIds: files.map((f) => f.track!.id).toList(),
         startIndex: files.indexWhere((f) => f.track!.id == target.id),
-        contextLabel: 'Folder · ${listing.breadcrumb.isEmpty ? 'Drive' : listing.breadcrumb.last.name}',
+        contextLabel:
+            'Folder · ${listing.breadcrumb.isEmpty ? 'Drive' : listing.breadcrumb.last.name}',
       ),
     );
   }
@@ -105,7 +106,8 @@ class _FolderBrowserState extends ConsumerState<FolderBrowser> {
       ),
     );
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Playing "${folder.name}" and everything inside.')),
+      SnackBar(
+          content: Text('Playing "${folder.name}" and everything inside.')),
     );
   }
 }

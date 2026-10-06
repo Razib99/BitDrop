@@ -90,12 +90,10 @@ class TrackRow extends StatelessWidget {
   Widget _buildRow(BuildContext context) {
     final c = context.c;
     final t = context.t;
-    final dim = _blocked ||
-        track.availability == Availability.unavailable;
+    final dim = _blocked || track.availability == Availability.unavailable;
 
-    final titleColor = dim
-        ? c.textTertiary
-        : (isPlaying ? c.accent : c.textPrimary);
+    final titleColor =
+        dim ? c.textTertiary : (isPlaying ? c.accent : c.textPrimary);
 
     return Semantics(
       selected: selectionMode ? selected : null,

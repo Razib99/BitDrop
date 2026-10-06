@@ -92,8 +92,7 @@ void main() {
 
     test('the suggested preamp cancels the curve peak', () {
       const bands = [
-        EqBand(
-            id: 1, type: BiquadType.peak, frequencyHz: 100, gainDb: 6, q: 1),
+        EqBand(id: 1, type: BiquadType.peak, frequencyHz: 100, gainDb: 6, q: 1),
         EqBand(
             id: 2, type: BiquadType.peak, frequencyHz: 5000, gainDb: 3, q: 2),
       ];

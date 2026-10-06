@@ -60,9 +60,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   title: g.title,
                   icon: g.icon,
                   initiallyExpandedAdvanced: true,
-                  tiles: g.tiles
-                      .where((t) => t.searchText.contains(q))
-                      .toList(),
+                  tiles:
+                      g.tiles.where((t) => t.searchText.contains(q)).toList(),
                 ),
           ];
 

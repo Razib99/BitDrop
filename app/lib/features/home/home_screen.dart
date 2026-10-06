@@ -379,26 +379,30 @@ class _RowSkeleton extends StatelessWidget {
         padding: const EdgeInsets.all(Spacing.md),
         child: SizedBox(
           height: 190,
-          child: Row(
-            children: [
-              for (var i = 0; i < 3; i++)
-                const Padding(
-                  padding: EdgeInsets.only(right: Spacing.sm),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SkeletonLoader(
-                          width: 134,
-                          height: 134,
-                          borderRadius: Radii.gridArtR),
-                      SizedBox(height: 8),
-                      SkeletonLoader(width: 100, height: 12),
-                      SizedBox(height: 5),
-                      SkeletonLoader(width: 70, height: 10),
-                    ],
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const NeverScrollableScrollPhysics(),
+            child: Row(
+              children: [
+                for (var i = 0; i < 3; i++)
+                  const Padding(
+                    padding: EdgeInsets.only(right: Spacing.sm),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SkeletonLoader(
+                            width: 134,
+                            height: 134,
+                            borderRadius: Radii.gridArtR),
+                        SizedBox(height: 8),
+                        SkeletonLoader(width: 100, height: 12),
+                        SizedBox(height: 5),
+                        SkeletonLoader(width: 70, height: 10),
+                      ],
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       );

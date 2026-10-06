@@ -48,10 +48,9 @@ class OutputScreen extends ConsumerWidget {
               child: DeviceCard(
                 device: device,
                 tier: signal?.tier ?? OutputTier.unknown,
-                profile: profiles
-                    .cast<DeviceProfile?>()
-                    .firstWhere((p) => p!.deviceId == device.id,
-                        orElse: () => null),
+                profile: profiles.cast<DeviceProfile?>().firstWhere(
+                    (p) => p!.deviceId == device.id,
+                    orElse: () => null),
                 note: device.type == DeviceType.bluetooth
                     ? 'Bluetooth uses its own codec — lossless bit-perfect '
                         'is not possible on any phone.'
@@ -68,8 +67,7 @@ class OutputScreen extends ConsumerWidget {
                   icon: Icon(TierChip.iconFor(signal.tier), size: 18),
                   label: const Text('See the full signal path'),
                   style: OutlinedButton.styleFrom(
-                    minimumSize:
-                        const Size(double.infinity, Sizes.touchTarget),
+                    minimumSize: const Size(double.infinity, Sizes.touchTarget),
                   ),
                 ),
               ),
@@ -82,8 +80,8 @@ class OutputScreen extends ConsumerWidget {
           ),
           SwitchListTile(
             value: settings.safetyAttenuationEnabled,
-            onChanged: (v) => sendCommand(
-                ref, SetSafetyAttenuation(enabled: v)),
+            onChanged: (v) =>
+                sendCommand(ref, SetSafetyAttenuation(enabled: v)),
             secondary: const Icon(Icons.shield_outlined),
             title: Text(
               'Safety attenuation '
@@ -110,15 +108,14 @@ class OutputScreen extends ConsumerWidget {
               device: d,
               profile: profiles
                   .cast<DeviceProfile?>()
-                  .firstWhere((p) => p!.deviceId == d.id,
-                      orElse: () => null),
+                  .firstWhere((p) => p!.deviceId == d.id, orElse: () => null),
               connected: d.id == device?.id,
             ),
           const SectionHeader(title: 'Advanced'),
           SwitchListTile(
             value: settings.preferBitPerfect,
-            onChanged: (v) => sendCommand(
-                ref, SetSetting(key: 'preferBitPerfect', value: v)),
+            onChanged: (v) =>
+                sendCommand(ref, SetSetting(key: 'preferBitPerfect', value: v)),
             secondary: const Icon(Icons.diamond_outlined),
             title: const Text('Prefer bit-perfect when available'),
             subtitle: const Text(
@@ -177,15 +174,13 @@ class _VolumePanelState extends ConsumerState<_VolumePanel> {
                 child: Text(
                   switch (mode) {
                     VolumeMode.dacHardware => 'Hardware (DAC)',
-                    VolumeMode.softwareDithered =>
-                      'Digital (24-bit, dithered)',
+                    VolumeMode.softwareDithered => 'Digital (24-bit, dithered)',
                     VolumeMode.system => 'System',
                   },
                   style: context.t.titleSmall,
                 ),
               ),
-              if (!dacOwned)
-                Text(Fmt.db(_db), style: context.t.monoReadout),
+              if (!dacOwned) Text(Fmt.db(_db), style: context.t.monoReadout),
             ],
           ),
           const SizedBox(height: Spacing.xxs),
@@ -246,8 +241,7 @@ class _KnownDeviceRow extends StatelessWidget {
           if (connected) ...[
             const SizedBox(width: Spacing.xs),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
                 color: c.success.withOpacity(0.18),
                 borderRadius: Radii.badgeR,

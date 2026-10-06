@@ -171,8 +171,7 @@ class VuMeter extends StatelessWidget {
                   style: context.t.monoLabel.copyWith(color: c.textSecondary)),
               const Spacer(),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: clipping ? c.error : c.surface3,
                   borderRadius: Radii.badgeR,
@@ -187,9 +186,11 @@ class VuMeter extends StatelessWidget {
             ],
           ),
           const SizedBox(height: Spacing.xs),
-          _MeterBar(label: 'L', db: leftDb, colors: c, style: context.t.monoLabel),
+          _MeterBar(
+              label: 'L', db: leftDb, colors: c, style: context.t.monoLabel),
           const SizedBox(height: Spacing.xxs),
-          _MeterBar(label: 'R', db: rightDb, colors: c, style: context.t.monoLabel),
+          _MeterBar(
+              label: 'R', db: rightDb, colors: c, style: context.t.monoLabel),
           const SizedBox(height: Spacing.xxs),
           // Scale marks so the bars mean something.
           Padding(
@@ -231,8 +232,8 @@ class _MeterBar extends StatelessWidget {
       children: [
         SizedBox(
           width: 14,
-          child: Text(label,
-              style: style.copyWith(color: colors.textSecondary)),
+          child:
+              Text(label, style: style.copyWith(color: colors.textSecondary)),
         ),
         Expanded(
           child: SizedBox(
@@ -286,9 +287,8 @@ class _MeterPainter extends CustomPainter {
     final lit = (fraction * segments).round();
     for (var i = 0; i < segments; i++) {
       final t = i / segments;
-      final color = i < lit
-          ? (t > 0.92 ? hot : (t > 0.78 ? warn : safe))
-          : track;
+      final color =
+          i < lit ? (t > 0.92 ? hot : (t > 0.78 ? warn : safe)) : track;
       canvas.drawRect(
         Rect.fromLTWH(i * segW + 0.6, 0, segW - 1.2, size.height),
         Paint()..color = color,
@@ -546,7 +546,8 @@ class _LegendDot extends StatelessWidget {
           ),
           const SizedBox(width: 5),
           Text(label,
-              style: context.t.monoLabel.copyWith(color: context.c.textSecondary)),
+              style:
+                  context.t.monoLabel.copyWith(color: context.c.textSecondary)),
         ],
       );
 }

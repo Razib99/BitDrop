@@ -176,8 +176,8 @@ Future<void> showSortSheet(BuildContext context, WidgetRef ref) {
         children: [
           const Padding(
             padding: EdgeInsets.all(Spacing.md),
-            child: SectionHeader(
-                title: 'Sort albums', padding: EdgeInsets.zero),
+            child:
+                SectionHeader(title: 'Sort albums', padding: EdgeInsets.zero),
           ),
           for (final s in AlbumSort.values)
             RadioListTile<AlbumSort>(
