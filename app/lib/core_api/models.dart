@@ -169,9 +169,11 @@ class Artwork {
     required this.seed,
     required this.dominantColor,
     this.hasEmbedded = true,
+    this.uri,
   });
 
   final int seed;
+  final String? uri;
 
   /// ARGB value supplied by the core; drives adaptive Now Playing tinting.
   final int dominantColor;

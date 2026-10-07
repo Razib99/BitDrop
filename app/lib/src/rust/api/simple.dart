@@ -22,6 +22,9 @@ TrackMetadata scanLocalFile({required String path}) =>
 List<TrackMetadata> scanDirectory({required String path}) =>
     RustLib.instance.api.crateApiSimpleScanDirectory(path: path);
 
+Uint8List? getCoverArt({required String path}) =>
+    RustLib.instance.api.crateApiSimpleGetCoverArt(path: path);
+
 class DecodedAudio {
   final int sampleRate;
   final int channels;

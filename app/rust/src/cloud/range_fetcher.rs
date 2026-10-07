@@ -1,4 +1,4 @@
-use crate::api::cloud::models::RangeMeasurement;
+use crate::cloud::models::RangeMeasurement;
 use anyhow::{anyhow, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, RANGE};
 use std::time::Instant;

@@ -37,7 +37,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
                     default_rust_auto_opaque = RustAutoOpaqueMoi,
                 );
                 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.0.0";
-                pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1818720779;
+                pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1557043705;
             
 
 // Section: executor
@@ -145,6 +145,14 @@ fn wire__crate__api__audio_engine__engine_get_position_impl(ptr_: flutter_rust_b
                 transform_result_sse::<_, String>((move || {
                      let output_ok = crate::api::simple::decode_flac_full(api_audio_data)?;  Ok(output_ok)
                 })()) })
+            }fn wire__crate__api__simple__get_cover_art_impl(ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+                FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "get_cover_art", port: None, mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync }, move || { 
+            let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
+            let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);deserializer.end();
+                transform_result_sse::<_, ()>((move || {
+                     let output_ok = Result::<_,()>::Ok(crate::api::simple::get_cover_art(api_path))?;  Ok(output_ok)
+                })()) })
             }fn wire__crate__api__simple__greet_impl(ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
                 FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "greet", port: None, mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync }, move || { 
             let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
@@ -241,6 +249,15 @@ return crate::api::simple::DecodedAudio{sample_rate: var_sampleRate, channels: v
         return ans_;}
                 }
                 
+                impl SseDecode for Option<Vec<u8>> {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {if (<bool>::sse_decode(deserializer)) {
+                return Some(<Vec<u8>>::sse_decode(deserializer));
+            } else {
+                return None;
+            }}
+                }
+                
                 impl SseDecode for crate::api::simple::TrackMetadata {
                     // Codec=Sse (Serialization based), see doc to use other codecs
                     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {let mut var_path = <String>::sse_decode(deserializer);
@@ -284,7 +301,7 @@ return crate::api::simple::TrackMetadata{path: var_path, title: var_title, artis
                         9 => wire__crate__api__audio_engine__init_app_impl(port, ptr, rust_vec_len, data_len),
 10 => wire__crate__api__audio_engine__init_engine_impl(port, ptr, rust_vec_len, data_len),
 11 => wire__crate__api__audio_engine__play_audio_file_android_impl(port, ptr, rust_vec_len, data_len),
-14 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+15 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
                         _ => unreachable!(),
                     }
                 }
@@ -306,10 +323,11 @@ return crate::api::simple::TrackMetadata{path: var_path, title: var_title, artis
 7 => wire__crate__api__audio_engine__engine_set_eq_impl(ptr, rust_vec_len, data_len),
 8 => wire__crate__api__audio_engine__engine_set_eq_enabled_impl(ptr, rust_vec_len, data_len),
 12 => wire__crate__api__simple__decode_flac_full_impl(ptr, rust_vec_len, data_len),
-13 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-15 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
-16 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
-17 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
+13 => wire__crate__api__simple__get_cover_art_impl(ptr, rust_vec_len, data_len),
+14 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+16 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
+17 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
+18 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
                         _ => unreachable!(),
                     }
                 }
@@ -394,6 +412,14 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::TrackMetadata> for cr
                     // Codec=Sse (Serialization based), see doc to use other codecs
                     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<i32>::sse_encode(self.len() as _, serializer);
         for item in self { <crate::api::simple::TrackMetadata>::sse_encode(item, serializer); }}
+                }
+                
+                impl SseEncode for Option<Vec<u8>> {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<bool>::sse_encode(self.is_some(), serializer);
+                if let Some(value) = self {
+                    <Vec<u8>>::sse_encode(value, serializer);
+                }}
                 }
                 
                 impl SseEncode for crate::api::simple::TrackMetadata {

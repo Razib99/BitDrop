@@ -25,3 +25,10 @@
 - [ ] **Generate Client IDs** - Generate OAuth Client IDs for Android (SHA-1 fingerprint) and iOS (Bundle ID).
 - [ ] **Inject Client IDs** - Put the generated Client IDs into the Flutter app configuration (`Info.plist` and `google-services.json`).
 - [ ] **Wire Google API to Rust API** - Pass the access token from `GoogleDriveService` down into the `CloudMediaSource` via FFI when opening a track.
+
+## Track D: Community-Requested Audiophile Features
+- [ ] **Task 1: Subsonic/Navidrome Backend** - Implement OpenSubsonic API fetcher and mirror server libraries into the local SQLite DB for unified search.
+- [ ] **Task 2: Advanced Queue State** - Upgrade `audio_handler.dart` to support `Play Next`, `Add to End`, and `Shuffle by Album`.
+- [ ] **Task 3: Local Auto-Tagging & Lyrics** - Build metadata scraper (MusicBrainz/Lrclib) that writes missing tags and synced `.lrc` lyrics exclusively to the local SQLite cache.
+- [ ] **Task 4: Android Auto Full Hierarchy** - Map SQLite tables to `audio_service` MediaBrowser trees (Artists -> Albums -> Tracks) for car displays.
+- [ ] **Task 5: Bit-Perfect USB DAC Passthrough** - Implement `setPreferredMixerAttributes` (API 34+) to bypass Android's resampler for audiophile external DACs.

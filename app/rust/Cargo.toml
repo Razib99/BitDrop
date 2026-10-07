@@ -20,11 +20,16 @@ byteorder = "1.5"
 anyhow = "1.0"
 
 rusqlite = { version = "0.31", features = ["bundled"] }
+rubato = "5.0.1"
 
 [target.'cfg(target_os = "android")'.dependencies]
 oboe = "0.6.1"
 
 
-[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+[target.'cfg(not(target_os = "android"))'.dependencies]
 cpal = "0.15"
 
+
+[[bin]]
+name = "test_art"
+path = "test_art.rs"

@@ -121,24 +121,37 @@ pub fn scan_local_file(path: String) -> Result<TrackMetadata, String> {
     }
     
     // Attempt to extract tags
-    let mut title = "Unknown Title".to_string();
-    let mut artist = "Unknown Artist".to_string();
-    let mut album = "Unknown Album".to_string();
+    let mut title = "".to_string();
+    let mut artist = "".to_string();
+    let mut album = "".to_string();
+    
     
     // Some formats put tags in the metadata block
-    if let Some(metadata) = probed.metadata.get() {
-        if let Some(rev) = metadata.current() {
-            for tag in rev.tags() {
-                if tag.std_key == Some(symphonia::core::meta::StandardTagKey::TrackTitle) {
-                    title = tag.value.to_string();
-                } else if tag.std_key == Some(symphonia::core::meta::StandardTagKey::Artist) {
-                    artist = tag.value.to_string();
-                } else if tag.std_key == Some(symphonia::core::meta::StandardTagKey::Album) {
-                    album = tag.value.to_string();
+    macro_rules! extract_tags {
+        ($meta:expr) => {
+            if let Some(rev) = $meta.current() {
+                for tag in rev.tags() {
+                    if tag.std_key == Some(symphonia::core::meta::StandardTagKey::TrackTitle) {
+                        title = tag.value.to_string();
+                    } else if tag.std_key == Some(symphonia::core::meta::StandardTagKey::Artist) {
+                        artist = tag.value.to_string();
+                    } else if tag.std_key == Some(symphonia::core::meta::StandardTagKey::Album) {
+                        album = tag.value.to_string();
+                    }
                 }
             }
         }
     }
+    
+    if let Some(metadata) = probed.metadata.get() {
+        extract_tags!(metadata);
+    }
+    if title.is_empty() {
+        extract_tags!(probed.format.metadata());
+    }
+
+
+
     
     Ok(TrackMetadata {
         path,
@@ -180,4 +193,36 @@ pub fn scan_directory(path: String) -> Result<Vec<TrackMetadata>, String> {
     }
     
     Ok(results)
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn get_cover_art(path: String) -> Option<Vec<u8>> {
+    use std::fs::File;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::probe::Hint;
+
+    let file = File::open(&path).ok()?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    
+    let mut hint = Hint::new();
+    let ext = std::path::Path::new(&path).extension().and_then(|e| e.to_str()).unwrap_or("");
+    hint.with_extension(ext);
+    
+    let mut probed = symphonia::default::get_probe()
+        .format(&hint, mss, &Default::default(), &Default::default())
+        .ok()?;
+        
+    if let Some(metadata) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
+        if let Some(visual) = metadata.visuals().first() {
+            return Some(visual.data.to_vec());
+        }
+    }
+    
+    if let Some(metadata) = probed.format.metadata().current() {
+        if let Some(visual) = metadata.visuals().first() {
+            return Some(visual.data.to_vec());
+        }
+    }
+    
+    None
 }

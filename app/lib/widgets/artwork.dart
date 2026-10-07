@@ -1,6 +1,8 @@
+import 'dart:typed_data';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../src/rust/api/simple.dart' as rust;
 
 import '../core_api/models.dart';
 import '../theme/app_theme.dart';
@@ -34,6 +36,38 @@ class AlbumArtwork extends StatelessWidget {
   Widget build(BuildContext context) {
     final radius =
         borderRadius ?? (size >= 200 ? Radii.heroArtR : Radii.gridArtR);
+    
+    Widget content;
+    
+    // Check if uri is an absolute local path (indicating a local file)
+    if (artwork.uri != null && artwork.uri!.startsWith('/')) {
+      if (_imageCache.containsKey(artwork.uri!)) {
+        content = Image.memory(
+          _imageCache[artwork.uri!]!,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+        );
+      } else {
+        content = FutureBuilder<Uint8List?>(
+          future: _loadArt(artwork.uri!),
+          builder: (context, snapshot) {
+          if (snapshot.hasData && snapshot.data != null) {
+            return Image.memory(
+              snapshot.data!,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+            );
+          }
+          return _buildPlaceholder(context);
+        },
+      );
+      }
+    } else {
+      content = _buildPlaceholder(context);
+    }
+
     return Semantics(
       label: title == null
           ? context.l10n.albumArtwork
@@ -44,36 +78,51 @@ class AlbumArtwork extends StatelessWidget {
         child: SizedBox(
           width: size,
           height: size,
-          child: Opacity(
-            opacity: dimmed ? 0.45 : 1,
-            child: CustomPaint(
-              painter: _ArtworkPainter(
-                seed: artwork.seed,
-                dominant: Color(artwork.dominantColor),
-                outline: context.c.outline,
-              ),
-              child: title == null || size < 56
-                  ? null
-                  : Center(
-                      child: Text(
-                        _initials(title!),
-                        style: TextStyle(
-                          fontFamily: 'Inter',
-                          fontSize: size * 0.26,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withOpacity(0.72),
-                          letterSpacing: 1,
-                        ),
-                      ),
-                    ),
-            ),
-          ),
+          child: content,
         ),
       ),
     );
   }
 
-  static String _initials(String title) {
+  static final Map<String, Uint8List> _imageCache = {};
+
+  Future<Uint8List?> _loadArt(String path) async {
+    if (_imageCache.containsKey(path)) return _imageCache[path];
+    try {
+      final data = await rust.getCoverArt(path: path);
+      if (data != null) _imageCache[path] = data;
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Widget _buildPlaceholder(BuildContext context) {
+    return Opacity(
+      opacity: dimmed ? 0.45 : 1,
+      child: CustomPaint(
+        painter: _ArtworkPainter(
+          seed: artwork.seed,
+          dominant: Color(artwork.dominantColor),
+          outline: context.c.outline,
+        ),
+        child: title == null || size < 56
+            ? null
+            : Center(
+                child: Text(
+                  _initials(title!),
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: size * 0.26,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white.withOpacity(0.72),
+                    letterSpacing: 1,
+                  ),
+                ),
+              ),
+      ),
+    );
+  }  static String _initials(String title) {
     final words = title
         .split(RegExp(r'[\s,·]+'))
         .where(

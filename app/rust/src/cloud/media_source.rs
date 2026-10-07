@@ -1,4 +1,4 @@
-use crate::api::cloud::range_fetcher::RangeFetcher;
+use crate::cloud::range_fetcher::RangeFetcher;
 use std::cmp;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};

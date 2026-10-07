@@ -51,26 +51,25 @@ final routerProvider = Provider<GoRouter>((ref) {
             pageBuilder: (c, s) =>
                 const NoTransitionPage(child: SourcesScreen()),
           ),
+          GoRoute(
+            path: '/album/:id',
+            pageBuilder: (c, s) => NoTransitionPage(child: AlbumScreen(albumId: s.pathParameters['id']!)),
+          ),
+          GoRoute(
+            path: '/artist/:id',
+            pageBuilder: (c, s) => NoTransitionPage(child: ArtistScreen(artistId: s.pathParameters['id']!)),
+          ),
+          GoRoute(
+            path: '/playlist/:id',
+            pageBuilder: (c, s) => NoTransitionPage(child: PlaylistScreen(playlistId: s.pathParameters['id']!)),
+          ),
         ],
       ),
       GoRoute(
         path: Routes.nowPlaying,
         builder: (c, s) => const NowPlayingScreen(),
       ),
-      GoRoute(path: Routes.queue, builder: (c, s) => const QueueScreen()),
-      GoRoute(
-        path: '/album/:id',
-        builder: (c, s) => AlbumScreen(albumId: s.pathParameters['id']!),
-      ),
-      GoRoute(
-        path: '/artist/:id',
-        builder: (c, s) => ArtistScreen(artistId: s.pathParameters['id']!),
-      ),
-      GoRoute(
-        path: '/playlist/:id',
-        builder: (c, s) => PlaylistScreen(playlistId: s.pathParameters['id']!),
-      ),
-      GoRoute(
+      GoRoute(path: Routes.queue, builder: (c, s) => const QueueScreen()),      GoRoute(
         path: Routes.equalizer,
         builder: (c, s) => const EqualizerScreen(),
       ),

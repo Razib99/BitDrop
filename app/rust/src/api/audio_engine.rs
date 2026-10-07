@@ -20,15 +20,25 @@ lazy_static::lazy_static! {
 
 
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(not(target_os = "android"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(not(target_os = "android"))]
 lazy_static::lazy_static! {
-    static ref CPAL_STREAM: Mutex<Option<cpal::Stream>> = Mutex::new(None);
+    static ref CPAL_STREAM: Mutex<CpalStreamWrapper> = Mutex::new(CpalStreamWrapper(None));
+}
+
+pub struct CpalStreamWrapper(Option<cpal::Stream>);
+unsafe impl Send for CpalStreamWrapper {}
+unsafe impl Sync for CpalStreamWrapper {}
+
+lazy_static::lazy_static! {
+
 }
 #[derive(Clone, Default)]
 pub struct PlayerState {
+    pub target_sample_rate: u32,
+    pub flush_requested: bool,
     pub is_playing: bool,
     pub position_ms: u32,
     pub duration_ms: u32,
@@ -36,6 +46,8 @@ pub struct PlayerState {
     
     pub eq_enabled: bool,
     pub eq_gains: [f32; 10],
+    pub eq_preamp: f32,
+    pub auto_gain: f32,
     pub eq_updated: bool,
 }
 
@@ -72,6 +84,7 @@ impl Biquad {
 
 #[flutter_rust_bridge::frb(ignore)]
 pub struct GraphicEq {
+    preamp_linear: f32,
     bands_left: [Biquad; 10],
     bands_right: [Biquad; 10],
     freqs: [f32; 10],
@@ -87,10 +100,12 @@ impl GraphicEq {
             freqs: [31.5, 63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0],
             q: 1.414,
             sample_rate,
+            preamp_linear: 1.0,
         }
     }
 
-    pub fn update_gains(&mut self, gains: &[f32; 10]) {
+    pub fn update_gains(&mut self, gains: &[f32; 10], preamp_db: f32) {
+        self.preamp_linear = (10.0_f32).powf(preamp_db / 20.0);
         for i in 0..10 {
             let mut bl = self.bands_left[i];
             let mut br = self.bands_right[i];
@@ -104,6 +119,8 @@ impl GraphicEq {
     }
 
     pub fn process_stereo(&mut self, mut left: f32, mut right: f32) -> (f32, f32) {
+        left *= self.preamp_linear;
+        right *= self.preamp_linear;
         for i in 0..10 {
             left = self.bands_left[i].process(left);
             right = self.bands_right[i].process(right);
@@ -190,16 +207,16 @@ pub fn init_engine() {
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<DecoderCmd>();
     *CMD_SENDER.lock().unwrap() = Some(cmd_tx);
 
-    #[cfg(target_os = "android")]
     let (audio_tx, audio_rx) = crossbeam_channel::bounded::<Vec<f32>>(20);
 
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(not(target_os = "android"))]
     {
         let host = cpal::default_host();
         if let Some(device) = host.default_output_device() {
             if let Ok(config) = device.default_output_config() {
                 let sample_format = config.sample_format();
                 let config: cpal::StreamConfig = config.into();
+                PLAYER_STATE.lock().unwrap().target_sample_rate = config.sample_rate.0;
                 let channels = config.channels as usize;
                 
                 let mut current_buffer: Vec<f32> = Vec::new();
@@ -209,15 +226,25 @@ pub fn init_engine() {
                 let stream = device.build_output_stream(
                     &config,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        let (is_playing, eq_enabled, eq_updated, gains) = {
+                        let (is_playing, eq_enabled, eq_updated, gains, preamp) = {
                             let mut state = PLAYER_STATE.lock().unwrap();
                             let up = state.eq_updated;
                             state.eq_updated = false;
-                            (state.is_playing, state.eq_enabled, up, state.eq_gains)
+                            (state.is_playing, state.eq_enabled, up, state.eq_gains, state.eq_preamp)
                         };
                         
                         if eq_updated {
-                            eq.update_gains(&gains);
+                            eq.update_gains(&gains, preamp);
+                        }
+
+                        {
+                            let mut state = PLAYER_STATE.lock().unwrap();
+                            if state.flush_requested {
+                                state.flush_requested = false;
+                                current_buffer.clear();
+                                buffer_idx = 0;
+                                while let Ok(_) = audio_rx.try_recv() {}
+                            }
                         }
 
                         if !is_playing {
@@ -247,7 +274,7 @@ pub fn init_engine() {
                                 let mut r = if channels > 1 { current_buffer[buffer_idx + 1] } else { l };
                                 
                                 if eq_enabled {
-                                    let (fl, fr) = eq.process(l, r);
+                                    let (fl, fr) = eq.process_stereo(l, r);
                                     l = fl;
                                     r = fr;
                                 }
@@ -268,7 +295,7 @@ pub fn init_engine() {
                 
                 if let Ok(stream) = stream {
                     let _ = stream.play();
-                    *CPAL_STREAM.lock().unwrap() = Some(stream);
+                    CPAL_STREAM.lock().unwrap().0 = Some(stream);
                 }
             }
         }
@@ -387,16 +414,60 @@ pub fn init_engine() {
                 if let Ok(packet) = format.next_packet() {
                     if packet.track_id() == current_track_id {
                         if let Ok(audio_buf) = decoder.decode(&packet) {
+                            let target_sr = PLAYER_STATE.lock().unwrap().target_sample_rate;
+                            let track_sr = audio_buf.spec().rate;
+                            let mut channels = audio_buf.spec().channels.count();
+
                             let mut sample_buf = SampleBuffer::<f32>::new(audio_buf.capacity() as u64, *audio_buf.spec());
                             sample_buf.copy_interleaved_ref(audio_buf);
                             
-                            #[cfg(target_os = "android")]
-                            let _ = audio_tx.send(sample_buf.samples().to_vec());
+                            let mut samples = sample_buf.samples().to_vec();
+                            
+                            // DOWNMIX TO STEREO
+                            if channels == 1 {
+                                let mut stereo = Vec::with_capacity(samples.len() * 2);
+                                for s in samples {
+                                    stereo.push(s);
+                                    stereo.push(s);
+                                }
+                                samples = stereo;
+                                channels = 2;
+                            } else if channels > 2 {
+                                let mut stereo = Vec::with_capacity((samples.len() / channels) * 2);
+                                for i in 0..(samples.len() / channels) {
+                                    let fl = samples[i * channels];
+                                    let fr = samples[i * channels + 1];
+                                    let fc = samples[i * channels + 2]; // Usually Center
+                                    
+                                    // Mix center channel into L and R, attenuate to avoid clipping
+                                    stereo.push((fl + fc * 0.707) * 0.8);
+                                    stereo.push((fr + fc * 0.707) * 0.8);
+                                }
+                                samples = stereo;
+                                channels = 2;
+                            }
+                            
+                            if track_sr != target_sr && target_sr > 0 && channels > 0 {
+                                let ratio = track_sr as f32 / target_sr as f32;
+                                let out_frames = ((samples.len() / channels) as f32 / ratio) as usize;
+                                let mut resampled = Vec::with_capacity(out_frames * channels);
+                                
+                                for i in 0..out_frames {
+                                    let in_idx = (i as f32 * ratio) as usize;
+                                    let in_idx = in_idx.min((samples.len() / channels).saturating_sub(1));
+                                    for c in 0..channels {
+                                        resampled.push(samples[in_idx * channels + c]);
+                                    }
+                                }
+                                samples = resampled;
+                            }
+                            
+                            let _ = audio_tx.send(samples);
                             
                             // Update position based on packet timestamp
                             if let Some(t) = tb {
                                 let time = t.calc_time(packet.ts());
-                                PLAYER_STATE.lock().unwrap().position_ms = (time.seconds * 1000 + time.frac as u64 * 1000) as u32;
+                                PLAYER_STATE.lock().unwrap().position_ms = (time.seconds * 1000 + (time.frac * 1000.0) as u64) as u32;
                             }
                         }
                     }
@@ -413,6 +484,11 @@ pub fn init_engine() {
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_play(path: String) {
+    {
+        let mut state = PLAYER_STATE.lock().unwrap();
+        state.flush_requested = true;
+        state.position_ms = 0;
+    }
     if let Some(sender) = CMD_SENDER.lock().unwrap().as_ref() {
         let _ = sender.send(DecoderCmd::Play(path));
     }
@@ -434,6 +510,11 @@ pub fn engine_resume() {
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_seek(position_ms: u32) {
+    {
+        let mut state = PLAYER_STATE.lock().unwrap();
+        state.flush_requested = true;
+        state.position_ms = position_ms;
+    }
     if let Some(sender) = CMD_SENDER.lock().unwrap().as_ref() {
         let _ = sender.send(DecoderCmd::Seek(position_ms));
     }
@@ -461,6 +542,11 @@ pub fn engine_set_eq(gains: Vec<f32>) {
     let mut state = PLAYER_STATE.lock().unwrap();
     for i in 0..10.min(gains.len()) {
         state.eq_gains[i] = gains[i];
+    }
+    if gains.len() > 10 {
+        state.eq_preamp = gains[10];
+    } else {
+        state.eq_preamp = 0.0;
     }
     state.eq_updated = true;
 }

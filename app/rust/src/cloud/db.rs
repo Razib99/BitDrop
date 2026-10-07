@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, Result};
 use std::path::Path;
-use crate::api::cloud::models::FlacMetadata;
+use crate::cloud::models::FlacMetadata;
 
 pub struct MetadataDb {
     conn: Connection,

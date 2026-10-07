@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
-use crate::api::cloud::models::{FlacMetadata, PictureBlockInfo, StreamInfo};
+use crate::cloud::models::{FlacMetadata, PictureBlockInfo, StreamInfo};
 use anyhow::{anyhow, bail, Result};
 
 pub enum ParseProgress {
