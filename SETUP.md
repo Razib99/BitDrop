@@ -64,6 +64,11 @@ sudo snap install flutter --classic
 flutter doctor
 ```
 
+## Step 5: Linux Desktop Audio (Required for Linux local playback)
+```bash
+sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config clang cmake ninja-build libgtk-3-dev
+```
+
 ## Verification
 
 ```bash

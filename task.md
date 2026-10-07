@@ -9,6 +9,14 @@
 - [x] **Task 4: DSP Engine (Rust)** - Implement 10-band Graphic EQ Biquad filter chain in the Oboe output callback.
 - [x] **Task 5: iOS Background Audio** - Added `audio` UIBackgroundModes in Info.plist and AVAudioSession `.playback` category in AppDelegate.swift.
 - [x] **Task 6: iOS/macOS Audio Engine** - Implemented cross-platform `cpal` CoreAudio output callback backend for non-Android targets.
+- [x] **Task 7: Linux Desktop & ALSA Audio Engine** - Implemented native Linux desktop playback via `cpal` + ALSA with `CpalStreamWrapper` for thread safety.
+- [x] **Task 8: Low-Latency Seek & Track Transition Flush** - Implemented instant buffer flushing (`flush_requested`) to eliminate playback delay and bleedover on seeking or track changes.
+- [x] **Task 9: High-Res Audio Real-Time Resampling** - Built runtime linear decimation to match decoded high-res audio (e.g. 192 kHz) to the system output rate (48 kHz / 44.1 kHz), resolving slow-motion playback.
+- [x] **Task 10: Multi-Channel Surround Downmixing** - Added automatic folddown from 5.1/surround channels (and mono duplication) into stereo before output.
+- [x] **Task 11: DSP Equalizer & Preamp Wiring** - Connected 10-band Graphic EQ biquad filters, mapped Bass/Treble simple tone controls, and added pre-amp gain control.
+- [x] **Task 12: Embedded Artwork Extraction & Zero-Flicker Cache** - Extracted FLAC picture metadata in Rust (`get_cover_art`) and added in-memory synchronous artwork caching in Flutter to prevent UI blinking when minimizing.
+- [x] **Task 13: Global Navigation & Docked Mini-Player** - Moved album, artist, and playlist views inside Flutter `ShellRoute` so the Now Playing mini-player stays docked everywhere.
+- [x] **Task 14: Dynamic Loudness Normalization (AGC)** - Implemented Automatic Gain Control limiter and maximizer in the CPAL audio loop.
 
 ## Track A: Google Drive Cloud Architecture (Friend)
 - [x] **Task 1: OAuth2 Authentication** - Set up Google Cloud Platform client credentials and Flutter `google_sign_in` / `extension_google_sign_in_as_googleapis_auth`.

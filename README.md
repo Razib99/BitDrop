@@ -1,7 +1,7 @@
 # BitDrop 🎵
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-Razib99%2FBitDrop-blue?logo=github)](https://github.com/Razib99/BitDrop)
-[![Platform](https://img.shields.io/badge/Platform-Android%2012%2B%20%7C%20iOS-green)]()
+[![Platform](https://img.shields.io/badge/Platform-Android%2012%2B%20%7C%20iOS%20%7C%20Linux-green)]()
 [![Core](https://img.shields.io/badge/Core-Rust-orange?logo=rust)]()
 [![UI](https://img.shields.io/badge/UI-Flutter-blue?logo=flutter)]()
 
@@ -98,15 +98,24 @@ Rather than making false promises, BitDrop dynamically detects the operating sys
 The project is actively being built in two parallel tracks by a 2-person team:
 
 ### Track B: Audio Engine & UI Wiring (Completed ✅)
-- [x] **Spike 3:** Rust FFI Bridge (flutter_rust_bridge v2)
+- [x] **Spike 3:** Rust FFI Bridge (`flutter_rust_bridge` v2)
 - [x] **Spike 4:** NDK Oboe Audio Output bridge (AAudio)
 - [x] **Phase 1: Local Engine & Native Shell**
   - [x] Symphonia decoding pipeline & crossbeam-channel buffering
   - [x] Android Foreground Service (`audio_service` / MediaSession)
   - [x] Explicit Tier output routing (Exclusive -> Shared fallback)
   - [x] Queue Management and seamless gap-aware playback
+  - [x] Cross-platform Linux Desktop (`cpal` + ALSA) & iOS/macOS audio backends
+  - [x] Zero-latency buffer flush on seek and track switching
+  - [x] Dynamic sample rate resampling/decimation for High-Res (e.g. 192 kHz FLAC)
+  - [x] Multi-channel surround downmixing (5.1 folddown to stereo)
 - [x] **Phase 4 (Partial): DSP & Polish**
-  - [x] 10-band Graphic EQ (Transposed Direct Form II Biquad filters) processing at real-time in Rust
+  - [x] 10-band Graphic EQ (Transposed Direct Form II Biquad filters) in real-time Rust DSP
+  - [x] Simple tone controls (Bass & Treble shelves mapped across graphic EQ bands)
+  - [x] Preamp digital gain staging
+  - [x] Dynamic Loudness Normalization / Automatic Gain Control (AGC) limiter
+  - [x] Native FLAC artwork extraction & zero-flicker memory caching
+  - [x] Global navigation shell with permanently docked mini-player across album/artist/playlist routes
 
 ### Track A: Google Drive Architecture (Next Up 🚀)
 - [ ] **Phase 2: Cloud Streaming Core**
