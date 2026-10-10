@@ -79,6 +79,36 @@ class DriveAudioFile {
       'https://www.googleapis.com/drive/v3/files/$id?alt=media';
 }
 
+/// A Drive folder, for the picker.
+@immutable
+class DriveFolder {
+  const DriveFolder({
+    required this.id,
+    required this.name,
+    this.path = '',
+  });
+
+  final String id;
+  final String name;
+
+  /// Display trail, e.g. `My Drive / Music`.
+  final String path;
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'path': path};
+
+  static DriveFolder fromJson(Map<String, dynamic> j) => DriveFolder(
+        id: j['id'] as String,
+        name: j['name'] as String,
+        path: (j['path'] as String?) ?? '',
+      );
+
+  @override
+  bool operator ==(Object other) => other is DriveFolder && other.id == id;
+
+  @override
+  int get hashCode => id.hashCode;
+}
+
 /// Progress while walking the Drive tree.
 @immutable
 class DriveScanProgress {
@@ -326,6 +356,50 @@ class GoogleDriveService {
     void Function(DriveScanProgress)? onProgress,
   }) =>
       scanFolder('root', onProgress: onProgress);
+
+  /// Folders directly inside [parentId]. Use `'root'` for the top level.
+  ///
+  /// Only folders are returned: the picker is for choosing where to look, and
+  /// listing thousands of audio files inside it would make it unusable.
+  Future<List<DriveFolder>> listFolders(
+    String parentId, {
+    String parentPath = 'My Drive',
+  }) async {
+    final api = _driveApi;
+    if (api == null) return const [];
+
+    final out = <DriveFolder>[];
+    String? pageToken;
+    do {
+      try {
+        final page = await api.files.list(
+          q: "'$parentId' in parents and trashed = false and "
+              "mimeType = '$_folderMime'",
+          spaces: 'drive',
+          $fields: 'nextPageToken, files(id, name)',
+          pageSize: 200,
+          pageToken: pageToken,
+          orderBy: 'name',
+        );
+        for (final f in page.files ?? const <drive.File>[]) {
+          final id = f.id;
+          final name = f.name;
+          if (id == null || name == null) continue;
+          out.add(DriveFolder(
+            id: id,
+            name: name,
+            path: '$parentPath / $name',
+          ));
+        }
+        pageToken = page.nextPageToken;
+      } catch (e) {
+        debugPrint('[drive] listing folders in $parentId failed: $e');
+        break;
+      }
+    } while (pageToken != null);
+
+    return out;
+  }
 
   /// Top-level folders, for the onboarding folder picker.
   Future<List<drive.File>> listRootFolders() async {

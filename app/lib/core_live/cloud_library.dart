@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
@@ -29,9 +31,18 @@ class CloudLibrary {
   bool _scanning = false;
   Completer<void>? _cancel;
 
+  /// Folders the user chose to index. Empty means nothing has been chosen
+  /// yet; the scan refuses to run rather than silently walking the whole
+  /// Drive, which on a large account takes a very long time and indexes a lot
+  /// of things that are not music.
+  final _folders = BehaviorSubject<List<DriveFolder>>.seeded(const []);
+
   final _status = BehaviorSubject<SyncStatus>.seeded(SyncStatus.idle);
   final _tracks = BehaviorSubject<List<Track>>.seeded(const []);
   final _albums = BehaviorSubject<List<Album>>.seeded(const []);
+
+  Stream<List<DriveFolder>> get folders => _folders.stream;
+  List<DriveFolder> get currentFolders => _folders.value;
 
   Stream<SyncStatus> get status => _status.stream;
   Stream<List<Track>> get tracks => _tracks.stream;
@@ -84,16 +95,49 @@ class CloudLibrary {
   Track? trackById(String id) =>
       _tracks.value.cast<Track?>().firstWhere((t) => t!.id == id, orElse: () => null);
 
+  /// Where the folder choice is kept. Beside the index, so clearing app data
+  /// drops both together and they can never disagree.
+  File get _folderFile => File('$_dbPath.folders.json');
+
   Future<void> open() async {
     if (_opened) return;
     await rust.cloudLibraryOpen(dbPath: _dbPath);
     _opened = true;
+    await _loadFolders();
+    await _reload();
+  }
+
+  Future<void> _loadFolders() async {
+    try {
+      if (!_folderFile.existsSync()) return;
+      final raw = jsonDecode(await _folderFile.readAsString()) as List<dynamic>;
+      _folders.add(raw
+          .map((e) => DriveFolder.fromJson(e as Map<String, dynamic>))
+          .toList());
+    } catch (e) {
+      debugPrint('[library] could not read folder choice: $e');
+    }
+  }
+
+  /// Replaces the chosen folders. Clears the index, because rows from a
+  /// folder that is no longer selected would otherwise linger forever.
+  Future<void> setFolders(List<DriveFolder> folders) async {
+    await open();
+    _folders.add(folders);
+    try {
+      await _folderFile.writeAsString(
+        jsonEncode(folders.map((f) => f.toJson()).toList()),
+      );
+    } catch (e) {
+      debugPrint('[library] could not save folder choice: $e');
+    }
+    await rust.cloudLibraryClear();
     await _reload();
   }
 
   /// Walks Drive, then reads tags. Safe to call again; a second call while a
   /// scan is running is ignored rather than starting a competing walk.
-  Future<void> scan({String? folderId}) async {
+  Future<void> scan({List<DriveFolder>? only}) async {
     if (_scanning) return;
     if (!_drive.isSignedIn) {
       _status.add(const SyncStatus(
@@ -104,11 +148,20 @@ class CloudLibrary {
     }
 
     await open();
+    final targets = only ?? _folders.value;
+    if (targets.isEmpty) {
+      _status.add(const SyncStatus(
+        phase: SyncPhase.error,
+        detail: 'Choose which folders to index first.',
+      ));
+      return;
+    }
+
     _scanning = true;
     _cancel = Completer<void>();
 
     try {
-      await _listPass(folderId);
+      await _listPass(targets);
       if (_cancel?.isCompleted ?? false) return;
       await _tagPass();
     } catch (e) {
@@ -125,11 +178,11 @@ class CloudLibrary {
   }
 
   /// Pass one: record every audio file by name.
-  Future<void> _listPass(String? folderId) async {
+  Future<void> _listPass(List<DriveFolder> targets) async {
     _status.add(const SyncStatus(phase: SyncPhase.listing));
 
     // Batched so FFI crossings scale with folders, not files.
-    const batchSize = 64;
+    const batchSize = 16;
     final ids = <String>[];
     final names = <String>[];
     final paths = <String>[];
@@ -151,23 +204,30 @@ class CloudLibrary {
       await _reload();
     }
 
-    final stream = folderId == null
-        ? _drive.scanEntireDrive()
-        : _drive.scanFolder(folderId);
-
-    await for (final file in stream) {
+    for (final folder in targets) {
       if (_cancel?.isCompleted ?? false) break;
 
-      ids.add(file.id);
-      names.add(file.name);
-      paths.add(file.folderPath);
-      sizes.add(file.sizeBytes);
-      found++;
+      await for (final file in _drive.scanFolder(
+        folder.id,
+        rootName: folder.name,
+      )) {
+        if (_cancel?.isCompleted ?? false) break;
 
-      if (ids.length >= batchSize) {
-        await flush();
-        _status.add(SyncStatus(phase: SyncPhase.listing, processed: found));
+        ids.add(file.id);
+        names.add(file.name);
+        paths.add(file.folderPath);
+        sizes.add(file.sizeBytes);
+        found++;
+
+        if (ids.length >= batchSize) {
+          await flush();
+          _status.add(SyncStatus(phase: SyncPhase.listing, processed: found));
+        }
       }
+      // Flush per folder as well, so the library fills in as the walk goes
+      // rather than staying empty until a batch happens to fill.
+      await flush();
+      _status.add(SyncStatus(phase: SyncPhase.listing, processed: found));
     }
     await flush();
     _status.add(SyncStatus(phase: SyncPhase.listing, processed: found, total: found));
@@ -373,6 +433,7 @@ class CloudLibrary {
 
   void dispose() {
     cancelScan();
+    unawaited(_folders.close());
     unawaited(_status.close());
     unawaited(_tracks.close());
     unawaited(_albums.close());

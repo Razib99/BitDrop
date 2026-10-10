@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +10,7 @@ import '../../l10n/l10n.dart';
 import '../../core_api/enums.dart';
 import '../../providers/core_providers.dart';
 import '../storage/google_drive_service.dart';
+import 'folder_picker.dart';
 import '../../util/format.dart';
 import '../../routing/routes.dart';
 import '../../theme/app_theme.dart';
@@ -66,7 +69,14 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                 // A real connection drives the real library; the mock core
                 // still backs the other scenarios in the switcher.
                 onRescan: s.id == 'drive'
-                    ? () => ref.read(cloudLibraryProvider).scan()
+                    ? () {
+                        final library = ref.read(cloudLibraryProvider);
+                        if (library.currentFolders.isEmpty) {
+                          unawaited(showDriveFolderPicker(context));
+                        } else {
+                          unawaited(library.scan());
+                        }
+                      }
                     : () => sendCommand(ref, Rescan(sourceId: s.id)),
                 onEditFolders: () => _showFolderPicker(context),
                 onReconnect: s.status == SourceStatus.needsReconnect
@@ -140,13 +150,8 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     }
   }
 
-  void _showFolderPicker(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => const FolderPickerSheet(),
-    );
-  }
+  void _showFolderPicker(BuildContext context) =>
+      unawaited(showDriveFolderPicker(context));
 }
 
 class _ProviderTile extends StatelessWidget {
@@ -307,7 +312,6 @@ class _ConnectDriveCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.c;
     final drive = ref.watch(driveServiceProvider);
-    final library = ref.watch(cloudLibraryProvider);
 
     // Linux and Windows ship no Google Sign-In plugin, so offering a button
     // that cannot work would be worse than saying so plainly.
@@ -440,7 +444,9 @@ class _ConnectDriveCard extends ConsumerWidget {
               onPressed: () async {
                 final result = await drive.signIn();
                 if (result == DriveConnectResult.connected) {
-                  await library.scan();
+                  // Straight to the picker: scanning an entire Drive is slow
+                  // and indexes a lot that is not music.
+                  if (context.mounted) await showDriveFolderPicker(context);
                   return;
                 }
                 final message = result.message;
