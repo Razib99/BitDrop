@@ -224,18 +224,14 @@ class _ConnectSourceState extends ConsumerState<_ConnectSource> {
 
   Future<void> _handleDriveLogin() async {
     setState(() => _isSigningIn = true);
-    final ok = await _driveService.signIn();
+    final result = await _driveService.signIn();
     if (!mounted) return;
     setState(() => _isSigningIn = false);
 
-    if (!ok) {
+    final message = result.message;
+    if (message != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Could not connect to Google Drive. If you saw an "unverified '
-            'app" warning, choose Advanced and continue.',
-          ),
-        ),
+        SnackBar(content: Text(message), duration: const Duration(seconds: 6)),
       );
     }
   }

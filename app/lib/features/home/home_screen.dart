@@ -8,6 +8,7 @@ import '../../core_api/models.dart';
 import '../../core_api/queries.dart';
 import '../../l10n/l10n.dart';
 import '../../providers/core_providers.dart';
+import '../storage/google_drive_service.dart';
 import '../../routing/routes.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
@@ -24,11 +25,16 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sources = ref.watch(sourcesProvider).valueOrNull ?? const [];
-    if (sources.isEmpty) return const _NoSourceHome();
-
     final signal = ref.watch(signalPathProvider).valueOrNull;
     final sync = ref.watch(syncStatusProvider).valueOrNull ?? SyncStatus.idle;
     final albumsAsync = ref.watch(albumsProvider(const AlbumQuery()));
+
+    // Emptiness is about content, not about connections: local files are a
+    // perfectly good library, and on desktop they are the only one available.
+    final hasContent = (albumsAsync.valueOrNull?.items.isNotEmpty) ?? false;
+    if (sources.isEmpty && !hasContent && !albumsAsync.isLoading) {
+      return const _NoSourceHome();
+    }
     final nowPlaying = ref.watch(nowPlayingProvider).valueOrNull;
     final settings = ref.watch(settingsValueProvider);
 
@@ -144,15 +150,25 @@ class _NoSourceHome extends ConsumerWidget {
           ],
         ),
         Expanded(
-          child: EmptyState(
-            icon: Icons.cloud_off,
-            title: 'No music source yet',
-            message:
-                'BitDrop streams from your own cloud. Connect Google Drive '
-                'and your library appears in seconds — no servers in between.',
-            actionLabel: 'Connect Google Drive',
-            onAction: () => context.push(Routes.onboarding),
-          ),
+          child: GoogleDriveService.isPlatformSupported
+              ? EmptyState(
+                  icon: Icons.cloud_off,
+                  title: 'No music source yet',
+                  message:
+                      'BitDrop streams from your own cloud. Connect Google '
+                      'Drive and your library appears in seconds — no servers '
+                      'in between.',
+                  actionLabel: 'Connect Google Drive',
+                  onAction: () => context.push(Routes.onboarding),
+                )
+              : const EmptyState(
+                  icon: Icons.desktop_access_disabled,
+                  title: 'No music here yet',
+                  message:
+                      'Google Drive sign-in has no desktop implementation, so '
+                      'the cloud library is only available in the Android and '
+                      'iOS builds. Local files still play here.',
+                ),
         ),
       ],
     );

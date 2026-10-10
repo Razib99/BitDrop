@@ -7,6 +7,7 @@ import '../../core_api/models.dart';
 import '../../l10n/l10n.dart';
 import '../../core_api/enums.dart';
 import '../../providers/core_providers.dart';
+import '../storage/google_drive_service.dart';
 import '../../util/format.dart';
 import '../../routing/routes.dart';
 import '../../theme/app_theme.dart';
@@ -71,9 +72,11 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                 onReconnect: s.status == SourceStatus.needsReconnect
                     ? () async {
                         if (s.id == 'drive') {
-                          final ok =
+                          final r =
                               await ref.read(driveServiceProvider).signIn();
-                          if (ok) await ref.read(cloudLibraryProvider).scan();
+                          if (r == DriveConnectResult.connected) {
+                            await ref.read(cloudLibraryProvider).scan();
+                          }
                         } else {
                           sendCommand(ref, ReconnectSource(s.id));
                         }
@@ -86,10 +89,14 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
         _ProviderTile(
           icon: Icons.add_to_drive,
           name: 'Google Drive',
-          detail: sources.isEmpty
-              ? 'Not connected'
-              : 'Connected · ${sources.first.accountLabel}',
-          available: true,
+          detail: !GoogleDriveService.isPlatformSupported
+              ? 'Needs the Android or iOS build'
+              : (sources.isEmpty
+                  ? 'Not connected'
+                  : 'Connected · ${sources.first.accountLabel}'),
+          // Greyed on desktop for the same reason as the card above: it is
+          // not something the user can act on here.
+          available: GoogleDriveService.isPlatformSupported,
         ),
         const _ProviderTile(
           icon: Icons.cloud_outlined,
@@ -302,6 +309,11 @@ class _ConnectDriveCard extends ConsumerWidget {
     final drive = ref.watch(driveServiceProvider);
     final library = ref.watch(cloudLibraryProvider);
 
+    // Linux and Windows ship no Google Sign-In plugin, so offering a button
+    // that cannot work would be worse than saying so plainly.
+    final supported = GoogleDriveService.isPlatformSupported;
+    final accent = supported ? c.accent : c.tierResampled;
+
     return Container(
       margin: const EdgeInsets.fromLTRB(
           Spacing.md, Spacing.xs, Spacing.md, Spacing.xs),
@@ -309,7 +321,7 @@ class _ConnectDriveCard extends ConsumerWidget {
       decoration: BoxDecoration(
         color: c.surface1,
         borderRadius: Radii.cardR,
-        border: Border.all(color: c.accent.withOpacity(0.5)),
+        border: Border.all(color: accent.withOpacity(0.5)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -323,8 +335,11 @@ class _ConnectDriveCard extends ConsumerWidget {
                   color: c.surface3,
                   borderRadius: Radii.chipR,
                 ),
-                child: Icon(Icons.add_to_drive,
-                    size: 20, color: c.textSecondary),
+                child: Icon(
+                  supported ? Icons.add_to_drive : Icons.desktop_access_disabled,
+                  size: 20,
+                  color: supported ? c.textSecondary : accent,
+                ),
               ),
               const SizedBox(width: Spacing.sm),
               Expanded(
@@ -334,9 +349,11 @@ class _ConnectDriveCard extends ConsumerWidget {
                     Text('Google Drive', style: context.t.titleSmall),
                     const SizedBox(height: 2),
                     Text(
-                      'Not connected',
+                      supported
+                          ? 'Not connected'
+                          : 'Not available on this platform',
                       style: context.t.bodySmall
-                          .copyWith(color: c.textSecondary),
+                          .copyWith(color: supported ? c.textSecondary : accent),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -393,12 +410,48 @@ class _ConnectDriveCard extends ConsumerWidget {
             ),
           ],
           const SizedBox(height: Spacing.sm),
+          if (!supported) ...[
+            const SizedBox(height: Spacing.sm),
+            Text(
+              'Google Sign-In has no desktop implementation, so BitDrop '
+              'cannot reach your Drive from here. Run the Android or iOS '
+              'build to connect your cloud library.',
+              style: context.t.bodySmall.copyWith(color: c.textSecondary),
+            ),
+            const SizedBox(height: Spacing.xs),
+            Row(
+              children: [
+                Icon(Icons.check_circle_outline, size: 14, color: c.success),
+                const SizedBox(width: Spacing.xxs),
+                Expanded(
+                  child: Text(
+                    'Everything else works here: local files, playback, the '
+                    'equaliser and the signal path.',
+                    style: context.t.bodySmall
+                        .copyWith(color: c.textSecondary),
+                  ),
+                ),
+              ],
+            ),
+          ] else
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
               onPressed: () async {
-                final ok = await drive.signIn();
-                if (ok) await library.scan();
+                final result = await drive.signIn();
+                if (result == DriveConnectResult.connected) {
+                  await library.scan();
+                  return;
+                }
+                final message = result.message;
+                if (message != null && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(message),
+                      duration: const Duration(seconds: 6),
+                    ),
+                  );
+                }
               },
               icon: const Icon(Icons.login, size: 16),
               label: const Text('Connect Google Drive'),

@@ -2,8 +2,44 @@ import 'dart:async';
 
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
+
+/// Why a connection attempt ended the way it did.
+///
+/// "Failed" and "not possible here" are different things and must read
+/// differently: telling a desktop user their credentials are wrong when the
+/// platform has no sign-in plugin at all would send them hunting a bug that
+/// does not exist.
+enum DriveConnectResult {
+  connected,
+
+  /// The user dismissed the account picker.
+  cancelled,
+
+  /// google_sign_in has no implementation for this platform. Linux and
+  /// Windows ship no plugin, so the call would throw MissingPluginException.
+  unsupportedPlatform,
+
+  /// Reached Google and was refused, or the network failed.
+  failed,
+}
+
+extension DriveConnectResultMessage on DriveConnectResult {
+  /// What to tell the user. Null when there is nothing to say, i.e. they
+  /// connected, or chose to back out themselves.
+  String? get message => switch (this) {
+        DriveConnectResult.connected => null,
+        DriveConnectResult.cancelled => null,
+        DriveConnectResult.unsupportedPlatform =>
+          'Google Drive sign-in is not available on this platform. '
+              'Use the Android or iOS build to connect your cloud library.',
+        DriveConnectResult.failed =>
+          'Could not connect to Google Drive. If you saw an "unverified app" '
+              'warning, choose Advanced and continue.',
+      };
+}
 
 /// One audio file found in the user's Drive.
 ///
@@ -64,6 +100,12 @@ class DriveScanProgress {
 /// written back.
 class GoogleDriveService {
   GoogleDriveService() {
+    if (!isPlatformSupported) {
+      debugPrint('[drive] Google Sign-In is unavailable on this platform; '
+          'cloud features are disabled.');
+      return;
+    }
+
     _googleSignIn.onCurrentUserChanged.listen((account) {
       _accountController.add(account);
       if (account == null) {
@@ -72,8 +114,10 @@ class GoogleDriveService {
         unawaited(_initDriveApi());
       }
     });
-    // Restores a previous session without showing UI.
-    unawaited(_googleSignIn.signInSilently());
+    // Restoring a session would throw on a platform with no plugin.
+    if (isPlatformSupported) {
+      unawaited(_googleSignIn.signInSilently());
+    }
   }
 
   /// Extensions the Rust engine can actually decode. Anything else in the
@@ -93,6 +137,16 @@ class GoogleDriveService {
   };
 
   static const _folderMime = 'application/vnd.google-apps.folder';
+
+  /// Whether Google Sign-In exists on this platform at all.
+  ///
+  /// google_sign_in resolves implementations for Android, iOS and web only.
+  /// On Linux and Windows the plugin list is empty, so every call throws.
+  /// Checked up front so the UI can explain rather than fail.
+  static bool get isPlatformSupported =>
+      kIsWeb ||
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
 
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: [drive.DriveApi.driveReadonlyScope],
@@ -116,19 +170,28 @@ class GoogleDriveService {
     }
   }
 
-  Future<bool> signIn() async {
+  Future<DriveConnectResult> signIn() async {
+    if (!isPlatformSupported) return DriveConnectResult.unsupportedPlatform;
+
     try {
       final account = await _googleSignIn.signIn();
-      if (account == null) return false; // user dismissed the picker
+      if (account == null) return DriveConnectResult.cancelled;
       await _initDriveApi();
-      return _driveApi != null;
+      return _driveApi != null
+          ? DriveConnectResult.connected
+          : DriveConnectResult.failed;
+    } on MissingPluginException {
+      // Belt and braces: the platform check above should already have caught
+      // this, but a partial plugin registration would land here.
+      return DriveConnectResult.unsupportedPlatform;
     } catch (e) {
       debugPrint('[drive] sign-in failed: $e');
-      return false;
+      return DriveConnectResult.failed;
     }
   }
 
   Future<void> signOut() async {
+    if (!isPlatformSupported) return;
     try {
       await _googleSignIn.signOut();
       _driveApi = null;
@@ -145,6 +208,7 @@ class GoogleDriveService {
   /// also covers the roughly weekly re-consent that Google's testing mode
   /// forces.
   Future<String?> freshAccessToken() async {
+    if (!isPlatformSupported) return null;
     try {
       var account = _googleSignIn.currentUser;
       account ??= await _googleSignIn.signInSilently();
