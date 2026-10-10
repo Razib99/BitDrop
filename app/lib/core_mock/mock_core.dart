@@ -1038,8 +1038,9 @@ class MockBitDropCore implements BitDropCore {
           t.availability != Availability.cached) {
         return false;
       }
-      if (f.codecs.isNotEmpty && !f.codecs.contains(t.format.codec))
+      if (f.codecs.isNotEmpty && !f.codecs.contains(t.format.codec)) {
         return false;
+      }
       if (!_matchesQuality(t.format, f.quality)) return false;
       return true;
     }
@@ -1320,8 +1321,9 @@ class MockBitDropCore implements BitDropCore {
         _playAtOrSkip(shuffle ? 0 : startIndex);
 
       case Pause():
-        if (_playback.value is PlayingState)
+        if (_playback.value is PlayingState) {
           _playback.emit(const PausedState());
+        }
 
       case Resume():
         if (_nowPlaying.value != null) _playback.emit(const PlayingState());
