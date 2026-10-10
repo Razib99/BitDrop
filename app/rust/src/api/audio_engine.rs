@@ -1,5 +1,9 @@
 #[cfg(target_os = "android")]
-use oboe::{AudioStreamBuilder, PerformanceMode, SharingMode, AudioApi, AudioOutputCallback, AudioStream, DataCallbackResult};
+use oboe::{
+    AudioApi, AudioOutputCallback, AudioOutputStreamSafe, AudioStream, AudioStreamAsync,
+    AudioStreamBase,
+    AudioStreamBuilder, DataCallbackResult, Output, PerformanceMode, SharingMode, Stereo,
+};
 use std::sync::{Arc, Mutex};
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
@@ -18,7 +22,8 @@ lazy_static::lazy_static! {
 
 #[cfg(target_os = "android")]
 lazy_static::lazy_static! {
-    static ref ACTIVE_STREAM: Mutex<Option<AudioStream<oboe::Output, f32>>> = Mutex::new(None);
+    static ref ACTIVE_STREAM: Mutex<Option<AudioStreamAsync<Output, PlayerCallback>>> =
+        Mutex::new(None);
 }
 
 
@@ -31,8 +36,11 @@ lazy_static::lazy_static! {
     static ref CPAL_STREAM: Mutex<CpalStreamWrapper> = Mutex::new(CpalStreamWrapper(None));
 }
 
+#[cfg(not(target_os = "android"))]
 pub struct CpalStreamWrapper(Option<cpal::Stream>);
+#[cfg(not(target_os = "android"))]
 unsafe impl Send for CpalStreamWrapper {}
+#[cfg(not(target_os = "android"))]
 unsafe impl Sync for CpalStreamWrapper {}
 
 lazy_static::lazy_static! {
@@ -218,58 +226,71 @@ struct PlayerCallback {
 
 #[cfg(target_os = "android")]
 impl AudioOutputCallback for PlayerCallback {
-    type FrameType = (f32,);
-    fn on_audio_ready(&mut self, _stream: &mut dyn oboe::AudioOutputStreamSafe, audio_data: &mut [f32]) -> DataCallbackResult {
-        let (is_playing, eq_enabled, eq_updated, gains) = {
+    // Oboe hands stereo f32 frames over as (left, right) pairs, not as an
+    // interleaved flat slice. The decoder's buffers are interleaved, so this
+    // callback is where the two representations meet.
+    type FrameType = (f32, Stereo);
+
+    fn on_audio_ready(
+        &mut self,
+        _stream: &mut dyn AudioOutputStreamSafe,
+        audio_data: &mut [(f32, f32)],
+    ) -> DataCallbackResult {
+        // One short lock, then nothing else blocking: this runs on the
+        // real-time audio thread and must not allocate or wait.
+        let (is_playing, eq_enabled, eq_updated, gains, preamp) = {
             let mut state = PLAYER_STATE.lock().unwrap();
             let up = state.eq_updated;
             state.eq_updated = false;
-            (state.is_playing, state.eq_enabled, up, state.eq_gains)
+            (
+                state.is_playing,
+                state.eq_enabled,
+                up,
+                state.eq_gains,
+                state.eq_preamp,
+            )
         };
-        
+
         if eq_updated {
-            self.eq.update_gains(&gains);
+            self.eq.update_gains(&gains, preamp);
         }
 
         if !is_playing {
-            for sample in audio_data.iter_mut() { *sample = 0.0; }
+            for frame in audio_data.iter_mut() {
+                *frame = (0.0, 0.0);
+            }
             return DataCallbackResult::Continue;
         }
 
-        let mut out_idx = 0;
-        while out_idx < audio_data.len() {
-            if self.buffer_idx >= self.current_buffer.len() {
-                if let Ok(new_buf) = self.receiver.try_recv() {
-                    self.current_buffer = new_buf;
-                    self.buffer_idx = 0;
-                } else {
-                    for i in out_idx..audio_data.len() { audio_data[i] = 0.0; }
-                    break;
+        for frame in audio_data.iter_mut() {
+            // Refill from the decoder when the current buffer runs out. A
+            // miss means underrun: write silence rather than block.
+            if self.buffer_idx + 1 >= self.current_buffer.len() {
+                match self.receiver.try_recv() {
+                    Ok(next) => {
+                        self.current_buffer = next;
+                        self.buffer_idx = 0;
+                    }
+                    Err(_) => {
+                        *frame = (0.0, 0.0);
+                        continue;
+                    }
                 }
             }
-            
-            let frames_to_write = (audio_data.len() - out_idx) / 2; // Assuming stereo output!
-            let frames_available = (self.current_buffer.len() - self.buffer_idx) / 2;
-            let frames = std::cmp::min(frames_to_write, frames_available);
-            
-            for _ in 0..frames {
-                let mut l = self.current_buffer[self.buffer_idx];
-                let mut r = self.current_buffer[self.buffer_idx + 1];
-                
-                if eq_enabled {
-                    let processed = self.eq.process_stereo(l, r);
-                    l = processed.0;
-                    r = processed.1;
-                }
-                
-                audio_data[out_idx] = l;
-                audio_data[out_idx + 1] = r;
-                
-                self.buffer_idx += 2;
-                out_idx += 2;
+
+            let mut l = self.current_buffer[self.buffer_idx];
+            let mut r = self.current_buffer[self.buffer_idx + 1];
+            self.buffer_idx += 2;
+
+            if eq_enabled {
+                let (pl, pr) = self.eq.process_stereo(l, r);
+                l = pl;
+                r = pr;
             }
+
+            *frame = (l, r);
         }
-        
+
         DataCallbackResult::Continue
     }
 }
@@ -375,41 +396,59 @@ pub fn init_engine() {
 
     #[cfg(target_os = "android")]
     {
-        let callback = PlayerCallback {
-            receiver: rx,
-            current_buffer: Vec::new(),
-            buffer_idx: 0,
-            eq: GraphicEq::new(44100.0), // TODO: dynamic sample rate
+        // Oboe's builder is type-state: each setter consumes the builder and
+        // returns a differently-typed one, so this has to be a single chain.
+        // set_callback is only available once direction, channels and format
+        // are fixed, and it checks them against the callback's FrameType.
+        fn make_callback(rx: crossbeam_channel::Receiver<Vec<f32>>) -> PlayerCallback {
+            PlayerCallback {
+                receiver: rx,
+                current_buffer: Vec::new(),
+                buffer_idx: 0,
+                // The decoder resamples to the stream rate before sending, so
+                // the filters are designed for the output rate.
+                eq: GraphicEq::new(48000.0),
+            }
+        }
+
+        // Exclusive + LowLatency is the path worth having: it is what gets
+        // closest to the hardware. Oboe may silently downgrade sharing mode,
+        // so a failure here is not fatal.
+        let opened = AudioStreamBuilder::default()
+            .set_performance_mode(PerformanceMode::LowLatency)
+            .set_sharing_mode(SharingMode::Exclusive)
+            .set_audio_api(AudioApi::AAudio)
+            .set_output()
+            .set_stereo()
+            .set_f32()
+            .set_callback(make_callback(audio_rx.clone()))
+            .open_stream();
+
+        let opened = match opened {
+            Ok(stream) => Some(stream),
+            Err(e) => {
+                eprintln!("[bitdrop] exclusive stream unavailable ({e:?}); \
+                           falling back to shared");
+                // Shared mode with no low-latency demand works on far more
+                // devices, including every pre-Android-14 phone.
+                AudioStreamBuilder::default()
+                    .set_performance_mode(PerformanceMode::None)
+                    .set_sharing_mode(SharingMode::Shared)
+                    .set_output()
+                    .set_stereo()
+                    .set_f32()
+                    .set_callback(make_callback(audio_rx.clone()))
+                    .open_stream()
+                    .map_err(|e| eprintln!("[bitdrop] no audio output: {e:?}"))
+                    .ok()
+            }
         };
-        
-        let mut builder = AudioStreamBuilder::default();
-        builder.set_performance_mode(PerformanceMode::LowLatency)
-               .set_sharing_mode(SharingMode::Exclusive) // Oboe auto-falls back to Shared if unavailable
-               .set_format(oboe::AudioFormat::Float)
-               .set_channel_count(oboe::ChannelCount::Stereo)
-               .set_audio_api(AudioApi::AAudio)
-               .set_callback(callback);
-               
-        if let Ok(mut stream) = builder.open_stream() {
+
+        if let Some(mut stream) = opened {
+            PLAYER_STATE.lock().unwrap().target_sample_rate =
+                stream.get_sample_rate() as u32;
             let _ = stream.start();
             *ACTIVE_STREAM.lock().unwrap() = Some(stream);
-        } else {
-            // Fallback to shared explicitly
-            let mut fallback_builder = AudioStreamBuilder::default();
-            fallback_builder.set_performance_mode(PerformanceMode::None)
-                   .set_sharing_mode(SharingMode::Shared)
-                   .set_format(oboe::AudioFormat::Float)
-                   .set_channel_count(oboe::ChannelCount::Stereo)
-                   .set_callback(PlayerCallback {
-                       receiver: crossbeam_channel::bounded(20).1, // dummy if it fails here
-                       current_buffer: Vec::new(),
-                       buffer_idx: 0,
-                       eq: GraphicEq::new(44100.0),
-                   }); // Actually we need to recreate the callback/receiver safely, but Oboe's auto-fallback usually handles it.
-            if let Ok(mut stream) = fallback_builder.open_stream() {
-                let _ = stream.start();
-                *ACTIVE_STREAM.lock().unwrap() = Some(stream);
-            }
         }
     }
 
