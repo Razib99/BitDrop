@@ -228,16 +228,21 @@ class ScenarioSheet extends ConsumerWidget {
               );
               
               if (result != null && result.files.single.bytes != null) {
+                // Captured before the await above resolves: the widget may be
+                // gone by the time the picker returns, and looking the
+                // messenger up from a dead context would throw.
+                if (!context.mounted) return;
+                final messenger = ScaffoldMessenger.of(context);
                 try {
                   final bytes = result.files.single.bytes!;
                   // We need to convert Uint8List to List<int>
                   final decoded = rust_api.decodeFlacFull(audioData: bytes.toList());
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  messenger.showSnackBar(SnackBar(
                     content: Text('✅ Rust Success: ${decoded.sampleRate}Hz, ${decoded.channels}Ch. Extracted ${decoded.firstFrameSamples.length} samples.'),
                     duration: const Duration(seconds: 5),
                   ));
                 } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  messenger.showSnackBar(SnackBar(
                     content: Text('❌ Rust FFI Error: $e'),
                     duration: const Duration(seconds: 5),
                   ));

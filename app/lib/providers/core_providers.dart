@@ -6,12 +6,11 @@ import '../core_api/models.dart';
 import '../core_api/queries.dart';
 import '../core_api/settings.dart';
 import '../core_mock/dev_env.dart';
-import '../core_mock/mock_core.dart';
 import '../core_mock/scenarios.dart';
 import '../core_live/live_core.dart';
 import '../core_live/audio_handler.dart';
-import 'package:audio_service/audio_service.dart' hide PlaybackState;
 
+import '../core_live/cloud_library.dart';
 import '../features/storage/google_drive_service.dart';
 
 late final BitDropAudioHandler globalAudioHandler;
@@ -25,6 +24,17 @@ late final GoogleDriveService globalDriveService;
 final driveServiceProvider =
     Provider<GoogleDriveService>((ref) => globalDriveService);
 
+/// The cloud index. Also created in `main()`, because the core needs it at
+/// construction time.
+late final CloudLibrary globalCloudLibrary;
+
+final cloudLibraryProvider =
+    Provider<CloudLibrary>((ref) => globalCloudLibrary);
+
+/// Live scan progress, for the Home banner and the Sources card.
+final cloudScanStatusProvider =
+    StreamProvider((ref) => ref.watch(cloudLibraryProvider).status);
+
 /// The signed-in Google account, or null. Drives the Sources screen and the
 /// "needs reconnection" banner.
 final driveAccountProvider = StreamProvider((ref) =>
@@ -34,7 +44,10 @@ final driveAccountProvider = StreamProvider((ref) =>
 /// The single core instance. In production this is replaced by the
 /// flutter_rust_bridge handle; nothing above this line changes.
 final coreProvider = Provider<BitDropCore>((ref) {
-  final core = LiveBitDropCore(globalAudioHandler);
+  final core = LiveBitDropCore(
+    globalAudioHandler,
+    cloudLibrary: globalCloudLibrary,
+  );
   ref.onDispose(core.dispose);
   return core;
 });

@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/audio_engine.dart';
+import 'api/cloud_library.dart';
 import 'api/simple.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -26,16 +27,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  CloudTrack dco_decode_cloud_track(dynamic raw);
+
+  @protected
   DecodedAudio dco_decode_decoded_audio(dynamic raw);
 
   @protected
   double dco_decode_f_32(dynamic raw);
 
   @protected
+  List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<CloudTrack> dco_decode_list_cloud_track(dynamic raw);
+
+  @protected
   List<double> dco_decode_list_prim_f_32_loose(dynamic raw);
 
   @protected
   Float32List dco_decode_list_prim_f_32_strict(dynamic raw);
+
+  @protected
+  Uint64List dco_decode_list_prim_u_64_strict(dynamic raw);
 
   @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
@@ -51,6 +64,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  ScanCounts dco_decode_scan_counts(dynamic raw);
 
   @protected
   TrackMetadata dco_decode_track_metadata(dynamic raw);
@@ -74,16 +90,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  CloudTrack sse_decode_cloud_track(SseDeserializer deserializer);
+
+  @protected
   DecodedAudio sse_decode_decoded_audio(SseDeserializer deserializer);
 
   @protected
   double sse_decode_f_32(SseDeserializer deserializer);
 
   @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<CloudTrack> sse_decode_list_cloud_track(SseDeserializer deserializer);
+
+  @protected
   List<double> sse_decode_list_prim_f_32_loose(SseDeserializer deserializer);
 
   @protected
   Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer);
+
+  @protected
+  Uint64List sse_decode_list_prim_u_64_strict(SseDeserializer deserializer);
 
   @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
@@ -100,6 +128,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  ScanCounts sse_decode_scan_counts(SseDeserializer deserializer);
 
   @protected
   TrackMetadata sse_decode_track_metadata(SseDeserializer deserializer);
@@ -126,10 +157,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_cloud_track(CloudTrack self, SseSerializer serializer);
+
+  @protected
   void sse_encode_decoded_audio(DecodedAudio self, SseSerializer serializer);
 
   @protected
   void sse_encode_f_32(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_cloud_track(
+      List<CloudTrack> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_f_32_loose(
@@ -138,6 +179,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_prim_f_32_strict(
       Float32List self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_prim_u_64_strict(
+      Uint64List self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
@@ -156,6 +201,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_list_prim_u_8_strict(
       Uint8List? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_scan_counts(ScanCounts self, SseSerializer serializer);
 
   @protected
   void sse_encode_track_metadata(TrackMetadata self, SseSerializer serializer);

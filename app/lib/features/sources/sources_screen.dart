@@ -5,7 +5,9 @@ import 'package:go_router/go_router.dart';
 import '../../core_api/commands.dart';
 import '../../core_api/models.dart';
 import '../../l10n/l10n.dart';
+import '../../core_api/enums.dart';
 import '../../providers/core_providers.dart';
+import '../../util/format.dart';
 import '../../routing/routes.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
@@ -29,6 +31,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
   @override
   Widget build(BuildContext context) {
     final sources = ref.watch(sourcesProvider).valueOrNull ?? const [];
+    final scan = ref.watch(cloudScanStatusProvider).valueOrNull ?? SyncStatus.idle;
     final l = context.l10n;
 
     return ListView(
@@ -49,19 +52,8 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
             ],
           ),
         ),
-        if (sources.isEmpty)
-          SizedBox(
-            height: 420,
-            child: EmptyState(
-              icon: Icons.cloud_off,
-              title: 'No sources connected',
-              message: 'BitDrop plays from your own cloud storage. Nothing is '
-                  'uploaded, and there is no BitDrop server in between.',
-              actionLabel: 'Connect Google Drive',
-              onAction: () => context.push(Routes.onboarding),
-            ),
-          )
-        else
+        if (sources.isEmpty) _ConnectDriveCard(scan: scan),
+        if (sources.isNotEmpty)
           for (final s in sources)
             Padding(
               padding: const EdgeInsets.fromLTRB(
@@ -70,19 +62,33 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                 account: s,
                 showAdvanced: _advanced,
                 onToggleAdvanced: () => setState(() => _advanced = !_advanced),
-                onRescan: () => sendCommand(ref, Rescan(sourceId: s.id)),
+                // A real connection drives the real library; the mock core
+                // still backs the other scenarios in the switcher.
+                onRescan: s.id == 'drive'
+                    ? () => ref.read(cloudLibraryProvider).scan()
+                    : () => sendCommand(ref, Rescan(sourceId: s.id)),
                 onEditFolders: () => _showFolderPicker(context),
                 onReconnect: s.status == SourceStatus.needsReconnect
-                    ? () => sendCommand(ref, ReconnectSource(s.id))
+                    ? () async {
+                        if (s.id == 'drive') {
+                          final ok =
+                              await ref.read(driveServiceProvider).signIn();
+                          if (ok) await ref.read(cloudLibraryProvider).scan();
+                        } else {
+                          sendCommand(ref, ReconnectSource(s.id));
+                        }
+                      }
                     : null,
                 onRemove: () => _confirmRemove(context, s),
               ),
             ),
         const SectionHeader(title: 'Add a source'),
-        const _ProviderTile(
+        _ProviderTile(
           icon: Icons.add_to_drive,
           name: 'Google Drive',
-          detail: 'Connected',
+          detail: sources.isEmpty
+              ? 'Not connected'
+              : 'Connected · ${sources.first.accountLabel}',
           available: true,
         ),
         const _ProviderTile(
@@ -118,7 +124,13 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
       confirmLabel: context.l10n.actionRemove,
       destructive: true,
     );
-    if (ok) sendCommand(ref, RemoveSource(s.id));
+    if (!ok) return;
+    if (s.id == 'drive') {
+      await ref.read(driveServiceProvider).signOut();
+      await ref.read(cloudLibraryProvider).clear();
+    } else {
+      sendCommand(ref, RemoveSource(s.id));
+    }
   }
 
   void _showFolderPicker(BuildContext context) {
@@ -270,6 +282,128 @@ class _FolderPickerSheetState extends ConsumerState<FolderPickerSheet> {
                 color: context.c.tierResampled),
           ),
           const SizedBox(height: Spacing.md),
+        ],
+      ),
+    );
+  }
+}
+
+
+/// The live Google Drive connection: who is signed in, what the scan is doing,
+/// and the actions that move it along.
+class _ConnectDriveCard extends ConsumerWidget {
+  const _ConnectDriveCard({required this.scan});
+
+  final SyncStatus scan;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.c;
+    final drive = ref.watch(driveServiceProvider);
+    final library = ref.watch(cloudLibraryProvider);
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(
+          Spacing.md, Spacing.xs, Spacing.md, Spacing.xs),
+      padding: const EdgeInsets.all(Spacing.sm),
+      decoration: BoxDecoration(
+        color: c.surface1,
+        borderRadius: Radii.cardR,
+        border: Border.all(color: c.accent.withOpacity(0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: c.surface3,
+                  borderRadius: Radii.chipR,
+                ),
+                child: Icon(Icons.add_to_drive,
+                    size: 20, color: c.textSecondary),
+              ),
+              const SizedBox(width: Spacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Google Drive', style: context.t.titleSmall),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Not connected',
+                      style: context.t.bodySmall
+                          .copyWith(color: c.textSecondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (scan.phase != SyncPhase.idle) ...[
+            const SizedBox(height: Spacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    switch (scan.phase) {
+                      SyncPhase.listing =>
+                        'Finding music · ${Fmt.count(scan.processed)} files',
+                      SyncPhase.tags =>
+                        'Reading tags · ${Fmt.count(scan.processed)} of '
+                            '${Fmt.count(scan.total)}',
+                      SyncPhase.paused =>
+                        scan.detail ?? 'Paused',
+                      SyncPhase.error => scan.detail ?? 'Scan failed',
+                      SyncPhase.idle => '',
+                    },
+                    style: context.t.bodySmall,
+                  ),
+                ),
+                if (scan.total > 0)
+                  Text(Fmt.percent(scan.progress),
+                      style: context.t.monoReadout
+                          .copyWith(color: c.textSecondary)),
+              ],
+            ),
+            const SizedBox(height: Spacing.xxs),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: SizedBox(
+                height: 4,
+                child: LinearProgressIndicator(
+                  // Listing has no known total until it finishes, so it shows
+                  // as indeterminate rather than inventing a denominator.
+                  value: scan.phase == SyncPhase.listing && scan.total == 0
+                      ? null
+                      : scan.progress,
+                  backgroundColor: c.surface3,
+                  color: scan.phase == SyncPhase.error
+                      ? c.error
+                      : (scan.phase == SyncPhase.paused
+                          ? c.tierResampled
+                          : c.accent),
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: Spacing.sm),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: () async {
+                final ok = await drive.signIn();
+                if (ok) await library.scan();
+              },
+              icon: const Icon(Icons.login, size: 16),
+              label: const Text('Connect Google Drive'),
+            ),
+          ),
         ],
       ),
     );

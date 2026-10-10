@@ -6,6 +6,9 @@ analyzer:
   exclude:
     - "**/*.g.dart"
     - "lib/l10n/app_localizations*.dart"
+    # flutter_rust_bridge output: regenerated on every build,
+    # so any fix applied here is undone by the next codegen.
+    - "lib/src/rust/**"
 
 linter:
   rules:

@@ -89,7 +89,7 @@ class AlbumArtwork extends StatelessWidget {
   Future<Uint8List?> _loadArt(String path) async {
     if (_imageCache.containsKey(path)) return _imageCache[path];
     try {
-      final data = await rust.getCoverArt(path: path);
+      final data = rust.getCoverArt(path: path);
       if (data != null) _imageCache[path] = data;
       return data;
     } catch (e) {

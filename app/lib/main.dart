@@ -11,6 +11,7 @@ import 'app.dart';
 import 'package:bitdrop/src/rust/frb_generated.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'core_live/cloud_library.dart';
 import 'features/storage/google_drive_service.dart';
 
 Future<void> main() async {
@@ -44,6 +45,14 @@ Future<void> main() async {
   audioHandler
     ..cacheDir = chunkCache.path
     ..accessTokenProvider = globalDriveService.freshAccessToken;
+
+  // The index lives in support rather than cache: the OS may purge the cache
+  // directory, and losing the library would force a full rescan of Drive.
+  final supportDir = await getApplicationSupportDirectory();
+  globalCloudLibrary = CloudLibrary(
+    drive: globalDriveService,
+    dbPath: '${supportDir.path}/library.db',
+  );
 
   // Edge-to-edge with transparent system bars; the themes paint their own.
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);

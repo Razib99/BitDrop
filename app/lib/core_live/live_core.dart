@@ -1,4 +1,6 @@
 import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:audio_service/audio_service.dart' as audio_svc;
 import 'package:rxdart/rxdart.dart';
 import '../core_api/bitdrop_core.dart';
@@ -10,24 +12,33 @@ import '../core_api/settings.dart';
 import '../core_mock/catalog.dart';
 import '../core_mock/mock_core.dart';
 import 'audio_handler.dart';
+import 'cloud_library.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
 import '../src/rust/api/simple.dart' as rust_simple;
 
 class LiveBitDropCore implements BitDropCore {
   final BitDropAudioHandler _audioHandler;
   final MockBitDropCore _mockCore;
-  
+
+  /// Null until Drive is connected. Everything cloud-related is served from
+  /// here; local scanning and the mock catalogue are untouched by it.
+  final CloudLibrary? _cloud;
+
   final Map<String, Track> _realTracks = {};
   Album? _realAlbum;
 
-  
-  
-  LiveBitDropCore(this._audioHandler) : _mockCore = MockBitDropCore() {
+  LiveBitDropCore(this._audioHandler, {CloudLibrary? cloudLibrary})
+      : _cloud = cloudLibrary,
+        _mockCore = MockBitDropCore() {
     rust.initEngine();
+
+    // The cloud library drives the scan banner on Home and Sources.
+    _cloud?.status.listen(_syncStatus.add);
+    _cloud?.open();
 
     _audioHandler.playbackState.listen((state) {
       final isPlaying = state.playing;
-      _playback.add(isPlaying ? PlayingState() : PausedState());
+      _playback.add(isPlaying ? const PlayingState() : const PausedState());
       
       _position.add(PositionInfo(
         positionMs: state.updatePosition.inMilliseconds,
@@ -39,16 +50,21 @@ class LiveBitDropCore implements BitDropCore {
       if (items.isEmpty) return;
       final currentItem = _audioHandler.mediaItem.value;
       final currentIndex = currentItem == null ? 0 : items.indexOf(currentItem);
-      final tracks = items.map((i) => _realTracks[i.id] ?? MockCatalog.trackById(i.id)).whereType<Track>().toList();
+      final tracks = items.map((i) => _lookupTrack(i.id)).whereType<Track>().toList();
       final queueItems = tracks.map((t) => QueueItem(track: t, id: t.id)).toList();
       _queue.add(QueueState(items: queueItems, currentIndex: currentIndex < 0 ? 0 : currentIndex, shuffle: false, repeat: RepeatMode.off));
     });
     
     _audioHandler.mediaItem.listen((item) {
       if (item != null) {
-        final track = _realTracks[item.id] ?? MockCatalog.trackById(item.id);
+        final track = _lookupTrack(item.id);
         if (track != null) {
-          _nowPlaying.add(NowPlaying(track: track, contextLabel: 'Local Music'));
+          _nowPlaying.add(NowPlaying(
+            track: track,
+            contextLabel: track.folderPath.isNotEmpty
+                ? track.folderPath
+                : 'Local Music',
+          ));
           
           // Update queue index
           final q = _queue.value;
@@ -87,7 +103,7 @@ class LiveBitDropCore implements BitDropCore {
   
   Future<void> _scanRealMusic() async {
     try {
-      final metas = await rust_simple.scanDirectory(path: '/home/razib/Desktop/BitDrop/Music');
+      final metas = rust_simple.scanDirectory(path: '/home/razib/Desktop/BitDrop/Music');
       if (metas.isEmpty) return;
       
       int duration = 0;
@@ -119,13 +135,13 @@ class LiveBitDropCore implements BitDropCore {
         trackCount: _realTracks.length,
         durationMs: duration,
         sizeBytes: size,
-        format: AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100),
+        format: const AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100),
         availability: Availability.cached,
           artwork: Artwork(seed: 42, dominantColor: 0xFF4A90E2, uri: _realTracks.values.firstOrNull?.id),
         mixedFormats: true,
       );
     } catch (e) {
-      print('Scan failed: $e');
+      debugPrint('[library] local scan failed: $e');
     }
   }
 
@@ -145,7 +161,9 @@ class LiveBitDropCore implements BitDropCore {
   final _queue = BehaviorSubject<QueueState>.seeded(QueueState.empty);
   @override Stream<QueueState> get queue => _queue.stream;
   @override Stream<OutputDevice?> get outputDevice => _mockCore.outputDevice;
-  @override Stream<List<SourceAccount>> get sources => _mockCore.sources;
+  @override
+  Stream<List<SourceAccount>> get sources =>
+      _cloud?.sourceAccounts ?? _mockCore.sources;
   final _syncStatus = BehaviorSubject<SyncStatus>.seeded(SyncStatus.idle);
   @override Stream<SyncStatus> get syncStatus => _syncStatus.stream;
   @override Stream<List<AppBanner>> get banners => _mockCore.banners;
@@ -158,35 +176,114 @@ class LiveBitDropCore implements BitDropCore {
 
   // Delegated queries
   
-  @override 
+  /// Resolves an id across every source: cloud first, then the local scan,
+  /// then the mock catalogue.
+  Track? _lookupTrack(String id) =>
+      _cloud?.trackById(id) ?? _realTracks[id] ?? MockCatalog.trackById(id);
+
+  List<Album> get _cloudAlbums => _cloud?.currentAlbums ?? const [];
+  List<Track> get _cloudTracks => _cloud?.currentTracks ?? const [];
+
+  @override
   Future<Paged<Album>> albums(AlbumQuery q) async {
     final mock = await _mockCore.albums(q);
-    if (_realAlbum != null) {
-      return Paged(items: [_realAlbum!, ...mock.items], total: mock.total + 1);
-    }
-    return mock;
+    final items = <Album>[
+      ..._cloudAlbums,
+      if (_realAlbum != null) _realAlbum!,
+      ...mock.items,
+    ];
+    return Paged(items: items, total: items.length);
   }
-  
-  @override 
+
+  @override
   Future<Paged<Track>> tracks(TrackQuery q) async {
-    if (q.albumId == 'real-music') {
-      return Paged(items: _realTracks.values.toList(), total: _realTracks.length);
+    if (q.albumId != null) {
+      final cloud =
+          _cloudTracks.where((t) => t.albumId == q.albumId).toList();
+      if (cloud.isNotEmpty) return Paged(items: cloud, total: cloud.length);
+      if (q.albumId == 'real-music') {
+        return Paged(items: _realTracks.values.toList(), total: _realTracks.length);
+      }
+      return _mockCore.tracks(q);
     }
-    return _mockCore.tracks(q);
+
+    final mock = await _mockCore.tracks(q);
+    final items = <Track>[..._cloudTracks, ..._realTracks.values, ...mock.items];
+    return Paged(items: items, total: items.length);
   }
-  
-  @override 
+
+  @override
   Future<Album?> album(String id) async {
+    for (final a in _cloudAlbums) {
+      if (a.id == id) return a;
+    }
     if (id == 'real-music') return _realAlbum;
     return _mockCore.album(id);
   }
 
-  @override Future<Paged<Artist>> artists(ArtistQuery q) => _mockCore.artists(q);
-  @override Future<Artist?> artist(String id) => _mockCore.artist(id);
+  @override
+  Future<Paged<Artist>> artists(ArtistQuery q) async {
+    final mock = await _mockCore.artists(q);
+    // Artists are derived from whatever albums exist rather than stored, so a
+    // rescan cannot leave a stale artist behind.
+    final byId = <String, Artist>{};
+    for (final a in _cloudAlbums) {
+      final existing = byId[a.artistId];
+      byId[a.artistId] = Artist(
+        id: a.artistId,
+        name: a.artist,
+        albumCount: (existing?.albumCount ?? 0) + 1,
+        trackCount: (existing?.trackCount ?? 0) + a.trackCount,
+        artwork: existing?.artwork ?? a.artwork,
+        genres: {...?existing?.genres, if (a.genre != null) a.genre!}.toList(),
+      );
+    }
+    final items = [...byId.values, ...mock.items];
+    return Paged(items: items, total: items.length);
+  }
+
+  @override
+  Future<Artist?> artist(String id) async {
+    final all = await artists(const ArtistQuery());
+    for (final a in all.items) {
+      if (a.id == id) return a;
+    }
+    return _mockCore.artist(id);
+  }
   @override Future<FolderListing> folder(String? folderId) => _mockCore.folder(folderId);
   @override Future<List<Playlist>> playlists() => _mockCore.playlists();
   @override Future<List<String>> genres() => _mockCore.genres();
-  @override Future<SearchResults> search(String text, SearchFilters f) => _mockCore.search(text, f);
+  @override
+  Future<SearchResults> search(String text, SearchFilters f) async {
+    final base = await _mockCore.search(text, f);
+    final q = text.trim().toLowerCase();
+    if (q.isEmpty) return base;
+
+    final tracks = _cloudTracks
+        .where((t) =>
+            t.title.toLowerCase().contains(q) ||
+            t.artist.toLowerCase().contains(q) ||
+            t.albumTitle.toLowerCase().contains(q) ||
+            t.format.badgeLabel.toLowerCase() == q)
+        .take(20)
+        .toList();
+    final albums = _cloudAlbums
+        .where((a) =>
+            a.title.toLowerCase().contains(q) ||
+            a.artist.toLowerCase().contains(q))
+        .take(12)
+        .toList();
+
+    return SearchResults(
+      topResult: albums.isNotEmpty
+          ? albums.first
+          : (tracks.isNotEmpty ? tracks.first : base.topResult),
+      tracks: [...tracks, ...base.tracks],
+      albums: [...albums, ...base.albums],
+      artists: base.artists,
+      folders: base.folders,
+    );
+  }
   @override Future<List<AutoEqProfile>> searchAutoEq(String model) => _mockCore.searchAutoEq(model);
   @override Future<List<String>> recentSearches() => _mockCore.recentSearches();
 
@@ -196,13 +293,26 @@ class LiveBitDropCore implements BitDropCore {
     if (cmd is PlayContext) {
       final tracks = cmd.trackIds.map((id) => _realTracks[id] ?? MockCatalog.trackById(id)).whereType<Track>().toList();
       if (tracks.isNotEmpty) {
-        final items = tracks.map((t) => audio_svc.MediaItem(
-          id: t.id,
-          title: t.title,
-          album: t.albumTitle,
-          artist: t.artist,
-          duration: Duration(milliseconds: t.durationMs),
-        )).toList();
+        final items = tracks.map((t) {
+          // A cloud track is identified by its Drive file id, so the engine is
+          // told where to stream it from; a local track's id is its path.
+          final isCloud = _cloud?.trackById(t.id) != null;
+          return audio_svc.MediaItem(
+            id: t.id,
+            title: t.title,
+            album: t.albumTitle,
+            artist: t.artist,
+            duration: Duration(milliseconds: t.durationMs),
+            extras: isCloud
+                ? cloudTrackExtras(
+                    fileId: t.id,
+                    url: 'https://www.googleapis.com/drive/v3/files/${t.id}?alt=media',
+                    sizeBytes: t.sizeBytes,
+                    ext: t.format.codec.label.toLowerCase(),
+                  )
+                : null,
+          );
+        }).toList();
         
         if (cmd.shuffle) {
           items.shuffle();
@@ -226,6 +336,9 @@ class LiveBitDropCore implements BitDropCore {
     _playback.close();
     _position.close();
     _nowPlaying.close();
+    _syncStatus.close();
+    _queue.close();
+    _cloud?.dispose();
     _mockCore.dispose();
   }
 }
