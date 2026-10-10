@@ -26,13 +26,22 @@
 - [x] **Task 5: Cloud Metadata Scanner** - Wire Symphonia to probe the Drive files via the byte-range fetcher without downloading the whole file.
 - [x] **Task 6: SQLite Database** - Persist scanned metadata into a local database for fast UI loading.
 
-## Track C: Integration & GCP Setup (Next Steps for Friend/Agent)
-- [ ] **Create Google Cloud Project** - Go to GCP Console and create a new project.
-- [ ] **Enable Drive API** - Enable `Google Drive API` in the GCP project.
-- [ ] **Configure OAuth Consent Screen** - Set up the consent screen for `drive.readonly` scope.
-- [ ] **Generate Client IDs** - Generate OAuth Client IDs for Android (SHA-1 fingerprint) and iOS (Bundle ID).
-- [ ] **Inject Client IDs** - Put the generated Client IDs into the Flutter app configuration (`Info.plist` and `google-services.json`).
-- [ ] **Wire Google API to Rust API** - Pass the access token from `GoogleDriveService` down into the `CloudMediaSource` via FFI when opening a track.
+## Track C: Integration & GCP Setup
+- [x] **Create Google Cloud Project** - `bitdrop-511218`.
+- [x] **Enable Drive API** - `drive.readonly` scope, consent screen in Testing mode.
+- [x] **Generate Client IDs** - Android (`com.bitdrop.bitdrop` + debug SHA-1) and iOS (bundle id).
+- [x] **Inject Client IDs** - `GIDClientID` + reversed-client-ID URL scheme in `Info.plist`.
+      Android needs no file: its client is matched server-side by package name and
+      SHA-1. No Firebase, so no `google-services.json` or `GoogleService-Info.plist`.
+- [x] **Wire Google API to Rust API** - `engine_play_cloud()` builds a `CloudMediaSource`
+      on the decode thread; tokens are fetched per track, since they last about an hour.
+- [x] **Cloud library index** - two-pass scan: Drive walk records files by name, then
+      tags are read over byte ranges and stored in SQLite. Served to the UI through
+      `LiveBitDropCore` alongside local and mock content.
+
+> **Remaining before release:** add the *release* keystore SHA-1 to the Android
+> OAuth client, or sign-in fails only in release builds. Testing mode expires the
+> Google grant roughly weekly; the app surfaces this as "needs reconnection".
 
 ## Track D: Community-Requested Audiophile Features
 - [ ] **Task 1: Subsonic/Navidrome Backend** - Implement OpenSubsonic API fetcher and mirror server libraries into the local SQLite DB for unified search.
