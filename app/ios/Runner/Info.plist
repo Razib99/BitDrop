@@ -50,5 +50,23 @@
     <array>
         <string>audio</string>
     </array>
+
+	<!-- Google Sign-In: iOS OAuth client for BitDrop (project bitdrop-511218).
+	     A client ID is not a secret; it ships in every binary that uses it.
+	     The matching URL scheme is the client ID with its parts reversed, and
+	     is how Google hands the auth result back to the app. -->
+	<key>GIDClientID</key>
+	<string>956641490168-i7d0bmf4roov3j6qm0l6d071t7u6t9a7.apps.googleusercontent.com</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.956641490168-i7d0bmf4roov3j6qm0l6d071t7u6t9a7</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

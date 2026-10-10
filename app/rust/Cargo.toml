@@ -30,6 +30,3 @@ oboe = "0.6.1"
 cpal = "0.15"
 
 
-[[bin]]
-name = "test_art"
-path = "test_art.rs"

@@ -3,10 +3,13 @@ use oboe::{AudioStreamBuilder, PerformanceMode, SharingMode, AudioApi, AudioOutp
 use std::sync::{Arc, Mutex};
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::probe::Hint;
 use std::fs::File;
+use std::path::PathBuf;
 use std::thread;
+
+use crate::cloud::media_source::CloudMediaSource;
 
 lazy_static::lazy_static! {
     static ref PLAYER_STATE: Mutex<PlayerState> = Mutex::new(PlayerState::default());
@@ -130,11 +133,79 @@ impl GraphicEq {
 }
 
 pub enum DecoderCmd {
-    Play(String), // path
+    Play(String), // local file path
+    /// A track streamed from cloud storage over HTTP byte ranges. The decode
+    /// thread builds the `CloudMediaSource` itself, so no Rust handle has to
+    /// cross the FFI boundary and Dart never owns a decoder resource.
+    PlayCloud {
+        file_id: String,
+        url: String,
+        auth_token: Option<String>,
+        total_size: u64,
+        cache_dir: String,
+        ext: String,
+    },
     Pause,
     Resume,
     Seek(u32), // ms
     Stop,
+}
+
+
+/// A decoder set up and ready to pull packets from.
+struct OpenedTrack {
+    format: Box<dyn symphonia::core::formats::FormatReader>,
+    decoder: Box<dyn symphonia::core::codecs::Decoder>,
+    track_id: u32,
+    sample_rate: u32,
+    time_base: Option<symphonia::core::units::TimeBase>,
+    duration_ms: u32,
+}
+
+/// Probes any `MediaSource` and builds a decoder for its default track.
+///
+/// Local files and cloud byte-range streams differ only in how the source is
+/// constructed, so both go through here, which keeps seeking, gapless and
+/// duration handling identical whatever the track is being read from.
+fn open_media_source(source: Box<dyn MediaSource>, ext: &str) -> Option<OpenedTrack> {
+    let mut hint = Hint::new();
+    if !ext.is_empty() {
+        hint.with_extension(ext);
+    }
+
+    let mss = MediaSourceStream::new(source, Default::default());
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &Default::default(), &Default::default())
+        .ok()?;
+
+    let mut format = probed.format;
+    let track = format.default_track().cloned()?;
+    let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
+    let time_base = track.codec_params.time_base;
+
+    let decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions { verify: true })
+        .ok()?;
+
+    // `frac` is a fraction of a second in 0.0..1.0, so it must be scaled
+    // before truncation. Casting it to an integer first always yielded 0 and
+    // silently rounded every duration down to a whole second.
+    let duration_ms = match (track.codec_params.n_frames, time_base) {
+        (Some(frames), Some(t)) => {
+            let time = t.calc_time(frames);
+            (time.seconds * 1000 + (time.frac * 1000.0) as u64) as u32
+        }
+        _ => 0,
+    };
+
+    Some(OpenedTrack {
+        format,
+        decoder,
+        track_id: track.id,
+        sample_rate,
+        time_base,
+        duration_ms,
+    })
 }
 
 #[cfg(target_os = "android")]
@@ -346,7 +417,6 @@ pub fn init_engine() {
         let mut current_format: Option<Box<dyn symphonia::core::formats::FormatReader>> = None;
         let mut current_decoder: Option<Box<dyn symphonia::core::codecs::Decoder>> = None;
         let mut current_track_id: u32 = 0;
-        let mut sample_rate: u32 = 44100;
         let mut tb: Option<symphonia::core::units::TimeBase> = None;
 
         loop {
@@ -354,32 +424,61 @@ pub fn init_engine() {
             if let Ok(cmd) = cmd_rx.try_recv() {
                 match cmd {
                     DecoderCmd::Play(path) => {
-                        let mut hint = Hint::new();
-                        let ext = std::path::Path::new(&path).extension().and_then(|e| e.to_str()).unwrap_or("");
-                        hint.with_extension(ext);
-                        
-                        if let Ok(file) = File::open(&path) {
-                            let mss = MediaSourceStream::new(Box::new(file), Default::default());
-                            if let Ok(probed) = symphonia::default::get_probe().format(&hint, mss, &Default::default(), &Default::default()) {
-                                let mut format = probed.format;
-                                if let Some(track) = format.default_track().cloned() {
-                                    sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
-                                    tb = track.codec_params.time_base;
-                                    current_track_id = track.id;
-                                    if let Ok(decoder) = symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions { verify: true }) {
-                                        current_decoder = Some(decoder);
-                                        current_format = Some(format);
-                                        
-                                        let mut state = PLAYER_STATE.lock().unwrap();
-                                        state.is_playing = true;
-                                        state.position_ms = 0;
-                                        if let (Some(frames), Some(t)) = (track.codec_params.n_frames, track.codec_params.time_base) {
-                                            let time = t.calc_time(frames);
-                                            state.duration_ms = (time.seconds * 1000 + time.frac as u64 * 1000) as u32;
-                                        }
-                                        state.current_track_id = path.clone();
-                                    }
+                        let ext = std::path::Path::new(&path)
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("")
+                            .to_string();
+
+                        match File::open(&path) {
+                            Ok(file) => match open_media_source(Box::new(file), &ext) {
+                                Some(opened) => {
+                                    tb = opened.time_base;
+                                    current_track_id = opened.track_id;
+                                    current_decoder = Some(opened.decoder);
+                                    current_format = Some(opened.format);
+
+                                    let mut state = PLAYER_STATE.lock().unwrap();
+                                    state.is_playing = true;
+                                    state.position_ms = 0;
+                                    state.duration_ms = opened.duration_ms;
+                                    state.current_track_id = path.clone();
                                 }
+                                None => eprintln!("[bitdrop] could not decode {}", path),
+                            },
+                            Err(e) => eprintln!("[bitdrop] could not open {}: {}", path, e),
+                        }
+                    },
+                    DecoderCmd::PlayCloud { file_id, url, auth_token, total_size, cache_dir, ext } => {
+                        // Build the streaming source on this thread: it owns a
+                        // tokio runtime and blocks inside Read/Seek, so it must
+                        // not be constructed on the audio callback thread.
+                        match CloudMediaSource::new(
+                            file_id.clone(),
+                            url,
+                            auth_token,
+                            total_size,
+                            PathBuf::from(cache_dir),
+                        ) {
+                            Ok(source) => match open_media_source(Box::new(source), &ext) {
+                                Some(opened) => {
+                                    tb = opened.time_base;
+                                    current_track_id = opened.track_id;
+                                    current_decoder = Some(opened.decoder);
+                                    current_format = Some(opened.format);
+
+                                    let mut state = PLAYER_STATE.lock().unwrap();
+                                    state.is_playing = true;
+                                    state.position_ms = 0;
+                                    state.duration_ms = opened.duration_ms;
+                                    state.current_track_id = file_id.clone();
+                                }
+                                None => {
+                                    eprintln!("[bitdrop] could not decode cloud track {}", file_id)
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("[bitdrop] could not open cloud track {}: {}", file_id, e)
                             }
                         }
                     },
@@ -491,6 +590,38 @@ pub fn engine_play(path: String) {
     }
     if let Some(sender) = CMD_SENDER.lock().unwrap().as_ref() {
         let _ = sender.send(DecoderCmd::Play(path));
+    }
+}
+
+/// Plays a track streamed from cloud storage.
+///
+/// `url` is a direct download endpoint that answers HTTP Range requests, and
+/// `auth_token` is the OAuth access token to send as a bearer header. Chunks
+/// land in `cache_dir`, so playback survives a dropped connection and a replay
+/// costs no further network. `ext` only seeds the format hint.
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_play_cloud(
+    file_id: String,
+    url: String,
+    auth_token: Option<String>,
+    total_size: u64,
+    cache_dir: String,
+    ext: String,
+) {
+    {
+        let mut state = PLAYER_STATE.lock().unwrap();
+        state.flush_requested = true;
+        state.position_ms = 0;
+    }
+    if let Some(sender) = CMD_SENDER.lock().unwrap().as_ref() {
+        let _ = sender.send(DecoderCmd::PlayCloud {
+            file_id,
+            url,
+            auth_token,
+            total_size,
+            cache_dir,
+            ext,
+        });
     }
 }
 

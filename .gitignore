@@ -1,0 +1,28 @@
+# --- Credentials: never commit these ---------------------------------------
+# OAuth desktop/web clients carry a real client secret.
+client_secret_*.json
+*-client_secret.json
+# Firebase-style configs (BitDrop does not use Firebase, but guard anyway).
+google-services.json
+GoogleService-Info.plist
+# Service accounts and keystores.
+*.keystore
+*.jks
+key.properties
+*.p12
+*.pem
+
+# --- Local music library (not source) --------------------------------------
+Music/
+
+# --- Build output ----------------------------------------------------------
+app/build/
+spike-audio/.gradle/
+spike-audio/app/build/
+spike-drive/target/
+spike_ffi/build/
+**/target/
+.dart_tool/
+
+# --- Local screenshots from headless verification runs ----------------------
+shots/

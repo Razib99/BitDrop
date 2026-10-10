@@ -6,7 +6,8 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These types are ignored because they are not used by any `pub` functions: `Biquad`, `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DecoderCmd`, `GraphicEq`, `PLAYER_STATE`, `PlayerState`
+// These functions are ignored because they are not marked as `pub`: `open_media_source`
+// These types are ignored because they are not used by any `pub` functions: `Biquad`, `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DecoderCmd`, `GraphicEq`, `OpenedTrack`, `PLAYER_STATE`, `PlayerState`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `default`, `default`, `deref`, `deref`, `deref`, `initialize`, `initialize`, `initialize`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `new`, `process_stereo`, `process`, `set_peaking`, `update_gains`
 
@@ -15,6 +16,27 @@ Future<void> initEngine() =>
 
 void enginePlay({required String path}) =>
     RustLib.instance.api.crateApiAudioEngineEnginePlay(path: path);
+
+/// Plays a track streamed from cloud storage.
+///
+/// `url` is a direct download endpoint that answers HTTP Range requests, and
+/// `auth_token` is the OAuth access token to send as a bearer header. Chunks
+/// land in `cache_dir`, so playback survives a dropped connection and a replay
+/// costs no further network. `ext` only seeds the format hint.
+void enginePlayCloud(
+        {required String fileId,
+        required String url,
+        String? authToken,
+        required BigInt totalSize,
+        required String cacheDir,
+        required String ext}) =>
+    RustLib.instance.api.crateApiAudioEngineEnginePlayCloud(
+        fileId: fileId,
+        url: url,
+        authToken: authToken,
+        totalSize: totalSize,
+        cacheDir: cacheDir,
+        ext: ext);
 
 void enginePause() => RustLib.instance.api.crateApiAudioEngineEnginePause();
 
