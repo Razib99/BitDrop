@@ -317,8 +317,10 @@ class AlbumCard extends StatelessWidget {
     bool compact = false,
   }) {
     final scale = MediaQuery.textScalerOf(context).scale(1);
-    // title 18 + gap 1 + artist 16 (+ gap 5 + format badge 20 when shown)
-    final text = (compact ? 35.0 : 60.0) * scale;
+    // title 18 + gap 1 + artist 16 (+ gap 5 + format badge 20 when shown).
+    // Rounded up: line heights land on fractional pixels at some device text
+    // scales, and being half a pixel short still trips an overflow warning.
+    final text = ((compact ? 36.0 : 62.0) * scale).ceilToDouble();
     final gap = compact ? Spacing.xs : Spacing.xs + 2;
     return width + gap + text;
   }

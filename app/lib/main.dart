@@ -20,16 +20,26 @@ Future<void> main() async {
   // Initialize the Rust FFI backend
   await RustLib.init();
 
-  // Initialize the Android Background Audio Service
-  final audioHandler = await AudioService.init(
-    builder: () => BitDropAudioHandler(),
-    config: const AudioServiceConfig(
-      androidNotificationChannelId: 'com.bitdrop.audio',
-      androidNotificationChannelName: 'BitDrop Playback',
-      androidNotificationOngoing: true,
-      androidStopForegroundOnPause: true,
-    ),
-  );
+  // Initialize the Android Background Audio Service.
+  //
+  // This runs before runApp(), so anything thrown here means a black screen
+  // and no clue why. Degrade instead: a bare handler still plays audio, it
+  // just loses the lock-screen and notification controls.
+  late final BitDropAudioHandler audioHandler;
+  try {
+    audioHandler = await AudioService.init(
+      builder: BitDropAudioHandler.new,
+      config: const AudioServiceConfig(
+        androidNotificationChannelId: 'com.bitdrop.audio',
+        androidNotificationChannelName: 'BitDrop Playback',
+        androidNotificationOngoing: true,
+        androidStopForegroundOnPause: true,
+      ),
+    );
+  } catch (e, st) {
+    debugPrint('[bitdrop] background audio service unavailable: $e\n$st');
+    audioHandler = BitDropAudioHandler();
+  }
   
   // Stash the handler globally for the provider to pick up
   globalAudioHandler = audioHandler;

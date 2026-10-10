@@ -23,7 +23,11 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 rubato = "5.0.1"
 
 [target.'cfg(target_os = "android")'.dependencies]
-oboe = "0.6.1"
+# shared-stdcxx: link libc++ dynamically. The default static link drops
+# libc++abi symbols such as __cxa_pure_virtual, and the library then
+# fails to dlopen at runtime. android/app/src/main/jniLibs ships the
+# matching libc++_shared.so for each ABI.
+oboe = { version = "0.6.1", features = ["shared-stdcxx"] }
 
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
