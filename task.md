@@ -36,7 +36,10 @@
 
 ## Track D: Community-Requested Audiophile Features
 - [ ] **Task 1: Subsonic/Navidrome Backend** - Implement OpenSubsonic API fetcher and mirror server libraries into the local SQLite DB for unified search.
-- [ ] **Task 2: Advanced Queue State** - Upgrade `audio_handler.dart` to support `Play Next`, `Add to End`, and `Shuffle by Album`.
-- [ ] **Task 3: Local Auto-Tagging & Lyrics** - Build metadata scraper (MusicBrainz/Lrclib) that writes missing tags and synced `.lrc` lyrics exclusively to the local SQLite cache.
-- [ ] **Task 4: Android Auto Full Hierarchy** - Map SQLite tables to `audio_service` MediaBrowser trees (Artists -> Albums -> Tracks) for car displays.
-- [ ] **Task 5: Bit-Perfect USB DAC Passthrough** - Implement `setPreferredMixerAttributes` (API 34+) to bypass Android's resampler for audiophile external DACs.
+- [ ] **Task 2: Zero-Server Cloud Metadata Sync** - Implement HTTP Byte-Range requests in Rust to fetch only Vorbis/ID3 headers from Google Drive, enabling fast library indexing without downloading full files.
+- [ ] **Task 3: Network Gapless Pre-Buffering** - Upgrade the Rust audio engine to predictively fetch and decrypt the next track in the queue when 15 seconds remain, ensuring 0ms gapless cloud playback.
+- [ ] **Task 4: Dynamic Sparse Chunk Caching** - Build an LRU sparse disk buffer to cache high-res FLACs in chunks (e.g. 4MB) over the network, eliminating stuttering on weak cellular data.
+- [ ] **Task 5: Advanced Queue State** - Upgrade `audio_handler.dart` to support `Play Next`, `Add to End`, and `Shuffle by Album`.
+- [ ] **Task 6: Local Auto-Tagging & Lyrics** - Build metadata scraper (MusicBrainz/Lrclib) that writes missing tags and synced `.lrc` lyrics exclusively to the local SQLite cache.
+- [ ] **Task 7: Android Auto Full Hierarchy** - Map SQLite tables to `audio_service` MediaBrowser trees (Artists -> Albums -> Tracks) for car displays.
+- [ ] **Task 8: Bit-Perfect USB DAC Passthrough** - Implement `setPreferredMixerAttributes` (API 34+) to bypass Android's resampler for audiophile external DACs.

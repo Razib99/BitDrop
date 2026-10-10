@@ -8,6 +8,20 @@
 
 ---
 
+## Status Update: Resolution of Audit Findings (Current State)
+
+| Audit Item | Status | Notes |
+|---|---|---|
+| **1.1 spike-audio build defects** | ⚪ Obsolete | We skipped Spike 1 and moved directly to the full Flutter app integration. |
+| **1.2 Spike 1 test measurements** | ⚪ Obsolete | Not required anymore. We rely on standard AudioTrack / CPAL backends for now. |
+| **2.1 Output path selection** | ✅ Done | Replaced platform-specific audio logic with cross-platform `cpal` + `rtrb` (RingBuffer) in Rust for Linux, iOS, and macOS. Used `Oboe` via CPAL/AAudio for Android. |
+| **2.2 iOS Architecture (Pull model)** | ✅ Done | The `cpal` callback operates natively as a "Pull" model, popping frames from our `rtrb` lock-free ring buffer. |
+| **2.3 Real-time audio thread rules** | ✅ Done | Decoding happens on a dedicated thread sending raw PCM via `rtrb` channel. Audio output callback is lock-free and zero-allocation. |
+| **2.4 Tier D (Custom USB Driver)** | ❌ Not Started | Still a potential future feature for API 31-33 bit-perfect playback. |
+| **2.5 Rust binding generation** | ✅ Done | Used `flutter_rust_bridge` v2 for all communication. Shell UI (Kotlin/Swift) is handled via Flutter/Dart plugins (e.g. `audio_service`), avoiding UniFFI duplication. |
+
+---
+
 ## Part 1 — Defects in my own work (fix before anything else)
 
 ### 1.1 The `spike-audio` project won't build
