@@ -12,7 +12,23 @@ import '../core_live/live_core.dart';
 import '../core_live/audio_handler.dart';
 import 'package:audio_service/audio_service.dart' hide PlaybackState;
 
+import '../features/storage/google_drive_service.dart';
+
 late final BitDropAudioHandler globalAudioHandler;
+
+/// Created in `main()` so the audio handler can take a token provider from it
+/// before the widget tree exists.
+late final GoogleDriveService globalDriveService;
+
+/// The one Drive connection. Screens must take it from here rather than
+/// constructing their own, or each would hold a separate sign-in state.
+final driveServiceProvider =
+    Provider<GoogleDriveService>((ref) => globalDriveService);
+
+/// The signed-in Google account, or null. Drives the Sources screen and the
+/// "needs reconnection" banner.
+final driveAccountProvider = StreamProvider((ref) =>
+    ref.watch(driveServiceProvider).accountStream);
 
 
 /// The single core instance. In production this is replaced by the

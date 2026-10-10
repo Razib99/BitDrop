@@ -208,29 +208,35 @@ class _PrivacyPromise extends StatelessWidget {
       );
 }
 
-class _ConnectSource extends StatefulWidget {
+class _ConnectSource extends ConsumerStatefulWidget {
   const _ConnectSource();
   @override
-  State<_ConnectSource> createState() => _ConnectSourceState();
+  ConsumerState<_ConnectSource> createState() => _ConnectSourceState();
 }
 
-class _ConnectSourceState extends State<_ConnectSource> {
-  final _driveService = GoogleDriveService();
+class _ConnectSourceState extends ConsumerState<_ConnectSource> {
   bool _isSigningIn = false;
 
-  @override
-  void dispose() {
-    _driveService.dispose();
-    super.dispose();
-  }
+  // The one shared connection: a second instance here would hold its own
+  // sign-in state, and the audio handler would keep asking the other one for
+  // tokens.
+  GoogleDriveService get _driveService => ref.read(driveServiceProvider);
 
   Future<void> _handleDriveLogin() async {
     setState(() => _isSigningIn = true);
-    await _driveService.signIn();
+    final ok = await _driveService.signIn();
+    if (!mounted) return;
     setState(() => _isSigningIn = false);
-    // Move to next page or show success if they successfully logged in
-    if (_driveService.currentUser != null) {
-      debugPrint("Successfully signed in as ${_driveService.currentUser?.email}");
+
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not connect to Google Drive. If you saw an "unverified '
+            'app" warning, choose Advanced and continue.',
+          ),
+        ),
+      );
     }
   }
 

@@ -2,11 +2,40 @@ import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
 
+/// Supplies a currently-valid OAuth access token for cloud playback.
+///
+/// A callback rather than a direct dependency on GoogleDriveService, so the
+/// handler stays unaware of which cloud provider is in use.
+typedef AccessTokenProvider = Future<String?> Function();
+
+/// Marks a [MediaItem] as living in cloud storage. Builds the `extras` map
+/// that [BitDropAudioHandler] reads when it opens the track.
+Map<String, dynamic> cloudTrackExtras({
+  required String fileId,
+  required String url,
+  required int sizeBytes,
+  required String ext,
+}) =>
+    {
+      'source': 'cloud',
+      'fileId': fileId,
+      'url': url,
+      'sizeBytes': sizeBytes,
+      'ext': ext,
+    };
+
 class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandler {
   Timer? _positionTimer;
   bool _wasPlaying = false;
   int _currentIndex = -1;
-  
+
+  /// Where the Rust engine writes cached byte-range chunks. Until this is set
+  /// the handler can still play local files; only cloud playback needs it.
+  String? cacheDir;
+
+  /// Set once Drive is connected. Null means cloud tracks cannot be opened.
+  AccessTokenProvider? accessTokenProvider;
+
   BitDropAudioHandler() {
     _positionTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
       _syncState();
@@ -61,12 +90,62 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
   Future<void> _playCurrentIndex() async {
     final items = queue.value;
     if (_currentIndex < 0 || _currentIndex >= items.length) return;
-    
+
     final item = items[_currentIndex];
     mediaItem.add(item);
-    
-    // The ID contains the physical path from our mock injection
+
+    if (item.extras?['source'] == 'cloud') {
+      await _playCloud(item);
+      return;
+    }
+
+    // For a local track the id is the physical path on disk.
     rust.enginePlay(path: item.id);
+  }
+
+  /// Opens a track streamed from cloud storage.
+  ///
+  /// The token is fetched per track rather than cached: access tokens last
+  /// about an hour, and the engine holds whatever it is given for the whole
+  /// track, so a stale one would fail partway through an album.
+  Future<void> _playCloud(MediaItem item) async {
+    final extras = item.extras;
+    final dir = cacheDir;
+    final provider = accessTokenProvider;
+
+    if (extras == null || dir == null || provider == null) {
+      _reportCloudError(
+        dir == null
+            ? 'Cache directory is not ready yet.'
+            : 'Not signed in to your cloud storage.',
+      );
+      return;
+    }
+
+    final token = await provider();
+    if (token == null) {
+      // Expired or revoked grant. Google's testing mode drops it roughly
+      // weekly, so this is an expected state, not a crash.
+      _reportCloudError('Your cloud session expired. Reconnect to keep playing.');
+      return;
+    }
+
+    rust.enginePlayCloud(
+      fileId: extras['fileId'] as String,
+      url: extras['url'] as String,
+      authToken: token,
+      totalSize: BigInt.from(extras['sizeBytes'] as int? ?? 0),
+      cacheDir: dir,
+      ext: extras['ext'] as String? ?? '',
+    );
+  }
+
+  void _reportCloudError(String message) {
+    playbackState.add(playbackState.value.copyWith(
+      processingState: AudioProcessingState.error,
+      playing: false,
+      errorMessage: message,
+    ));
   }
 
   @override
