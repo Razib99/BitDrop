@@ -27,7 +27,7 @@ pub struct CloudTrackRow {
 }
 
 pub struct MetadataDb {
-    conn: Connection,
+    pub conn: Connection,
 }
 
 impl MetadataDb {
@@ -93,7 +93,9 @@ impl MetadataDb {
              ON CONFLICT(file_id) DO UPDATE SET
                 name = excluded.name,
                 folder_path = excluded.folder_path,
-                size_bytes = excluded.size_bytes",
+                size_bytes = excluded.size_bytes,
+                tags_read = 0",
+
             params![file_id, name, folder_path, size_bytes as i64],
         )?;
         Ok(())
@@ -211,6 +213,14 @@ impl MetadataDb {
                 r.get(0)
             })?;
         Ok((total, tagged))
+    }
+
+    pub fn mark_tags_attempted(&self, file_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tracks SET tags_read = 1 WHERE file_id = ?",
+            [file_id],
+        )?;
+        Ok(())
     }
 
     pub fn clear(&self) -> Result<()> {

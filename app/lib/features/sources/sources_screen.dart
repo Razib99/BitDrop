@@ -78,6 +78,12 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                         }
                       }
                     : () => sendCommand(ref, Rescan(sourceId: s.id)),
+                onCancelSync: s.id == 'drive'
+                    ? () {
+                        ref.read(cloudLibraryProvider).cancelScan();
+                      }
+                    : null,
+
                 onEditFolders: () => _showFolderPicker(context),
                 onReconnect: s.status == SourceStatus.needsReconnect
                     ? () async {

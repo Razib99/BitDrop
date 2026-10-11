@@ -186,11 +186,9 @@ class LiveBitDropCore implements BitDropCore {
 
   @override
   Future<Paged<Album>> albums(AlbumQuery q) async {
-    final mock = await _mockCore.albums(q);
     final items = <Album>[
       ..._cloudAlbums,
       if (_realAlbum != null) _realAlbum!,
-      ...mock.items,
     ];
     return Paged(items: items, total: items.length);
   }
@@ -204,11 +202,10 @@ class LiveBitDropCore implements BitDropCore {
       if (q.albumId == 'real-music') {
         return Paged(items: _realTracks.values.toList(), total: _realTracks.length);
       }
-      return _mockCore.tracks(q);
+      return const Paged(items: [], total: 0);
     }
 
-    final mock = await _mockCore.tracks(q);
-    final items = <Track>[..._cloudTracks, ..._realTracks.values, ...mock.items];
+    final items = <Track>[..._cloudTracks, ..._realTracks.values];
     return Paged(items: items, total: items.length);
   }
 
@@ -223,7 +220,6 @@ class LiveBitDropCore implements BitDropCore {
 
   @override
   Future<Paged<Artist>> artists(ArtistQuery q) async {
-    final mock = await _mockCore.artists(q);
     // Artists are derived from whatever albums exist rather than stored, so a
     // rescan cannot leave a stale artist behind.
     final byId = <String, Artist>{};
@@ -238,7 +234,7 @@ class LiveBitDropCore implements BitDropCore {
         genres: {...?existing?.genres, if (a.genre != null) a.genre!}.toList(),
       );
     }
-    final items = [...byId.values, ...mock.items];
+    final items = byId.values.toList();
     return Paged(items: items, total: items.length);
   }
 
@@ -250,14 +246,13 @@ class LiveBitDropCore implements BitDropCore {
     }
     return _mockCore.artist(id);
   }
-  @override Future<FolderListing> folder(String? folderId) => _mockCore.folder(folderId);
-  @override Future<List<Playlist>> playlists() => _mockCore.playlists();
-  @override Future<List<String>> genres() => _mockCore.genres();
+  @override Future<FolderListing> folder(String? folderId) async => const FolderListing(folderId: null, breadcrumb: [], entries: []);
+  @override Future<List<Playlist>> playlists() async => const [];
+  @override Future<List<String>> genres() async => const [];
   @override
   Future<SearchResults> search(String text, SearchFilters f) async {
-    final base = await _mockCore.search(text, f);
     final q = text.trim().toLowerCase();
-    if (q.isEmpty) return base;
+    if (q.isEmpty) return const SearchResults();
 
     final tracks = _cloudTracks
         .where((t) =>
@@ -277,11 +272,11 @@ class LiveBitDropCore implements BitDropCore {
     return SearchResults(
       topResult: albums.isNotEmpty
           ? albums.first
-          : (tracks.isNotEmpty ? tracks.first : base.topResult),
-      tracks: [...tracks, ...base.tracks],
-      albums: [...albums, ...base.albums],
-      artists: base.artists,
-      folders: base.folders,
+          : (tracks.isNotEmpty ? tracks.first : null),
+      tracks: tracks,
+      albums: albums,
+      artists: const [],
+      folders: const [],
     );
   }
   @override Future<List<AutoEqProfile>> searchAutoEq(String model) => _mockCore.searchAutoEq(model);

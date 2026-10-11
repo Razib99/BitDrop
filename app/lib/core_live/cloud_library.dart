@@ -20,12 +20,19 @@ import '../src/rust/api/cloud_library.dart' as rust;
 /// fills the rows in behind it. A track is playable as soon as pass one has
 /// seen it.
 class CloudLibrary {
-  CloudLibrary({required GoogleDriveService drive, required String dbPath})
-      : _drive = drive,
-        _dbPath = dbPath;
+  CloudLibrary({
+    required GoogleDriveService drive,
+    required String dbPath,
+    required String cacheDir,
+  })  : _drive = drive,
+        _dbPath = dbPath,
+        _cacheDir = cacheDir;
 
   final GoogleDriveService _drive;
   final String _dbPath;
+
+  /// Where tag reads cache byte ranges, on whichever platform this is.
+  final String _cacheDir;
 
   bool _opened = false;
   bool _scanning = false;
@@ -101,7 +108,7 @@ class CloudLibrary {
 
   Future<void> open() async {
     if (_opened) return;
-    await rust.cloudLibraryOpen(dbPath: _dbPath);
+    await rust.cloudLibraryOpen(dbPath: _dbPath, cacheDir: _cacheDir);
     _opened = true;
     await _loadFolders();
     await _reload();

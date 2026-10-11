@@ -225,6 +225,7 @@ class SourceCard extends StatelessWidget {
     super.key,
     required this.account,
     this.onRescan,
+    this.onCancelSync,
     this.onEditFolders,
     this.onReconnect,
     this.onRemove,
@@ -234,6 +235,7 @@ class SourceCard extends StatelessWidget {
 
   final SourceAccount account;
   final VoidCallback? onRescan;
+  final VoidCallback? onCancelSync;
   final VoidCallback? onEditFolders;
   final VoidCallback? onReconnect;
   final VoidCallback? onRemove;
@@ -391,9 +393,13 @@ class SourceCard extends StatelessWidget {
                           const EdgeInsets.symmetric(horizontal: Spacing.sm),
                     ),
                   ),
-                if (onRescan != null)
+                if (onRescan != null && account.status != SourceStatus.syncing)
                   _SmallButton(
                       label: 'Rescan', icon: Icons.sync, onTap: onRescan!),
+                if (onCancelSync != null && account.status == SourceStatus.syncing)
+                  _SmallButton(
+                      label: 'Stop Sync', icon: Icons.cancel_outlined, onTap: onCancelSync!),
+
                 if (onEditFolders != null)
                   _SmallButton(
                       label: 'Edit folders',

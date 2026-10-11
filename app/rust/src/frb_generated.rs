@@ -184,9 +184,10 @@ let api_sizes = <Vec<u64>>::sse_decode(&mut deserializer);deserializer.end(); mo
                 FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec,_,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "cloud_library_open", port: Some(port_), mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal }, move || { 
             let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_db_path = <String>::sse_decode(&mut deserializer);deserializer.end(); move |context|  {
+            let api_db_path = <String>::sse_decode(&mut deserializer);
+let api_cache_dir = <String>::sse_decode(&mut deserializer);deserializer.end(); move |context|  {
                     transform_result_sse::<_, String>((move ||  {
-                         let output_ok = crate::api::cloud_library::cloud_library_open(api_db_path)?;  Ok(output_ok)
+                         let output_ok = crate::api::cloud_library::cloud_library_open(api_db_path, api_cache_dir)?;  Ok(output_ok)
                     })())
                 } })
             }fn wire__crate__api__cloud_library__cloud_library_pending_impl(port_: flutter_rust_bridge::for_generated::MessagePort,ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32)  {

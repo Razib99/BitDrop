@@ -13,6 +13,9 @@ use crate::cloud::range_fetcher::RangeFetcher;
 
 lazy_static::lazy_static! {
     static ref DB: Mutex<Option<MetadataDb>> = Mutex::new(None);
+    /// Where tag reads cache their byte ranges. Supplied by the caller,
+    /// because only the Dart side knows the platform's cache location.
+    static ref CACHE_DIR: Mutex<Option<String>> = Mutex::new(None);
     /// One runtime for every range request. Building one per call would cost
     /// more than the fetch itself during a scan of thousands of files.
     static ref RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
@@ -82,9 +85,11 @@ fn with_db<T>(f: impl FnOnce(&MetadataDb) -> anyhow::Result<T>) -> Result<T, Str
 }
 
 /// Opens (or creates) the library database. Safe to call repeatedly.
-pub fn cloud_library_open(db_path: String) -> Result<(), String> {
+pub fn cloud_library_open(db_path: String, cache_dir: String) -> Result<(), String> {
     let db = MetadataDb::new(&db_path).map_err(|e| e.to_string())?;
     *DB.lock().map_err(|e| e.to_string())? = Some(db);
+    std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+    *CACHE_DIR.lock().map_err(|e| e.to_string())? = Some(cache_dir);
     Ok(())
 }
 
@@ -127,49 +132,124 @@ pub fn cloud_library_read_tags(
     url: String,
     auth_token: Option<String>,
 ) -> Result<bool, String> {
-    let fetcher = RangeFetcher::new().map_err(|e| e.to_string())?;
+    use crate::cloud::media_source::CloudMediaSource;
+    use symphonia::core::probe::Hint;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::formats::FormatOptions;
+    use std::path::PathBuf;
 
-    let mut buffer: Vec<u8> = Vec::new();
-    let mut want: usize = 32 * 1024;
-    // Each pass either completes or asks for more. The cap stops a corrupt or
-    // non-FLAC file from pulling the whole thing down a chunk at a time.
-    const MAX_PASSES: usize = 6;
-    const MAX_HEADER_BYTES: usize = 2 * 1024 * 1024;
+    let size_bytes = with_db(|db| {
+        let mut stmt = db.conn.prepare("SELECT size_bytes FROM tracks WHERE file_id = ?")?;
+        let size: u64 = stmt.query_row([&file_id], |r| r.get(0)).unwrap_or(0);
+        Ok(size)
+    })?;
 
-    for _ in 0..MAX_PASSES {
-        let start = buffer.len() as u64;
-        let end = start + want as u64 - 1;
+    if size_bytes == 0 {
+        return Ok(false);
+    }
 
-        let (bytes, _) = RT
-            .block_on(fetcher.fetch_range(&url, start, end, auth_token.as_deref()))
-            .map_err(|e| e.to_string())?;
-
-        if bytes.is_empty() {
-            break;
+    // Hardcoding an Android data path here broke every other platform and
+    // assumed user 0; the caller supplies it at open time instead.
+    let cache_dir = PathBuf::from(
+        CACHE_DIR
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone()
+            .ok_or_else(|| "cloud library not opened".to_string())?,
+    );
+    let cloud_source = match CloudMediaSource::new(file_id.clone(), url, auth_token, size_bytes, cache_dir) {
+        Ok(cs) => cs,
+        Err(e) => {
+            eprintln!("[bitdrop] CloudMediaSource::new failed: {:?}", e);
+            let _ = with_db(|db| {
+                db.mark_tags_attempted(&file_id)?;
+                Ok(())
+            });
+            return Ok(false);
         }
-        buffer.extend_from_slice(&bytes);
+    };
 
-        match FlacProgressiveParser::parse(&buffer, 0) {
-            Ok(ParseProgress::Complete(meta)) => {
-                with_db(|db| {
-                    db.update_tags(&file_id, &meta)?;
-                    Ok(())
-                })?;
-                return Ok(true);
+    let mss = MediaSourceStream::new(Box::new(cloud_source), Default::default());
+    let hint = Hint::new();
+
+    let meta_opts: MetadataOptions = Default::default();
+    let fmt_opts: FormatOptions = Default::default();
+
+    let probed = match symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts) {
+        Ok(p) => p,
+        Err(_) => {
+            let _ = with_db(|db| {
+                db.mark_tags_attempted(&file_id)?;
+                Ok(())
+            });
+            return Ok(false);
+        }
+    };
+
+    let mut format = probed.format;
+    
+    // Extract metadata
+    let mut duration_ms = 0;
+    let mut sample_rate = 44100;
+    let mut channels = 2;
+    let mut bits_per_sample = 16;
+    
+    if let Some(track) = format.default_track() {
+        if let Some(tb) = track.codec_params.time_base {
+            if let Some(n_frames) = track.codec_params.n_frames {
+                let time = tb.calc_time(n_frames);
+                duration_ms = (time.seconds * 1000 + (time.frac * 1000.0) as u64) as u32;
             }
-            Ok(ParseProgress::NeedMoreBytes { length, .. }) => {
-                if buffer.len() >= MAX_HEADER_BYTES {
-                    break;
-                }
-                want = length.max(16 * 1024);
+        }
+        sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
+        channels = track.codec_params.channels.map(|c| c.count() as u8).unwrap_or(2);
+        bits_per_sample = track.codec_params.bits_per_sample.unwrap_or(16) as u8;
+    }
+
+    let mut title = String::new();
+    let mut artist = String::new();
+    let mut album = String::new();
+    let mut album_artist = String::new();
+    let mut genre = String::new();
+    let mut year: Option<u32> = None;
+    let mut track_number: Option<u32> = None;
+    let mut disc_number: Option<u32> = None;
+
+    if let Some(metadata) = format.metadata().current() {
+        for tag in metadata.tags() {
+            match tag.std_key {
+                Some(symphonia::core::meta::StandardTagKey::TrackTitle) => title = tag.value.to_string(),
+                Some(symphonia::core::meta::StandardTagKey::Artist) => artist = tag.value.to_string(),
+                Some(symphonia::core::meta::StandardTagKey::Album) => album = tag.value.to_string(),
+                Some(symphonia::core::meta::StandardTagKey::AlbumArtist) => album_artist = tag.value.to_string(),
+                Some(symphonia::core::meta::StandardTagKey::Genre) => genre = tag.value.to_string(),
+                Some(symphonia::core::meta::StandardTagKey::Date) => year = tag.value.to_string().parse().ok(),
+                Some(symphonia::core::meta::StandardTagKey::TrackNumber) => track_number = tag.value.to_string().parse().ok(),
+                Some(symphonia::core::meta::StandardTagKey::DiscNumber) => disc_number = tag.value.to_string().parse().ok(),
+                _ => {}
             }
-            // Not a FLAC file, or a damaged header. The row keeps the name it
-            // was indexed under rather than disappearing from the library.
-            Err(_) => return Ok(false),
         }
     }
 
-    Ok(false)
+    let _ = with_db(|db| {
+        db.conn.execute(
+            "UPDATE tracks SET
+                title = ?, artist = ?, album = ?, album_artist = ?,
+                genre = ?, year = ?, track_number = ?, disc_number = ?,
+                duration_ms = ?, sample_rate = ?, channels = ?, bits_per_sample = ?,
+                tags_read = 1
+             WHERE file_id = ?",
+            rusqlite::params![
+                title, artist, album, album_artist, genre, year, track_number, disc_number,
+                duration_ms, sample_rate, channels, bits_per_sample,
+                file_id
+            ],
+        )?;
+        Ok(())
+    });
+
+    Ok(true)
 }
 
 pub fn cloud_library_pending(limit: u32) -> Result<Vec<String>, String> {

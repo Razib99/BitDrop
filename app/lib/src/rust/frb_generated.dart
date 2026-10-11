@@ -113,7 +113,8 @@ abstract class RustLibApi extends BaseApi {
 
   Future<ScanCounts> crateApiCloudLibraryCloudLibraryCounts();
 
-  Future<void> crateApiCloudLibraryCloudLibraryOpen({required String dbPath});
+  Future<void> crateApiCloudLibraryCloudLibraryOpen(
+      {required String dbPath, required String cacheDir});
 
   Future<List<String>> crateApiCloudLibraryCloudLibraryPending(
       {required int limit});
@@ -166,7 +167,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAudioEngineEngineGetPositionConstMeta =>
       const TaskConstMeta(
-        debugName: 'engine_get_position',
+        debugName: "engine_get_position",
         argNames: [],
       );
 
@@ -189,7 +190,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAudioEngineEngineIsPlayingConstMeta =>
       const TaskConstMeta(
-        debugName: 'engine_is_playing',
+        debugName: "engine_is_playing",
         argNames: [],
       );
 
@@ -212,7 +213,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAudioEngineEnginePauseConstMeta =>
       const TaskConstMeta(
-        debugName: 'engine_pause',
+        debugName: "engine_pause",
         argNames: [],
       );
 
@@ -236,8 +237,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAudioEngineEnginePlayConstMeta =>
       const TaskConstMeta(
-        debugName: 'engine_play',
-        argNames: ['path'],
+        debugName: "engine_play",
+        argNames: ["path"],
       );
 
   @override
@@ -271,14 +272,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAudioEngineEnginePlayCloudConstMeta =>
       const TaskConstMeta(
-        debugName: 'engine_play_cloud',
+        debugName: "engine_play_cloud",
         argNames: [
-          'fileId',
-          'url',
-          'authToken',
-          'totalSize',
-          'cacheDir',
-          'ext'
+          "fileId",
+          "url",
+          "authToken",
+          "totalSize",
+          "cacheDir",
+          "ext"
         ],
       );
 
@@ -301,7 +302,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAudioEngineEngineResumeConstMeta =>
       const TaskConstMeta(
-        debugName: 'engine_resume',
+        debugName: "engine_resume",
         argNames: [],
       );
 
@@ -325,8 +326,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAudioEngineEngineSeekConstMeta =>
       const TaskConstMeta(
-        debugName: 'engine_seek',
-        argNames: ['positionMs'],
+        debugName: "engine_seek",
+        argNames: ["positionMs"],
       );
 
   @override
@@ -349,8 +350,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAudioEngineEngineSetEqConstMeta =>
       const TaskConstMeta(
-        debugName: 'engine_set_eq',
-        argNames: ['gains'],
+        debugName: "engine_set_eq",
+        argNames: ["gains"],
       );
 
   @override
@@ -373,8 +374,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAudioEngineEngineSetEqEnabledConstMeta =>
       const TaskConstMeta(
-        debugName: 'engine_set_eq_enabled',
-        argNames: ['enabled'],
+        debugName: "engine_set_eq_enabled",
+        argNames: ["enabled"],
       );
 
   @override
@@ -396,7 +397,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateApiAudioEngineInitAppConstMeta => const TaskConstMeta(
-        debugName: 'init_app',
+        debugName: "init_app",
         argNames: [],
       );
 
@@ -420,7 +421,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAudioEngineInitEngineConstMeta =>
       const TaskConstMeta(
-        debugName: 'init_engine',
+        debugName: "init_engine",
         argNames: [],
       );
 
@@ -446,8 +447,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiAudioEnginePlayAudioFileAndroidConstMeta =>
       const TaskConstMeta(
-        debugName: 'play_audio_file_android',
-        argNames: ['path'],
+        debugName: "play_audio_file_android",
+        argNames: ["path"],
       );
 
   @override
@@ -478,8 +479,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiCloudLibraryCloudLibraryAddFilesConstMeta =>
       const TaskConstMeta(
-        debugName: 'cloud_library_add_files',
-        argNames: ['fileIds', 'names', 'folderPaths', 'sizes'],
+        debugName: "cloud_library_add_files",
+        argNames: ["fileIds", "names", "folderPaths", "sizes"],
       );
 
   @override
@@ -502,7 +503,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiCloudLibraryCloudLibraryClearConstMeta =>
       const TaskConstMeta(
-        debugName: 'cloud_library_clear',
+        debugName: "cloud_library_clear",
         argNames: [],
       );
 
@@ -526,16 +527,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiCloudLibraryCloudLibraryCountsConstMeta =>
       const TaskConstMeta(
-        debugName: 'cloud_library_counts',
+        debugName: "cloud_library_counts",
         argNames: [],
       );
 
   @override
-  Future<void> crateApiCloudLibraryCloudLibraryOpen({required String dbPath}) {
+  Future<void> crateApiCloudLibraryCloudLibraryOpen(
+      {required String dbPath, required String cacheDir}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(dbPath, serializer);
+        sse_encode_String(cacheDir, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 16, port: port_);
       },
@@ -544,15 +547,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeErrorData: sse_decode_String,
       ),
       constMeta: kCrateApiCloudLibraryCloudLibraryOpenConstMeta,
-      argValues: [dbPath],
+      argValues: [dbPath, cacheDir],
       apiImpl: this,
     ));
   }
 
   TaskConstMeta get kCrateApiCloudLibraryCloudLibraryOpenConstMeta =>
       const TaskConstMeta(
-        debugName: 'cloud_library_open',
-        argNames: ['dbPath'],
+        debugName: "cloud_library_open",
+        argNames: ["dbPath", "cacheDir"],
       );
 
   @override
@@ -577,8 +580,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiCloudLibraryCloudLibraryPendingConstMeta =>
       const TaskConstMeta(
-        debugName: 'cloud_library_pending',
-        argNames: ['limit'],
+        debugName: "cloud_library_pending",
+        argNames: ["limit"],
       );
 
   @override
@@ -605,8 +608,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiCloudLibraryCloudLibraryReadTagsConstMeta =>
       const TaskConstMeta(
-        debugName: 'cloud_library_read_tags',
-        argNames: ['fileId', 'url', 'authToken'],
+        debugName: "cloud_library_read_tags",
+        argNames: ["fileId", "url", "authToken"],
       );
 
   @override
@@ -629,7 +632,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiCloudLibraryCloudLibraryTracksConstMeta =>
       const TaskConstMeta(
-        debugName: 'cloud_library_tracks',
+        debugName: "cloud_library_tracks",
         argNames: [],
       );
 
@@ -653,8 +656,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiSimpleDecodeFlacFullConstMeta =>
       const TaskConstMeta(
-        debugName: 'decode_flac_full',
-        argNames: ['audioData'],
+        debugName: "decode_flac_full",
+        argNames: ["audioData"],
       );
 
   @override
@@ -676,8 +679,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateApiSimpleGetCoverArtConstMeta => const TaskConstMeta(
-        debugName: 'get_cover_art',
-        argNames: ['path'],
+        debugName: "get_cover_art",
+        argNames: ["path"],
       );
 
   @override
@@ -699,8 +702,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateApiSimpleGreetConstMeta => const TaskConstMeta(
-        debugName: 'greet',
-        argNames: ['name'],
+        debugName: "greet",
+        argNames: ["name"],
       );
 
   @override
@@ -722,7 +725,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   TaskConstMeta get kCrateApiSimpleInitAppConstMeta => const TaskConstMeta(
-        debugName: 'init_app',
+        debugName: "init_app",
         argNames: [],
       );
 
@@ -748,8 +751,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiSimpleInitAudioPlaybackConstMeta =>
       const TaskConstMeta(
-        debugName: 'init_audio_playback',
-        argNames: ['sampleRate', 'channels'],
+        debugName: "init_audio_playback",
+        argNames: ["sampleRate", "channels"],
       );
 
   @override
@@ -772,8 +775,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiSimpleScanDirectoryConstMeta =>
       const TaskConstMeta(
-        debugName: 'scan_directory',
-        argNames: ['path'],
+        debugName: "scan_directory",
+        argNames: ["path"],
       );
 
   @override
@@ -796,8 +799,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiSimpleScanLocalFileConstMeta =>
       const TaskConstMeta(
-        debugName: 'scan_local_file',
-        argNames: ['path'],
+        debugName: "scan_local_file",
+        argNames: ["path"],
       );
 
   @protected

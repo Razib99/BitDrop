@@ -62,6 +62,7 @@ Future<void> main() async {
   globalCloudLibrary = CloudLibrary(
     drive: globalDriveService,
     dbPath: '${supportDir.path}/library.db',
+    cacheDir: '${cacheRoot.path}/tag_cache',
   );
 
   // Edge-to-edge with transparent system bars; the themes paint their own.

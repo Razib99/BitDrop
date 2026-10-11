@@ -197,7 +197,9 @@ class TrackRow extends StatelessWidget {
                 availability: track.availability,
                 cachedPercent: track.cachedPercent,
                 downloadProgress: track.downloadProgress,
+                showCloudOnly: true,
               ),
+
               const SizedBox(width: Spacing.xs),
               if (track.favorite)
                 Padding(
@@ -370,18 +372,19 @@ class AlbumCard extends StatelessWidget {
                           ),
                         ),
                       ),
-                    if (album.availability != Availability.cloudOnly)
-                      Positioned(
-                        top: 6,
-                        right: 6,
-                        child: _Pill(
-                          child: AvailabilityGlyph(
-                            availability: album.availability,
-                            downloadProgress: album.downloadProgress,
-                            size: 15,
-                          ),
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: _Pill(
+                        child: AvailabilityGlyph(
+                          availability: album.availability,
+                          downloadProgress: album.downloadProgress,
+                          size: 15,
+                          showCloudOnly: true,
                         ),
                       ),
+                    ),
+
                   ],
                 ),
               ),
@@ -515,7 +518,9 @@ class AlbumRow extends StatelessWidget {
                         availability: album.availability,
                         downloadProgress: album.downloadProgress,
                         size: 14,
+                        showCloudOnly: true,
                       ),
+
                       const SizedBox(width: Spacing.xxs),
                       Text(
                         Fmt.bytes(album.sizeBytes),

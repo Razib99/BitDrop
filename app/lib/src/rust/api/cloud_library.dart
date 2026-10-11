@@ -7,12 +7,14 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `with_db`
-// These types are ignored because they are not used by any `pub` functions: `DB`, `RT`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `deref`, `deref`, `from`, `initialize`, `initialize`
+// These types are ignored because they are not used by any `pub` functions: `CACHE_DIR`, `DB`, `RT`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `deref`, `deref`, `deref`, `from`, `initialize`, `initialize`, `initialize`
 
 /// Opens (or creates) the library database. Safe to call repeatedly.
-Future<void> cloudLibraryOpen({required String dbPath}) =>
-    RustLib.instance.api.crateApiCloudLibraryCloudLibraryOpen(dbPath: dbPath);
+Future<void> cloudLibraryOpen(
+        {required String dbPath, required String cacheDir}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryOpen(
+        dbPath: dbPath, cacheDir: cacheDir);
 
 /// Records files found by the Drive walk, before any tags are known.
 ///
