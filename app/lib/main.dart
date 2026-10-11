@@ -51,6 +51,8 @@ Future<void> main() async {
   final cacheRoot = await getApplicationCacheDirectory();
   final chunkCache = Directory('${cacheRoot.path}/cloud_chunks');
   await chunkCache.create(recursive: true);
+  globalChunkCacheDir = chunkCache.path;
+  globalArtworkCacheDir = '${cacheRoot.path}/tag_cache/artwork';
 
   audioHandler
     ..cacheDir = chunkCache.path

@@ -25,6 +25,11 @@ late final GoogleDriveService globalDriveService;
 final driveServiceProvider =
     Provider<GoogleDriveService>((ref) => globalDriveService);
 
+/// Where streamed audio chunks and cover art live on disk. Set in `main()`,
+/// which is the only place that knows the platform cache directory.
+late final String globalChunkCacheDir;
+late final String globalArtworkCacheDir;
+
 /// The cloud index. Also created in `main()`, because the core needs it at
 /// construction time.
 late final CloudLibrary globalCloudLibrary;
@@ -48,6 +53,8 @@ final coreProvider = Provider<BitDropCore>((ref) {
   final core = LiveBitDropCore(
     globalAudioHandler,
     cloudLibrary: globalCloudLibrary,
+    chunkCacheDir: globalChunkCacheDir,
+    artworkCacheDir: globalArtworkCacheDir,
   );
   ref.onDispose(core.dispose);
   return core;

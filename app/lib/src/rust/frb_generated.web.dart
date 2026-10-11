@@ -29,6 +29,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  CacheUsage dco_decode_cache_usage(dynamic raw);
+
+  @protected
   CachedRangeMs dco_decode_cached_range_ms(dynamic raw);
 
   @protected
@@ -102,6 +105,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  CacheUsage sse_decode_cache_usage(SseDeserializer deserializer);
 
   @protected
   CachedRangeMs sse_decode_cached_range_ms(SseDeserializer deserializer);
@@ -184,6 +190,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cache_usage(CacheUsage self, SseSerializer serializer);
 
   @protected
   void sse_encode_cached_range_ms(CachedRangeMs self, SseSerializer serializer);

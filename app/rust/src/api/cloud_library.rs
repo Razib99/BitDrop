@@ -299,3 +299,92 @@ pub fn cloud_library_counts() -> Result<ScanCounts, String> {
 pub fn cloud_library_clear() -> Result<(), String> {
     with_db(|db| Ok(db.clear()?))
 }
+
+/// What the streamed-audio cache is using, and what a clear would reclaim.
+pub struct CacheUsage {
+    /// Bytes of streamed audio on disk. This is the reclaimable part.
+    pub audio_bytes: u64,
+    /// How many tracks have at least one chunk cached.
+    pub track_count: u32,
+    /// Bytes of cover art. Kept across a clear: it is small, and losing it
+    /// would blank the library until the next rescan.
+    pub artwork_bytes: u64,
+}
+
+/// Measures the on-disk cache.
+///
+/// Walks the directories rather than trusting a running total: chunks are
+/// also dropped by the OS when it reclaims cache space, so any number the app
+/// kept for itself would drift.
+///
+/// `chunk_dirs` is a list because chunks are written from two places — the
+/// player, and the tag reader that probes each new track for its metadata.
+/// Counting only the player's would understate what a clear reclaims.
+pub fn cache_usage(chunk_dirs: Vec<String>, artwork_dir: String) -> CacheUsage {
+    let mut audio_bytes = 0u64;
+    let mut tracks: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for chunk_dir in &chunk_dirs {
+        let Ok(entries) = std::fs::read_dir(chunk_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".dat") {
+                continue;
+            }
+            if let Ok(meta) = entry.metadata() {
+                audio_bytes += meta.len();
+            }
+            // "<fileId>_chunk_<n>.dat" — everything before the last
+            // "_chunk_" is the track it belongs to.
+            if let Some(idx) = name.rfind("_chunk_") {
+                tracks.insert(name[..idx].to_string());
+            }
+        }
+    }
+
+    let mut artwork_bytes = 0u64;
+    if let Ok(entries) = std::fs::read_dir(&artwork_dir) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                artwork_bytes += meta.len();
+            }
+        }
+    }
+
+    CacheUsage {
+        audio_bytes,
+        track_count: tracks.len() as u32,
+        artwork_bytes,
+    }
+}
+
+/// Deletes every cached audio chunk and returns the bytes reclaimed.
+///
+/// Only the streamed audio goes: artwork and the library index stay, so the
+/// library still renders and no rescan is needed. A chunk belonging to the
+/// track playing right now is safe to unlink — the open file handle keeps
+/// working, and anything read afterwards is simply fetched again.
+pub fn clear_audio_cache(chunk_dirs: Vec<String>) -> u64 {
+    let mut freed = 0u64;
+
+    for chunk_dir in &chunk_dirs {
+        let Ok(entries) = std::fs::read_dir(chunk_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".dat") && !name.ends_with(".tmp") {
+                continue;
+            }
+            let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            if std::fs::remove_file(entry.path()).is_ok() {
+                freed += len;
+            }
+        }
+    }
+
+    crate::cloud::media_source::forget_cached_ranges();
+    freed
+}

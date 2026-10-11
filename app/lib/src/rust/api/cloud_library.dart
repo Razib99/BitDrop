@@ -54,6 +54,62 @@ Future<ScanCounts> cloudLibraryCounts() =>
 Future<void> cloudLibraryClear() =>
     RustLib.instance.api.crateApiCloudLibraryCloudLibraryClear();
 
+/// Measures the on-disk cache.
+///
+/// Walks the directories rather than trusting a running total: chunks are
+/// also dropped by the OS when it reclaims cache space, so any number the app
+/// kept for itself would drift.
+///
+/// `chunk_dirs` is a list because chunks are written from two places — the
+/// player, and the tag reader that probes each new track for its metadata.
+/// Counting only the player's would understate what a clear reclaims.
+Future<CacheUsage> cacheUsage(
+        {required List<String> chunkDirs, required String artworkDir}) =>
+    RustLib.instance.api.crateApiCloudLibraryCacheUsage(
+        chunkDirs: chunkDirs, artworkDir: artworkDir);
+
+/// Deletes every cached audio chunk and returns the bytes reclaimed.
+///
+/// Only the streamed audio goes: artwork and the library index stay, so the
+/// library still renders and no rescan is needed. A chunk belonging to the
+/// track playing right now is safe to unlink — the open file handle keeps
+/// working, and anything read afterwards is simply fetched again.
+Future<BigInt> clearAudioCache({required List<String> chunkDirs}) =>
+    RustLib.instance.api
+        .crateApiCloudLibraryClearAudioCache(chunkDirs: chunkDirs);
+
+/// What the streamed-audio cache is using, and what a clear would reclaim.
+class CacheUsage {
+  /// Bytes of streamed audio on disk. This is the reclaimable part.
+  final BigInt audioBytes;
+
+  /// How many tracks have at least one chunk cached.
+  final int trackCount;
+
+  /// Bytes of cover art. Kept across a clear: it is small, and losing it
+  /// would blank the library until the next rescan.
+  final BigInt artworkBytes;
+
+  const CacheUsage({
+    required this.audioBytes,
+    required this.trackCount,
+    required this.artworkBytes,
+  });
+
+  @override
+  int get hashCode =>
+      audioBytes.hashCode ^ trackCount.hashCode ^ artworkBytes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CacheUsage &&
+          runtimeType == other.runtimeType &&
+          audioBytes == other.audioBytes &&
+          trackCount == other.trackCount &&
+          artworkBytes == other.artworkBytes;
+}
+
 /// A track as the UI sees it.
 class CloudTrack {
   final String fileId;

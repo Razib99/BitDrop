@@ -229,8 +229,6 @@ class SourceCard extends StatelessWidget {
     this.onEditFolders,
     this.onReconnect,
     this.onRemove,
-    this.showAdvanced = false,
-    this.onToggleAdvanced,
   });
 
   final SourceAccount account;
@@ -239,8 +237,6 @@ class SourceCard extends StatelessWidget {
   final VoidCallback? onEditFolders;
   final VoidCallback? onReconnect;
   final VoidCallback? onRemove;
-  final bool showAdvanced;
-  final VoidCallback? onToggleAdvanced;
 
   @override
   Widget build(BuildContext context) {
@@ -322,6 +318,27 @@ class SourceCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
+                    if (onRemove != null)
+                      PopupMenuButton<void>(
+                        tooltip: 'More',
+                        icon: Icon(Icons.more_vert,
+                            size: 18, color: c.textSecondary),
+                        padding: EdgeInsets.zero,
+                        itemBuilder: (_) => [
+                          PopupMenuItem<void>(
+                            onTap: onRemove,
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete_outline,
+                                    size: 18, color: c.error),
+                                const SizedBox(width: Spacing.xs),
+                                Text('Remove source',
+                                    style: TextStyle(color: c.error)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                   ],
                 ),
               ],
@@ -331,7 +348,10 @@ class SourceCard extends StatelessWidget {
               'Synced ${Fmt.relativeTime(account.lastSync)} · '
               '${Fmt.count(account.trackCount)} tracks · '
               '${account.folderCount} folder'
-              '${account.folderCount == 1 ? '' : 's'}',
+              '${account.folderCount == 1 ? '' : 's'}'
+              // One more fact on the line that already carries the facts,
+              // rather than a disclosure button to reveal it.
+              '${account.changesSinceLastSync != null ? ' · ${account.changesSinceLastSync}' : ''}',
               style: context.t.monoLabel.copyWith(color: c.textSecondary),
             ),
             if (account.activityLabel != null) ...[
@@ -370,13 +390,6 @@ class SourceCard extends StatelessWidget {
                 ),
               ),
             ],
-            if (showAdvanced && account.changesSinceLastSync != null) ...[
-              const SizedBox(height: Spacing.xs),
-              Text(
-                'Changes since last sync: ${account.changesSinceLastSync}',
-                style: context.t.monoLabel.copyWith(color: c.textSecondary),
-              ),
-            ],
             const SizedBox(height: Spacing.xs),
             Wrap(
               spacing: Spacing.xs,
@@ -405,18 +418,6 @@ class SourceCard extends StatelessWidget {
                       label: 'Edit folders',
                       icon: Icons.folder_outlined,
                       onTap: onEditFolders!),
-                if (onToggleAdvanced != null)
-                  _SmallButton(
-                    label: showAdvanced ? 'Less' : 'Advanced',
-                    icon: showAdvanced ? Icons.expand_less : Icons.expand_more,
-                    onTap: onToggleAdvanced!,
-                  ),
-                if (onRemove != null)
-                  _SmallButton(
-                      label: 'Remove',
-                      icon: Icons.delete_outline,
-                      onTap: onRemove!,
-                      destructive: true),
               ],
             ),
           ],
@@ -431,13 +432,11 @@ class _SmallButton extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.onTap,
-    this.destructive = false,
   });
 
   final String label;
   final IconData icon;
   final VoidCallback onTap;
-  final bool destructive;
 
   @override
   Widget build(BuildContext context) => OutlinedButton.icon(
@@ -447,7 +446,6 @@ class _SmallButton extends StatelessWidget {
         style: OutlinedButton.styleFrom(
           minimumSize: const Size(0, 36),
           padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
-          foregroundColor: destructive ? context.c.error : null,
           textStyle: context.t.label,
         ),
       );

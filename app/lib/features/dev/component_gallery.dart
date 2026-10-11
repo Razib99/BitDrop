@@ -491,7 +491,7 @@ class _ComponentGalleryState extends ConsumerState<ComponentGallery> {
                     changesSinceLastSync: '+24 new, 3 changed, 1 removed',
                   ),
                   onRescan: () {},
-                  showAdvanced: true,
+                  onRemove: () {},
                 ),
                 const SizedBox(height: Spacing.sm),
                 SourceCard(

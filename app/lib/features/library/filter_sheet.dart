@@ -14,6 +14,117 @@ Future<void> showFilterSheet(BuildContext context) => showModalBottomSheet(
       builder: (_) => const LibraryFilterSheet(),
     );
 
+/// Everything that changes what the library shows, in one sheet.
+///
+/// Layout, sort and filters used to be three separate toolbar icons, two of
+/// which appeared and vanished depending on the tab — so the toolbar changed
+/// shape as you moved around and the controls were still three taps apart.
+/// They are one question ("what am I looking at?") and belong in one place;
+/// the sections that do not apply to the current tab are simply absent.
+Future<void> showViewSheet(BuildContext context, LibraryTab tab) =>
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _ViewSheet(tab: tab),
+    );
+
+class _ViewSheet extends ConsumerWidget {
+  const _ViewSheet({required this.tab});
+
+  final LibraryTab tab;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final grid = ref.watch(libraryGridViewProvider);
+    final sort = ref.watch(albumSortProvider);
+    final desc = ref.watch(albumSortDescProvider);
+    final filters = ref.watch(libraryFiltersProvider);
+    final notifier = ref.read(libraryFiltersProvider.notifier);
+
+    final showsLayout = tab == LibraryTab.albums;
+    final showsSort = tab == LibraryTab.albums || tab == LibraryTab.tracks;
+
+    return BottomSheetScaffold(
+      title: 'View',
+      subtitle: filters.isActive
+          ? '${filters.activeCount} filter${filters.activeCount == 1 ? '' : 's'} active'
+          : 'Showing everything',
+      actions: [
+        if (filters.isActive)
+          TextButton(
+            onPressed: () => notifier.state = const LibraryFilters(),
+            child: Text(context.l10n.actionClear),
+          ),
+      ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showsLayout) ...[
+            const SectionHeader(title: 'Layout'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
+              child: Wrap(
+                spacing: Spacing.xs,
+                children: [
+                  BitChip(
+                    label: 'List',
+                    selected: !grid,
+                    onTap: () => ref
+                        .read(libraryGridViewProvider.notifier)
+                        .state = false,
+                  ),
+                  BitChip(
+                    label: 'Grid',
+                    selected: grid,
+                    onTap: () =>
+                        ref.read(libraryGridViewProvider.notifier).state = true,
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (showsSort) ...[
+            const SectionHeader(title: 'Sort'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
+              child: Wrap(
+                spacing: Spacing.xs,
+                runSpacing: Spacing.xs,
+                children: [
+                  for (final s in AlbumSort.values)
+                    BitChip(
+                      label: switch (s) {
+                        AlbumSort.title => 'Title',
+                        AlbumSort.artist => 'Artist',
+                        AlbumSort.year => 'Year',
+                        AlbumSort.recentlyAdded => 'Recently added',
+                        AlbumSort.sampleRate => 'Sample rate',
+                        AlbumSort.bitDepth => 'Bit depth',
+                        AlbumSort.size => 'Size',
+                        AlbumSort.duration => 'Duration',
+                      },
+                      selected: sort == s,
+                      onTap: () =>
+                          ref.read(albumSortProvider.notifier).state = s,
+                    ),
+                ],
+              ),
+            ),
+            SwitchListTile(
+              value: desc,
+              onChanged: (v) =>
+                  ref.read(albumSortDescProvider.notifier).state = v,
+              title: const Text('Descending'),
+              dense: true,
+            ),
+          ],
+          const _FilterControls(),
+        ],
+      ),
+    );
+  }
+}
+
 /// Format, quality and availability filters.
 ///
 /// "Show unsupported files" defaults to on: an APE file the engine cannot play
@@ -25,7 +136,6 @@ class LibraryFilterSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final filters = ref.watch(libraryFiltersProvider);
-    final genres = ref.watch(genresProvider).valueOrNull ?? const [];
     final notifier = ref.read(libraryFiltersProvider.notifier);
 
     return BottomSheetScaffold(
@@ -40,7 +150,23 @@ class LibraryFilterSheet extends ConsumerWidget {
             child: Text(context.l10n.actionClear),
           ),
       ],
-      child: Column(
+      child: const _FilterControls(),
+    );
+  }
+}
+
+/// The format, quality and availability controls on their own, so the View
+/// sheet can show them under its other sections.
+class _FilterControls extends ConsumerWidget {
+  const _FilterControls();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final filters = ref.watch(libraryFiltersProvider);
+    final genres = ref.watch(genresProvider).valueOrNull ?? const [];
+    final notifier = ref.read(libraryFiltersProvider.notifier);
+
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SectionHeader(title: 'Format'),
@@ -158,57 +284,6 @@ class LibraryFilterSheet extends ConsumerWidget {
           ),
           const SizedBox(height: Spacing.md),
         ],
-      ),
     );
   }
-}
-
-/// Sort picker, shared by the Albums and Tracks tabs.
-Future<void> showSortSheet(BuildContext context, WidgetRef ref) {
-  final sort = ref.read(albumSortProvider);
-  final desc = ref.read(albumSortDescProvider);
-
-  return showModalBottomSheet(
-    context: context,
-    builder: (_) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(Spacing.md),
-            child:
-                SectionHeader(title: 'Sort albums', padding: EdgeInsets.zero),
-          ),
-          for (final s in AlbumSort.values)
-            RadioListTile<AlbumSort>(
-              value: s,
-              groupValue: sort,
-              title: Text(switch (s) {
-                AlbumSort.title => 'Title',
-                AlbumSort.artist => 'Artist',
-                AlbumSort.year => 'Year',
-                AlbumSort.recentlyAdded => 'Recently added',
-                AlbumSort.sampleRate => 'Sample rate',
-                AlbumSort.bitDepth => 'Bit depth',
-                AlbumSort.size => 'Size',
-                AlbumSort.duration => 'Duration',
-              }),
-              onChanged: (v) {
-                if (v != null) ref.read(albumSortProvider.notifier).state = v;
-                Navigator.of(context).pop();
-              },
-            ),
-          SwitchListTile(
-            value: desc,
-            onChanged: (v) {
-              ref.read(albumSortDescProvider.notifier).state = v;
-              Navigator.of(context).pop();
-            },
-            title: const Text('Descending'),
-          ),
-          const SizedBox(height: Spacing.xs),
-        ],
-      ),
-    ),
-  );
 }

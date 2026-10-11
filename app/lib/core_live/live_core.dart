@@ -15,6 +15,7 @@ import 'audio_handler.dart';
 import 'cloud_library.dart';
 import 'output_device.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
+import '../src/rust/api/cloud_library.dart' as rust_cache;
 import '../src/rust/api/simple.dart' as rust_simple;
 
 class LiveBitDropCore implements BitDropCore {
@@ -26,6 +27,22 @@ class LiveBitDropCore implements BitDropCore {
   final CloudLibrary? _cloud;
 
   final Map<String, Track> _realTracks = {};
+
+  /// Where streamed audio chunks land, and where cover art is kept. Two
+  /// separate roots, so clearing the cache can take the regenerable gigabytes
+  /// and leave the few megabytes the library needs in order to render.
+  final String? _chunkCacheDir;
+  final String? _artworkCacheDir;
+
+  /// Every directory chunks get written to. The player writes to its own, and
+  /// the tag reader writes to the one beside the artwork while probing a new
+  /// track for its metadata — so a clear that only swept the player's would
+  /// leave tens of megabytes behind and report the wrong figure.
+  List<String> get _chunkDirs => [
+        if (_chunkCacheDir != null) _chunkCacheDir,
+        if (_artworkCacheDir != null)
+          _artworkCacheDir.replaceFirst(RegExp(r'/artwork/?$'), ''),
+      ];
 
   /// When the current stall began, for escalating the buffering copy.
   DateTime? _bufferingSince;
@@ -56,14 +73,22 @@ class LiveBitDropCore implements BitDropCore {
   static const _bufferTargetMs = 500;
   Album? _realAlbum;
 
-  LiveBitDropCore(this._audioHandler, {CloudLibrary? cloudLibrary})
-      : _cloud = cloudLibrary,
+  LiveBitDropCore(
+    this._audioHandler, {
+    CloudLibrary? cloudLibrary,
+    String? chunkCacheDir,
+    String? artworkCacheDir,
+  })  : _cloud = cloudLibrary,
+        _chunkCacheDir = chunkCacheDir,
+        _artworkCacheDir = artworkCacheDir,
         _mockCore = MockBitDropCore() {
     rust.initEngine();
 
     // The cloud library drives the scan banner on Home and Sources.
     _cloud?.status.listen(_syncStatus.add);
     _cloud?.open();
+
+    refreshStorage();
 
     _outputProbe.start();
     _outputProbe.stream.listen((_) => _recomputeSignalPath());
@@ -235,7 +260,48 @@ class LiveBitDropCore implements BitDropCore {
   @override Stream<SyncStatus> get syncStatus => _syncStatus.stream;
   @override Stream<List<AppBanner>> get banners => _mockCore.banners;
   @override Stream<EqState> get eq => _mockCore.eq;
-  @override Stream<StorageState> get storage => _mockCore.storage;
+  final _storage = BehaviorSubject<StorageState>.seeded(_emptyStorage);
+  @override Stream<StorageState> get storage => _storage.stream;
+
+  static const _emptyStorage = StorageState(
+    pinnedBytes: 0,
+    cacheBytes: 0,
+    freeBytes: 0,
+    totalBytes: 0,
+    cacheLimitBytes: 0,
+  );
+
+  /// Tracks with at least one chunk on disk, for the Sources copy.
+  int _cachedTrackCount = 0;
+  int get cachedTrackCount => _cachedTrackCount;
+
+  /// Re-measures the on-disk cache.
+  ///
+  /// Measured by walking the directory rather than tallied as chunks are
+  /// written: Android reclaims the cache directory whenever it wants the
+  /// space, so a running total the app kept for itself would quietly drift
+  /// away from what is really there.
+  Future<void> refreshStorage() async {
+    final chunks = _chunkCacheDir;
+    if (chunks == null) return;
+    try {
+      final usage = await rust_cache.cacheUsage(
+        chunkDirs: _chunkDirs,
+        artworkDir: _artworkCacheDir ?? '',
+      );
+      _cachedTrackCount = usage.trackCount;
+      _storage.add(StorageState(
+        pinnedBytes: 0,
+        cacheBytes: usage.audioBytes.toInt(),
+        freeBytes: 0,
+        totalBytes: 0,
+        cacheLimitBytes: 0,
+        artworkBytes: usage.artworkBytes.toInt(),
+      ));
+    } catch (e) {
+      debugPrint('[storage] could not measure cache: $e');
+    }
+  }
   @override Stream<DiagnosticsSnapshot> get diagnostics => _mockCore.diagnostics;
   @override Stream<VisualizerFrame> get visualizer => _mockCore.visualizer;
   @override Stream<List<DeviceProfile>> get deviceProfiles => _mockCore.deviceProfiles;
@@ -398,6 +464,25 @@ class LiveBitDropCore implements BitDropCore {
       await _audioHandler.play();
     } else if (cmd is Seek) {
       await _audioHandler.seek(Duration(milliseconds: cmd.positionMs));
+    } else if (cmd is ClearCache) {
+      final chunks = _chunkCacheDir;
+      if (chunks != null) {
+        final freed = await rust_cache.clearAudioCache(chunkDirs: _chunkDirs);
+        debugPrint('[storage] cleared $freed bytes of streamed audio');
+        await refreshStorage();
+      }
+    } else if (cmd is Next) {
+      await _audioHandler.skipToNext();
+    } else if (cmd is Previous) {
+      // Back means \"start this track again\" once you are into it, and only
+      // means the previous track near the beginning. Jumping straight off a
+      // song you are three minutes into is never what the button was for.
+      final pos = _position.valueOrNull?.positionMs ?? 0;
+      if (pos > 3000) {
+        await _audioHandler.seek(Duration.zero);
+      } else {
+        await _audioHandler.skipToPrevious();
+      }
     } else {
       await _mockCore.send(cmd);
     }

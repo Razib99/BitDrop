@@ -26,6 +26,17 @@ pub static BYTES_FETCHED: AtomicUsize = AtomicUsize::new(0);
 /// bytes, chunk indices).
 pub static CACHED: Mutex<Option<(String, u64, Vec<u64>)>> = Mutex::new(None);
 
+/// Forgets which chunks are on disk.
+///
+/// Called after the cache is emptied: the ranges drawn on the seek bar are a
+/// promise that those seconds will play without the network, and a stale
+/// promise is worse than none.
+pub fn forget_cached_ranges() {
+    if let Ok(mut guard) = CACHED.lock() {
+        *guard = None;
+    }
+}
+
 /// Byte ranges of the current track that are cached, merged and in order.
 pub fn cached_byte_ranges() -> (u64, Vec<(u64, u64)>) {
     let guard = match CACHED.lock() {

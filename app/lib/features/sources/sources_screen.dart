@@ -8,6 +8,7 @@ import '../../core_api/commands.dart';
 import '../../core_api/models.dart';
 import '../../l10n/l10n.dart';
 import '../../core_api/enums.dart';
+import '../../core_live/live_core.dart';
 import '../../providers/core_providers.dart';
 import '../storage/google_drive_service.dart';
 import 'folder_picker.dart';
@@ -30,7 +31,6 @@ class SourcesScreen extends ConsumerStatefulWidget {
 }
 
 class _SourcesScreenState extends ConsumerState<SourcesScreen> {
-  bool _advanced = false;
 
   @override
   Widget build(BuildContext context) {
@@ -64,8 +64,6 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                   Spacing.md, Spacing.xs, Spacing.md, 0),
               child: SourceCard(
                 account: s,
-                showAdvanced: _advanced,
-                onToggleAdvanced: () => setState(() => _advanced = !_advanced),
                 // A real connection drives the real library; the mock core
                 // still backs the other scenarios in the switcher.
                 onRescan: s.id == 'drive'
@@ -101,37 +99,28 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                 onRemove: () => _confirmRemove(context, s),
               ),
             ),
-        const SectionHeader(title: 'Add a source'),
-        _ProviderTile(
-          icon: Icons.add_to_drive,
-          name: 'Google Drive',
-          detail: !GoogleDriveService.isPlatformSupported
-              ? 'Needs the Android or iOS build'
-              : (sources.isEmpty
-                  ? 'Not connected'
-                  : 'Connected · ${sources.first.accountLabel}'),
-          // Greyed on desktop for the same reason as the card above: it is
-          // not something the user can act on here.
-          available: GoogleDriveService.isPlatformSupported,
-        ),
-        const _ProviderTile(
-          icon: Icons.cloud_outlined,
-          name: 'S3-compatible',
-          detail: 'Coming later',
-          available: false,
-        ),
-        const _ProviderTile(
-          icon: Icons.dns_outlined,
-          name: 'WebDAV',
-          detail: 'Coming later',
-          available: false,
-        ),
-        const _ProviderTile(
-          icon: Icons.library_music_outlined,
-          name: 'OpenSubsonic / Navidrome',
-          detail: 'Coming later',
-          available: false,
-        ),
+        if (sources.isNotEmpty) ...[
+          const SectionHeader(title: 'Storage'),
+          const _CacheCard(),
+        ],
+        // Listing Drive again under "Add a source" while its own card sits
+        // above it just shows the same account twice.
+        if (sources.isEmpty) ...[
+          const SectionHeader(title: 'Add a source'),
+          _ProviderTile(
+            icon: Icons.add_to_drive,
+            name: 'Google Drive',
+            detail: !GoogleDriveService.isPlatformSupported
+                ? 'Needs the Android or iOS build'
+                : 'Not connected',
+            // Greyed on desktop for the same reason as the card above: it is
+            // not something the user can act on here.
+            available: GoogleDriveService.isPlatformSupported,
+          ),
+        ],
+        // Three full rows for three things nobody can tap is three rows of
+        // nothing. One line says the same and asks for no attention.
+        const _ComingLater(),
         const SizedBox(height: Spacing.md),
         const _PrivacyNote(),
       ],
@@ -470,6 +459,130 @@ class _ConnectDriveCard extends ConsumerWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// What the streamed audio cache is costing, and a way to get it back.
+///
+/// Reports the reclaimable figure only. Cover art and the library index are
+/// deliberately not counted and not cleared: they are a few megabytes, and
+/// throwing them away would blank the library until the next full rescan —
+/// a much worse trade than the space is worth.
+class _CacheCard extends ConsumerStatefulWidget {
+  const _CacheCard();
+
+  @override
+  ConsumerState<_CacheCard> createState() => _CacheCardState();
+}
+
+class _CacheCardState extends ConsumerState<_CacheCard> {
+  bool _clearing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Chunks are written while playing and dropped by Android when it wants
+    // the space, so the figure is only trustworthy if it is re-measured on
+    // arrival rather than read from whatever was last seen.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+  }
+
+  void _refresh() {
+    final core = ref.read(coreProvider);
+    if (core is LiveBitDropCore) unawaited(core.refreshStorage());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+    final storage = ref.watch(storageProvider).valueOrNull;
+    final bytes = storage?.cacheBytes ?? 0;
+    final artwork = storage?.artworkBytes ?? 0;
+    final core = ref.read(coreProvider);
+    final tracks = core is LiveBitDropCore ? core.cachedTrackCount : 0;
+
+    return Padding(
+      padding:
+          const EdgeInsets.fromLTRB(Spacing.md, Spacing.xs, Spacing.md, 0),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(Spacing.sm),
+          child: Row(
+            children: [
+              Icon(Icons.sd_storage_outlined, size: 20, color: c.textSecondary),
+              const SizedBox(width: Spacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Streamed audio', style: context.t.titleSmall),
+                    const SizedBox(height: 2),
+                    Text(
+                      bytes == 0
+                          ? 'Nothing cached yet'
+                          : '${Fmt.bytes(bytes)} · '
+                              '$tracks track${tracks == 1 ? '' : 's'}',
+                      style: context.t.monoLabel
+                          .copyWith(color: c.textSecondary),
+                    ),
+                    if (artwork > 0) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'Cover art ${Fmt.bytes(artwork)} is kept',
+                        style: context.t.monoLabel
+                            .copyWith(color: c.textTertiary),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (bytes > 0)
+                TextButton(
+                  onPressed: _clearing ? null : _confirmClear,
+                  child: Text(_clearing ? 'Clearing…' : 'Clear'),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmClear() async {
+    final bytes = ref.read(storageProvider).valueOrNull?.cacheBytes ?? 0;
+    final ok = await ConfirmDialog.show(
+      context,
+      title: 'Clear cached audio?',
+      // Says what is lost as well as what is gained: nothing here is
+      // irreplaceable, and the user should be able to see that.
+      message: 'Frees ${Fmt.bytes(bytes)}. Your music stays in Drive and will '
+          'stream again when you play it. Cover art and the library index '
+          'are kept, so nothing needs rescanning.',
+      confirmLabel: 'Clear',
+    );
+    if (!ok || !mounted) return;
+
+    setState(() => _clearing = true);
+    sendCommand(ref, const ClearCache());
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (mounted) setState(() => _clearing = false);
+  }
+}
+
+/// The providers that are not here yet, as one quiet line.
+class _ComingLater extends StatelessWidget {
+  const _ComingLater();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding:
+          const EdgeInsets.fromLTRB(Spacing.md, Spacing.md, Spacing.md, 0),
+      child: Text(
+        'S3-compatible, WebDAV and OpenSubsonic are coming later.',
+        style: context.t.bodySmall.copyWith(color: context.c.textTertiary),
       ),
     );
   }

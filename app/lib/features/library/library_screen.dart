@@ -82,35 +82,22 @@ class _Toolbar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final showsGridToggle = tab == LibraryTab.albums;
-    final showsSort = tab == LibraryTab.albums || tab == LibraryTab.tracks;
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(Spacing.md, Spacing.xs, Spacing.xs, 0),
       child: Row(
         children: [
           Text(context.l10n.navLibrary, style: context.t.headline),
           const Spacer(),
-          if (showsSort)
-            IconButton(
-              tooltip: 'Sort',
-              icon: const Icon(Icons.sort),
-              onPressed: () => showSortSheet(context, ref),
-            ),
-          if (showsGridToggle)
-            IconButton(
-              tooltip: grid ? 'Show as list' : 'Show as grid',
-              icon: Icon(grid ? Icons.view_list : Icons.grid_view),
-              onPressed: () =>
-                  ref.read(libraryGridViewProvider.notifier).state = !grid,
-            ),
+          // Layout, sort and filter are one question, so they are one
+          // control. The dot says the view is not the default without
+          // spending a second icon to say it.
           Stack(
             clipBehavior: Clip.none,
             children: [
               IconButton(
-                tooltip: 'Filter',
+                tooltip: 'View, sort and filter',
                 icon: const Icon(Icons.tune),
-                onPressed: () => showFilterSheet(context),
+                onPressed: () => showViewSheet(context, tab),
               ),
               if (filters.isActive)
                 Positioned(
