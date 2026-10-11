@@ -286,7 +286,17 @@ class LiveBitDropCore implements BitDropCore {
   @override
   Future<void> send(PlayerCommand cmd) async {
     if (cmd is PlayContext) {
-      final tracks = cmd.trackIds.map((id) => _realTracks[id] ?? MockCatalog.trackById(id)).whereType<Track>().toList();
+      // Must go through _lookupTrack: resolving against local and mock only
+      // meant every cloud track came back empty and the tap did nothing.
+      final tracks =
+          cmd.trackIds.map(_lookupTrack).whereType<Track>().toList();
+      debugPrint('[play] PlayContext ${cmd.contextId}: '
+          '${cmd.trackIds.length} ids -> ${tracks.length} resolved, '
+          'startIndex ${cmd.startIndex}');
+      if (tracks.isEmpty) {
+        debugPrint('[play] nothing resolved; first id was '
+            '${cmd.trackIds.isEmpty ? '(none)' : cmd.trackIds.first}');
+      }
       if (tracks.isNotEmpty) {
         final items = tracks.map((t) {
           // A cloud track is identified by its Drive file id, so the engine is

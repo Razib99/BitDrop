@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core_api/bitdrop_core.dart';
@@ -78,8 +79,12 @@ void switchScenario(WidgetRef ref, Scenario s) {
 /// Fire-and-forget command dispatch.
 void sendCommand(WidgetRef ref, PlayerCommand cmd) {
   // The core returns a Future only so the real bridge can be async; the UI
-  // intentionally does not await it — results arrive on the streams.
-  ref.read(coreProvider).send(cmd).ignore();
+  // intentionally does not await it — results arrive on the streams. But a
+  // thrown command used to vanish into ignore(), which made a dead button
+  // indistinguishable from a working one.
+  ref.read(coreProvider).send(cmd).catchError((Object e, StackTrace st) {
+    debugPrint('[bitdrop] command ${cmd.runtimeType} failed: $e\n$st');
+  });
 }
 
 // ---- State streams ---------------------------------------------------------

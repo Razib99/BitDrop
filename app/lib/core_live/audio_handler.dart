@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
 
 /// Supplies a currently-valid OAuth access token for cloud playback.
@@ -94,6 +95,9 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
     final item = items[_currentIndex];
     mediaItem.add(item);
 
+    debugPrint('[play] opening ${item.id} '
+        'source=${item.extras?['source'] ?? 'local'}');
+
     if (item.extras?['source'] == 'cloud') {
       await _playCloud(item);
       return;
@@ -130,6 +134,9 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
       return;
     }
 
+    debugPrint('[play] cloud ${extras['fileId']} '
+        'size=${extras['sizeBytes']} ext=${extras['ext']}');
+
     rust.enginePlayCloud(
       fileId: extras['fileId'] as String,
       url: extras['url'] as String,
@@ -141,6 +148,7 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
   }
 
   void _reportCloudError(String message) {
+    debugPrint('[play] cloud error: $message');
     playbackState.add(playbackState.value.copyWith(
       processingState: AudioProcessingState.error,
       playing: false,
