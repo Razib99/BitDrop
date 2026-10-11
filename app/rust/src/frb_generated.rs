@@ -362,7 +362,8 @@ return crate::api::simple::DecodedAudio{sample_rate: var_sampleRate, channels: v
 let mut var_bufferedMs = <u32>::sse_decode(deserializer);
 let mut var_fetchesInFlight = <u32>::sse_decode(deserializer);
 let mut var_bytesFetched = <u64>::sse_decode(deserializer);
-return crate::api::audio_engine::EngineBufferState{buffering: var_buffering, buffered_ms: var_bufferedMs, fetches_in_flight: var_fetchesInFlight, bytes_fetched: var_bytesFetched};}
+let mut var_streamOpens = <u32>::sse_decode(deserializer);
+return crate::api::audio_engine::EngineBufferState{buffering: var_buffering, buffered_ms: var_bufferedMs, fetches_in_flight: var_fetchesInFlight, bytes_fetched: var_bytesFetched, stream_opens: var_streamOpens};}
                 }
                 
                 impl SseDecode for crate::api::audio_engine::EngineOutputState {
@@ -626,7 +627,8 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::DecodedAudio> for cra
                     self.buffering.into_into_dart().into_dart(),
 self.buffered_ms.into_into_dart().into_dart(),
 self.fetches_in_flight.into_into_dart().into_dart(),
-self.bytes_fetched.into_into_dart().into_dart()
+self.bytes_fetched.into_into_dart().into_dart(),
+self.stream_opens.into_into_dart().into_dart()
                 ].into_dart()
                 }
             }
@@ -743,7 +745,8 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::TrackMetadata> for cr
                     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<bool>::sse_encode(self.buffering, serializer);
 <u32>::sse_encode(self.buffered_ms, serializer);
 <u32>::sse_encode(self.fetches_in_flight, serializer);
-<u64>::sse_encode(self.bytes_fetched, serializer);}
+<u64>::sse_encode(self.bytes_fetched, serializer);
+<u32>::sse_encode(self.stream_opens, serializer);}
                 }
                 
                 impl SseEncode for crate::api::audio_engine::EngineOutputState {

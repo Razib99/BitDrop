@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -33,6 +34,25 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
   double? _dragFraction;
   bool _showRemaining = true;
 
+  /// Where the user let go, held until the engine lands there.
+  ///
+  /// A seek into an unfetched region costs a byte-range request, so the
+  /// engine keeps reporting the old position for a moment after the finger
+  /// lifts. Snapping the thumb back there reads as the drag having been
+  /// rejected, which is the single worst thing a seek bar can do.
+  int? _pendingMs;
+  Timer? _pendingTimeout;
+
+  /// How close the engine has to land before the hold is released. A coarse
+  /// seek lands on a packet boundary, not on the exact millisecond asked for.
+  static const _landedToleranceMs = 1500;
+
+  @override
+  void dispose() {
+    _pendingTimeout?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.c;
@@ -40,10 +60,22 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
     final playback = ref.watch(playbackProvider).valueOrNull;
     final buffering = playback is BufferingState ? playback : null;
 
+    // Release the hold once the engine reports a position near the target.
+    ref.listen(positionProvider, (_, next) {
+      final target = _pendingMs;
+      final value = next.valueOrNull;
+      if (target == null || value == null) return;
+      if ((value.positionMs - target).abs() <= _landedToleranceMs) {
+        _pendingTimeout?.cancel();
+        setState(() => _pendingMs = null);
+      }
+    });
+
     final duration =
         widget.durationMs > 0 ? widget.durationMs : info.durationMs;
+    final shownMs = _pendingMs ?? info.positionMs;
     final liveFraction =
-        duration <= 0 ? 0.0 : (info.positionMs / duration).clamp(0.0, 1.0);
+        duration <= 0 ? 0.0 : (shownMs / duration).clamp(0.0, 1.0);
     final fraction = _dragFraction ?? liveFraction;
     final scrubMs = (fraction * duration).round();
     final willStream = !info.isCachedAt(scrubMs);
@@ -104,7 +136,7 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
                   track: c.outline,
                   thumb: c.accent,
                   dragging: _dragFraction != null,
-                  pulse: buffering != null,
+                  pulse: buffering != null || _pendingMs != null,
                 ),
               ),
             ),
@@ -115,7 +147,7 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
           child: Row(
             children: [
               Text(
-                Fmt.duration(_dragFraction != null ? scrubMs : info.positionMs),
+                Fmt.duration(_dragFraction != null ? scrubMs : shownMs),
                 style: context.t.monoReadout.copyWith(color: c.textSecondary),
               ),
               const Spacer(),
@@ -161,7 +193,7 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
                     child: Text(
                       _showRemaining
                           ? Fmt.remaining(
-                              _dragFraction != null ? scrubMs : info.positionMs,
+                              _dragFraction != null ? scrubMs : shownMs,
                               duration,
                             )
                           : Fmt.duration(duration),
@@ -194,7 +226,16 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
       HapticFeedback.selectionClick();
     }
     sendCommand(ref, Seek(target));
-    setState(() => _dragFraction = null);
+    _pendingTimeout?.cancel();
+    // Nothing guarantees the engine reaches the target: the open can fail, or
+    // the track can end. Give up on the hold rather than freezing the bar.
+    _pendingTimeout = Timer(const Duration(seconds: 10), () {
+      if (mounted) setState(() => _pendingMs = null);
+    });
+    setState(() {
+      _pendingMs = target;
+      _dragFraction = null;
+    });
   }
 
   void _seekBy(int deltaMs, int duration) {

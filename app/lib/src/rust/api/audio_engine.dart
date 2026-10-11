@@ -6,9 +6,9 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `begin_switch`, `open_media_source`
-// These types are ignored because they are not used by any `pub` functions: `Biquad`, `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DecoderCmd`, `GraphicEq`, `OpenedTrack`, `PLAYER_STATE`, `PlayerState`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `default`, `default`, `deref`, `deref`, `deref`, `initialize`, `initialize`, `initialize`
+// These functions are ignored because they are not marked as `pub`: `open_media_source`, `ramp_step`, `request_load`, `set_ramp`, `stream_opens`
+// These types are ignored because they are not used by any `pub` functions: `Biquad`, `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DecoderCmd`, `GraphicEq`, `LOAD_SENDER`, `OpenedTrack`, `PLAYER_STATE`, `PlayerState`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `default`, `default`, `deref`, `deref`, `deref`, `deref`, `initialize`, `initialize`, `initialize`, `initialize`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `new`, `process_stereo`, `process`, `set_peaking`, `update_gains`
 
 Future<void> initEngine() =>
@@ -44,9 +44,15 @@ void engineResume() => RustLib.instance.api.crateApiAudioEngineEngineResume();
 
 /// Seeks, fading out and back in around the jump.
 ///
-/// The ring still holds audio from before the jump, so without a flush the
-/// user hears a moment of the old position after landing. Without the ramp,
-/// cutting the ring mid-waveform clicks.
+/// The ramp starts here rather than on the decode thread so it begins the
+/// moment the finger lifts; the decode thread then waits it out before it
+/// flushes. The ring still holds seconds of audio from before the jump, so
+/// without the flush the user hears the old position after landing, and
+/// without the ramp cutting the ring mid-waveform clicks.
+///
+/// `position_ms` is published immediately: the decoder will not confirm the
+/// landing until it has read ahead again, and a progress bar that waits for
+/// that feels broken.
 void engineSeek({required int positionMs}) =>
     RustLib.instance.api.crateApiAudioEngineEngineSeek(positionMs: positionMs);
 
@@ -115,11 +121,16 @@ class EngineBufferState {
   /// Bytes pulled from the network this session.
   final BigInt bytesFetched;
 
+  /// Times the output stream has been opened, including the first. Anything
+  /// above one means it was lost and rebuilt.
+  final int streamOpens;
+
   const EngineBufferState({
     required this.buffering,
     required this.bufferedMs,
     required this.fetchesInFlight,
     required this.bytesFetched,
+    required this.streamOpens,
   });
 
   @override
@@ -127,7 +138,8 @@ class EngineBufferState {
       buffering.hashCode ^
       bufferedMs.hashCode ^
       fetchesInFlight.hashCode ^
-      bytesFetched.hashCode;
+      bytesFetched.hashCode ^
+      streamOpens.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -137,7 +149,8 @@ class EngineBufferState {
           buffering == other.buffering &&
           bufferedMs == other.bufferedMs &&
           fetchesInFlight == other.fetchesInFlight &&
-          bytesFetched == other.bytesFetched;
+          bytesFetched == other.bytesFetched &&
+          streamOpens == other.streamOpens;
 }
 
 /// What the engine is really doing with the samples right now.

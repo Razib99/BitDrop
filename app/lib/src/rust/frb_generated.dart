@@ -948,13 +948,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   EngineBufferState dco_decode_engine_buffer_state(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return EngineBufferState(
       buffering: dco_decode_bool(arr[0]),
       bufferedMs: dco_decode_u_32(arr[1]),
       fetchesInFlight: dco_decode_u_32(arr[2]),
       bytesFetched: dco_decode_u_64(arr[3]),
+      streamOpens: dco_decode_u_32(arr[4]),
     );
   }
 
@@ -1185,11 +1186,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_bufferedMs = sse_decode_u_32(deserializer);
     var var_fetchesInFlight = sse_decode_u_32(deserializer);
     var var_bytesFetched = sse_decode_u_64(deserializer);
+    var var_streamOpens = sse_decode_u_32(deserializer);
     return EngineBufferState(
         buffering: var_buffering,
         bufferedMs: var_bufferedMs,
         fetchesInFlight: var_fetchesInFlight,
-        bytesFetched: var_bytesFetched);
+        bytesFetched: var_bytesFetched,
+        streamOpens: var_streamOpens);
   }
 
   @protected
@@ -1443,6 +1446,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.bufferedMs, serializer);
     sse_encode_u_32(self.fetchesInFlight, serializer);
     sse_encode_u_64(self.bytesFetched, serializer);
+    sse_encode_u_32(self.streamOpens, serializer);
   }
 
   @protected

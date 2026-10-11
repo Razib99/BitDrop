@@ -30,6 +30,12 @@ class LiveBitDropCore implements BitDropCore {
   /// When the current stall began, for escalating the buffering copy.
   DateTime? _bufferingSince;
 
+  /// Last seen output-stream open count. An exclusive AAudio stream is torn
+  /// down by any routing change and the engine silently rebuilds it; logging
+  /// the rebuild is what turns "it just went quiet" into something that can
+  /// be read off a bug report.
+  int _streamOpens = 0;
+
   final _outputProbe = OutputDeviceProbe();
   final _signalPath = BehaviorSubject<SignalPath>.seeded(_unknownPath);
 
@@ -43,8 +49,11 @@ class LiveBitDropCore implements BitDropCore {
     explanation: 'Nothing is playing yet, so there is no output path to report.',
   );
 
-  /// What the engine builds up before it resumes after a stall.
-  static const _bufferTargetMs = 2000;
+  /// What the engine banks before it lets a new track or a landed seek be
+  /// heard. Must track `PREBUFFER_MS` in the Rust engine: a progress readout
+  /// counting up to a different number than the one the gate actually opens
+  /// on would jump to playing part-way along the bar.
+  static const _bufferTargetMs = 500;
   Album? _realAlbum;
 
   LiveBitDropCore(this._audioHandler, {CloudLibrary? cloudLibrary})
@@ -73,6 +82,14 @@ class LiveBitDropCore implements BitDropCore {
       // Buffering is not pausing: the user did not stop this, the network
       // did. The wording escalates with the length of the stall so a brief
       // hiccup and a failing connection do not read the same.
+      final opens = rust.engineBufferState().streamOpens;
+      if (opens != _streamOpens) {
+        if (_streamOpens != 0) {
+          debugPrint('[audio] output stream rebuilt (open #$opens)');
+        }
+        _streamOpens = opens;
+      }
+
       if (buffering) {
         _bufferingSince ??= DateTime.now();
         final stalled = DateTime.now().difference(_bufferingSince!);
