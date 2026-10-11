@@ -13,6 +13,7 @@ import '../core_mock/catalog.dart';
 import '../core_mock/mock_core.dart';
 import 'audio_handler.dart';
 import 'cloud_library.dart';
+import 'output_device.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
 import '../src/rust/api/simple.dart' as rust_simple;
 
@@ -29,6 +30,19 @@ class LiveBitDropCore implements BitDropCore {
   /// When the current stall began, for escalating the buffering copy.
   DateTime? _bufferingSince;
 
+  final _outputProbe = OutputDeviceProbe();
+  final _signalPath = BehaviorSubject<SignalPath>.seeded(_unknownPath);
+
+  static const _unknownPath = SignalPath(
+    tier: OutputTier.unknown,
+    source: AudioFormat(codec: Codec.flac, bitDepth: 0, sampleRate: 0),
+    requested: AudioFormat(codec: Codec.flac, bitDepth: 0, sampleRate: 0),
+    actual: AudioFormat(codec: Codec.flac, bitDepth: 0, sampleRate: 0),
+    dspActive: false,
+    volume: VolumeMode.system,
+    explanation: 'Nothing is playing yet, so there is no output path to report.',
+  );
+
   /// What the engine builds up before it resumes after a stall.
   static const _bufferTargetMs = 2000;
   Album? _realAlbum;
@@ -42,7 +56,12 @@ class LiveBitDropCore implements BitDropCore {
     _cloud?.status.listen(_syncStatus.add);
     _cloud?.open();
 
+    _outputProbe.start();
+    _outputProbe.stream.listen((_) => _recomputeSignalPath());
+    _mockCore.eq.listen((_) => _recomputeSignalPath());
+
     _audioHandler.playbackState.listen((state) {
+      _recomputeSignalPath();
       final isPlaying = state.playing;
       final buffering =
           state.processingState == audio_svc.AudioProcessingState.buffering;
@@ -71,6 +90,9 @@ class LiveBitDropCore implements BitDropCore {
         positionMs: state.updatePosition.inMilliseconds,
         durationMs: _audioHandler.mediaItem.value?.duration?.inMilliseconds ?? 0,
         bufferAheadMs: aheadMs,
+        // Which parts are already on disk. Non-contiguous after a seek,
+        // which is exactly what the bar is meant to show.
+        cachedRanges: _cachedRanges(),
       ));
     });
     
@@ -185,10 +207,10 @@ class LiveBitDropCore implements BitDropCore {
   @override Stream<NowPlaying?> get nowPlaying => _nowPlaying.stream;
 
   // Delegated streams
-  @override Stream<SignalPath> get signalPath => _mockCore.signalPath;
+  @override Stream<SignalPath> get signalPath => _signalPath.stream;
   final _queue = BehaviorSubject<QueueState>.seeded(QueueState.empty);
   @override Stream<QueueState> get queue => _queue.stream;
-  @override Stream<OutputDevice?> get outputDevice => _mockCore.outputDevice;
+  @override Stream<OutputDevice?> get outputDevice => _outputProbe.stream;
   @override
   Stream<List<SourceAccount>> get sources =>
       _cloud?.sourceAccounts ?? _mockCore.sources;
@@ -364,6 +386,131 @@ class LiveBitDropCore implements BitDropCore {
     }
   }
 
+  /// Builds the signal path from measured facts only.
+  ///
+  /// The source format comes from the decoder, the output rate from the
+  /// stream the device actually granted, and the device from AudioManager.
+  /// Nothing here is inferred from a file name or assumed from a scenario.
+  void _recomputeSignalPath() {
+    final out = rust.engineOutputState();
+    if (!out.hasTrack || out.sourceSampleRate == 0) {
+      _signalPath.add(_unknownPath);
+      return;
+    }
+
+    final device = _outputProbe.current;
+    final codec = _codecFromName(out.sourceCodec);
+
+    final source = AudioFormat(
+      codec: codec,
+      bitDepth: out.sourceBits == 0 ? 16 : out.sourceBits,
+      sampleRate: out.sourceSampleRate,
+      channels: out.sourceChannels == 0 ? 2 : out.sourceChannels,
+    );
+
+    // What actually leaves the engine: the stream's rate, not the file's.
+    final actual = source.copyWith(
+      sampleRate:
+          out.outputSampleRate == 0 ? out.sourceSampleRate : out.outputSampleRate,
+    );
+
+    final resampled = actual.sampleRate != source.sampleRate;
+    final dsp = out.dspActive;
+
+    // Order matters. A rate change is the more severe truth, so it outranks
+    // DSP; DSP in turn rules out bit-perfect. The device ceiling caps the
+    // rest, and on Android 12 that ceiling is never bit-perfect.
+    final ceiling = device?.maxTier ?? OutputTier.unknown;
+    final OutputTier tier;
+    if (resampled) {
+      tier = OutputTier.resampled;
+    } else if (dsp) {
+      tier = OutputTier.nativeRate;
+    } else if (ceiling == OutputTier.resampled) {
+      tier = OutputTier.resampled;
+    } else {
+      tier = ceiling;
+    }
+
+    final dspChain = <String>[];
+    if (dsp) dspChain.add('Equaliser');
+
+    _signalPath.add(SignalPath(
+      tier: tier,
+      source: source,
+      requested: source,
+      actual: actual,
+      dspActive: dsp,
+      dspChain: dspChain,
+      volume: dsp ? VolumeMode.softwareDithered : VolumeMode.system,
+      device: device,
+      sourceLabel: _cloud?.trackById(_currentTrackId) != null
+          ? 'Google Drive'
+          : 'This device',
+      decoderLabel: '${source.codec.label} -> '
+          '${source.bitDepth}-bit integer PCM',
+      explanation: _explain(tier, source, actual, dsp, device),
+    ));
+  }
+
+  String get _currentTrackId => _nowPlaying.value?.track.id ?? '';
+
+  /// Cached spans of the current track, read straight from the chunk cache.
+  ///
+  /// Recomputed per tick rather than cached: a chunk can land at any moment
+  /// and a stale answer would tell the user a seek is instant when it is not.
+  List<CachedRange> _cachedRanges() {
+    try {
+      return rust
+          .engineCachedRanges()
+          .map((r) => CachedRange(r.startMs, r.endMs))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static Codec _codecFromName(String name) => switch (name.toUpperCase()) {
+        'FLAC' => Codec.flac,
+        'ALAC' => Codec.alac,
+        'PCM' || 'WAV' => Codec.wav,
+        'AIFF' => Codec.aiff,
+        'MP3' => Codec.mp3,
+        'AAC' => Codec.aac,
+        'VORBIS' || 'OPUS' => Codec.opus,
+        _ => Codec.flac,
+      };
+
+  /// Plain language, and specific about the actual cause.
+  static String _explain(
+    OutputTier tier,
+    AudioFormat source,
+    AudioFormat actual,
+    bool dsp,
+    OutputDevice? device,
+  ) {
+    if (tier == OutputTier.resampled && actual.sampleRate != source.sampleRate) {
+      return 'This phone mixes all audio at '
+          '${actual.sampleRate ~/ 1000} kHz, so your '
+          '${source.sampleRate ~/ 1000} kHz file is resampled before it '
+          'reaches the output. Bit-perfect needs Android 14 or later and a '
+          'DAC that supports it.';
+    }
+    if (device?.type == DeviceType.bluetooth) {
+      return 'Bluetooth re-encodes audio with its own codec, so lossless '
+          'playback is not possible over it on any phone.';
+    }
+    if (dsp) {
+      return 'The equaliser is changing the samples, so this is no longer an '
+          'untouched signal. Turn it off to get the closest path available.';
+    }
+    if (tier == OutputTier.nativeRate) {
+      return 'No resampling is happening: the output runs at the file\'s own '
+          'rate. Android may still apply system volume and mix other sounds.';
+    }
+    return 'The output path could not be determined.';
+  }
+
   @override
   void dispose() {
     _playback.close();
@@ -372,6 +519,8 @@ class LiveBitDropCore implements BitDropCore {
     _syncStatus.close();
     _queue.close();
     _cloud?.dispose();
+    _outputProbe.dispose();
+    _signalPath.close();
     _mockCore.dispose();
   }
 }

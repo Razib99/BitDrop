@@ -1,6 +1,7 @@
-import 'dart:typed_data';
+import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../src/rust/api/simple.dart' as rust;
 
@@ -89,10 +90,16 @@ class AlbumArtwork extends StatelessWidget {
   Future<Uint8List?> _loadArt(String path) async {
     if (_imageCache.containsKey(path)) return _imageCache[path];
     try {
-      final data = rust.getCoverArt(path: path);
-      if (data != null) _imageCache[path] = data;
+      // Cloud artwork was already extracted to its own image file during the
+      // scan, so read it directly; a local track still needs the cover
+      // pulling out of the music file itself.
+      final Uint8List? data = path.endsWith('.img')
+          ? await File(path).readAsBytes()
+          : rust.getCoverArt(path: path);
+      if (data != null && data.isNotEmpty) _imageCache[path] = data;
       return data;
     } catch (e) {
+      debugPrint('[art] could not load $path: $e');
       return null;
     }
   }

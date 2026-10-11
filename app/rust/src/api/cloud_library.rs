@@ -44,6 +44,8 @@ pub struct CloudTrack {
     pub bits_per_sample: u32,
     pub size_bytes: u64,
     pub tags_read: bool,
+    /// Absolute path to artwork pulled out of the file, or empty.
+    pub artwork_path: String,
 }
 
 impl From<CloudTrackRow> for CloudTrack {
@@ -66,6 +68,7 @@ impl From<CloudTrackRow> for CloudTrack {
             bits_per_sample: r.bits_per_sample,
             size_bytes: r.size_bytes,
             tags_read: r.tags_read,
+            artwork_path: r.artwork_path,
         }
     }
 }
@@ -205,6 +208,32 @@ pub fn cloud_library_read_tags(
         sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
         channels = track.codec_params.channels.map(|c| c.count() as u8).unwrap_or(2);
         bits_per_sample = track.codec_params.bits_per_sample.unwrap_or(16) as u8;
+    }
+
+    // Embedded artwork rides along in the metadata the probe already read,
+    // so extracting it here costs no extra byte-range fetch. Written to disk
+    // once and referenced by path, because handing image bytes across the FFI
+    // boundary on every list rebuild would be wasteful.
+    if let Some(metadata) = format.metadata().current() {
+        if let Some(visual) = metadata.visuals().first() {
+            let art_dir = PathBuf::from(
+                CACHE_DIR
+                    .lock()
+                    .map_err(|e| e.to_string())?
+                    .clone()
+                    .unwrap_or_default(),
+            )
+            .join("artwork");
+            if std::fs::create_dir_all(&art_dir).is_ok() {
+                let art_path = art_dir.join(format!("{}.img", file_id));
+                if std::fs::write(&art_path, &visual.data).is_ok() {
+                    let _ = with_db(|db| {
+                        db.set_artwork(&file_id, &art_path.to_string_lossy())?;
+                        Ok(())
+                    });
+                }
+            }
+        }
     }
 
     let mut title = String::new();

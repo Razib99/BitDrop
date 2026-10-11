@@ -366,7 +366,13 @@ class CloudLibrary {
       ),
       availability: Availability.cloudOnly,
       sizeBytes: r.sizeBytes.toInt(),
-      artwork: Artwork(seed: albumId.hashCode, dominantColor: _tintFor(albumId)),
+      artwork: Artwork(
+        seed: albumId.hashCode,
+        dominantColor: _tintFor(albumId),
+        // Embedded cover pulled out during the tag pass. Null until that
+        // reaches this track, so the seeded gradient stands in meanwhile.
+        uri: r.artworkPath.isEmpty ? null : r.artworkPath,
+      ),
       trackNumber: r.trackNumber == 0 ? null : r.trackNumber,
       discNumber: r.discNumber == 0 ? 1 : r.discNumber,
       year: r.year == 0 ? null : r.year,
@@ -411,7 +417,10 @@ class CloudLibrary {
         sizeBytes: items.fold(0, (s, t) => s + t.sizeBytes),
         format: best.format,
         availability: Availability.cloudOnly,
-        artwork: items.first.artwork,
+        artwork: items
+            .firstWhere((t) => t.artwork.uri != null,
+                orElse: () => items.first)
+            .artwork,
         year: items.first.year,
         genre: items.first.genre,
         discCount: items.map((t) => t.discNumber).toSet().length,

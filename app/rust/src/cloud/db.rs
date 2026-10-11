@@ -21,6 +21,8 @@ pub struct CloudTrackRow {
     pub channels: u32,
     pub bits_per_sample: u32,
     pub size_bytes: u64,
+    /// Absolute path to artwork extracted from the file, or empty.
+    pub artwork_path: String,
     /// False while only the filename is known, i.e. before the tag pass has
     /// reached this row. The UI shimmers these fields rather than hiding them.
     pub tags_read: bool,
@@ -60,10 +62,18 @@ impl MetadataDb {
                 channels         INTEGER,
                 bits_per_sample  INTEGER,
                 size_bytes       INTEGER,
+                artwork_path     TEXT,
                 tags_read        INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )?;
+        // Databases created before artwork extraction need the column added;
+        // sqlite has no ADD COLUMN IF NOT EXISTS, so a duplicate is expected
+        // and harmless on every run after the first.
+        let _ = self
+            .conn
+            .execute("ALTER TABLE tracks ADD COLUMN artwork_path TEXT", []);
+
         // Album browsing and the artist screen both sort on these.
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album, disc_number, track_number)",
@@ -154,12 +164,20 @@ impl MetadataDb {
         Ok(())
     }
 
+    pub fn set_artwork(&self, file_id: &str, path: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tracks SET artwork_path = ?2 WHERE file_id = ?1",
+            params![file_id, path],
+        )?;
+        Ok(())
+    }
+
     pub fn list_tracks(&self) -> Result<Vec<CloudTrackRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT file_id, name, folder_path, title, artist, album,
                     album_artist, genre, year, track_number, disc_number,
                     duration_ms, sample_rate, channels, bits_per_sample,
-                    size_bytes, tags_read
+                    size_bytes, tags_read, artwork_path
              FROM tracks
              ORDER BY album, disc_number, track_number, name",
         )?;
@@ -188,6 +206,7 @@ impl MetadataDb {
                 bits_per_sample: r.get::<_, Option<u32>>(14)?.unwrap_or(0),
                 size_bytes: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
                 tags_read: r.get::<_, i64>(16)? != 0,
+                artwork_path: r.get::<_, Option<String>>(17)?.unwrap_or_default(),
             })
         })?;
 

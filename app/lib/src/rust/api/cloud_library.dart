@@ -74,6 +74,9 @@ class CloudTrack {
   final BigInt sizeBytes;
   final bool tagsRead;
 
+  /// Absolute path to artwork pulled out of the file, or empty.
+  final String artworkPath;
+
   const CloudTrack({
     required this.fileId,
     required this.name,
@@ -92,6 +95,7 @@ class CloudTrack {
     required this.bitsPerSample,
     required this.sizeBytes,
     required this.tagsRead,
+    required this.artworkPath,
   });
 
   @override
@@ -112,7 +116,8 @@ class CloudTrack {
       channels.hashCode ^
       bitsPerSample.hashCode ^
       sizeBytes.hashCode ^
-      tagsRead.hashCode;
+      tagsRead.hashCode ^
+      artworkPath.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -135,7 +140,8 @@ class CloudTrack {
           channels == other.channels &&
           bitsPerSample == other.bitsPerSample &&
           sizeBytes == other.sizeBytes &&
-          tagsRead == other.tagsRead;
+          tagsRead == other.tagsRead &&
+          artworkPath == other.artworkPath;
 }
 
 /// How far the tag pass has got.

@@ -42,8 +42,24 @@ void enginePause() => RustLib.instance.api.crateApiAudioEngineEnginePause();
 
 void engineResume() => RustLib.instance.api.crateApiAudioEngineEngineResume();
 
+/// Seeks, fading out and back in around the jump.
+///
+/// The ring still holds audio from before the jump, so without a flush the
+/// user hears a moment of the old position after landing. Without the ramp,
+/// cutting the ring mid-waveform clicks.
 void engineSeek({required int positionMs}) =>
     RustLib.instance.api.crateApiAudioEngineEngineSeek(positionMs: positionMs);
+
+/// Which parts of the current track would play without touching the network.
+///
+/// Byte offsets are mapped to time proportionally. That is exact for the
+/// constant-rate formats this matters for and close enough for the rest; it
+/// drives a progress bar, not a seek target.
+List<CachedRangeMs> engineCachedRanges() =>
+    RustLib.instance.api.crateApiAudioEngineEngineCachedRanges();
+
+EngineOutputState engineOutputState() =>
+    RustLib.instance.api.crateApiAudioEngineEngineOutputState();
 
 EngineBufferState engineBufferState() =>
     RustLib.instance.api.crateApiAudioEngineEngineBufferState();
@@ -62,6 +78,28 @@ void engineSetEq({required List<double> gains}) =>
 
 void engineSetEqEnabled({required bool enabled}) => RustLib.instance.api
     .crateApiAudioEngineEngineSetEqEnabled(enabled: enabled);
+
+/// A span of the current track that is already on disk.
+class CachedRangeMs {
+  final int startMs;
+  final int endMs;
+
+  const CachedRangeMs({
+    required this.startMs,
+    required this.endMs,
+  });
+
+  @override
+  int get hashCode => startMs.hashCode ^ endMs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CachedRangeMs &&
+          runtimeType == other.runtimeType &&
+          startMs == other.startMs &&
+          endMs == other.endMs;
+}
 
 /// What the output is waiting on, for the UI's buffering state.
 class EngineBufferState {
@@ -100,4 +138,57 @@ class EngineBufferState {
           bufferedMs == other.bufferedMs &&
           fetchesInFlight == other.fetchesInFlight &&
           bytesFetched == other.bytesFetched;
+}
+
+/// What the engine is really doing with the samples right now.
+///
+/// Every quality claim the UI makes is built from this. Nothing here is
+/// inferred: the source fields come from the decoder and the output rate from
+/// the stream the device actually granted.
+class EngineOutputState {
+  final String sourceCodec;
+  final int sourceSampleRate;
+  final int sourceBits;
+  final int sourceChannels;
+
+  /// The rate the output stream was opened at. A mismatch with the source
+  /// rate means the engine is resampling.
+  final int outputSampleRate;
+
+  /// True when the EQ chain is altering samples.
+  final bool dspActive;
+  final bool hasTrack;
+
+  const EngineOutputState({
+    required this.sourceCodec,
+    required this.sourceSampleRate,
+    required this.sourceBits,
+    required this.sourceChannels,
+    required this.outputSampleRate,
+    required this.dspActive,
+    required this.hasTrack,
+  });
+
+  @override
+  int get hashCode =>
+      sourceCodec.hashCode ^
+      sourceSampleRate.hashCode ^
+      sourceBits.hashCode ^
+      sourceChannels.hashCode ^
+      outputSampleRate.hashCode ^
+      dspActive.hashCode ^
+      hasTrack.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is EngineOutputState &&
+          runtimeType == other.runtimeType &&
+          sourceCodec == other.sourceCodec &&
+          sourceSampleRate == other.sourceSampleRate &&
+          sourceBits == other.sourceBits &&
+          sourceChannels == other.sourceChannels &&
+          outputSampleRate == other.outputSampleRate &&
+          dspActive == other.dspActive &&
+          hasTrack == other.hasTrack;
 }

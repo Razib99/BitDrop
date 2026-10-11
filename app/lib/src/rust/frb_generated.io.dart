@@ -27,6 +27,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  CachedRangeMs dco_decode_cached_range_ms(dynamic raw);
+
+  @protected
   CloudTrack dco_decode_cloud_track(dynamic raw);
 
   @protected
@@ -36,10 +39,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   EngineBufferState dco_decode_engine_buffer_state(dynamic raw);
 
   @protected
+  EngineOutputState dco_decode_engine_output_state(dynamic raw);
+
+  @protected
   double dco_decode_f_32(dynamic raw);
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<CachedRangeMs> dco_decode_list_cached_range_ms(dynamic raw);
 
   @protected
   List<CloudTrack> dco_decode_list_cloud_track(dynamic raw);
@@ -93,6 +102,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  CachedRangeMs sse_decode_cached_range_ms(SseDeserializer deserializer);
+
+  @protected
   CloudTrack sse_decode_cloud_track(SseDeserializer deserializer);
 
   @protected
@@ -103,10 +115,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  EngineOutputState sse_decode_engine_output_state(
+      SseDeserializer deserializer);
+
+  @protected
   double sse_decode_f_32(SseDeserializer deserializer);
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<CachedRangeMs> sse_decode_list_cached_range_ms(
+      SseDeserializer deserializer);
 
   @protected
   List<CloudTrack> sse_decode_list_cloud_track(SseDeserializer deserializer);
@@ -164,6 +184,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_cached_range_ms(CachedRangeMs self, SseSerializer serializer);
+
+  @protected
   void sse_encode_cloud_track(CloudTrack self, SseSerializer serializer);
 
   @protected
@@ -174,10 +197,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       EngineBufferState self, SseSerializer serializer);
 
   @protected
+  void sse_encode_engine_output_state(
+      EngineOutputState self, SseSerializer serializer);
+
+  @protected
   void sse_encode_f_32(double self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_cached_range_ms(
+      List<CachedRangeMs> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_cloud_track(

@@ -1,6 +1,7 @@
 use crate::cloud::range_fetcher::RangeFetcher;
 use std::cmp;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -17,6 +18,39 @@ pub static FETCHES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 
 /// Total bytes pulled from the network this session, for diagnostics.
 pub static BYTES_FETCHED: AtomicUsize = AtomicUsize::new(0);
+
+/// Which chunks of the track being played are already on disk.
+///
+/// The seek bar draws these, and the scrub bubble uses them to say whether a
+/// position will play instantly or have to stream. Holds (file_id, total
+/// bytes, chunk indices).
+pub static CACHED: Mutex<Option<(String, u64, Vec<u64>)>> = Mutex::new(None);
+
+/// Byte ranges of the current track that are cached, merged and in order.
+pub fn cached_byte_ranges() -> (u64, Vec<(u64, u64)>) {
+    let guard = match CACHED.lock() {
+        Ok(g) => g,
+        Err(_) => return (0, Vec::new()),
+    };
+    let Some((_, total, chunks)) = guard.as_ref() else {
+        return (0, Vec::new());
+    };
+
+    let mut sorted = chunks.clone();
+    sorted.sort_unstable();
+
+    let mut out: Vec<(u64, u64)> = Vec::new();
+    for idx in sorted {
+        let start = idx * CHUNK_SIZE;
+        let end = cmp::min(start + CHUNK_SIZE, *total);
+        match out.last_mut() {
+            // Adjacent chunks read as one range, which is what the user sees.
+            Some(last) if last.1 >= start => last.1 = cmp::max(last.1, end),
+            _ => out.push((start, end)),
+        }
+    }
+    (*total, out)
+}
 
 pub fn fetches_in_flight() -> usize {
     FETCHES_IN_FLIGHT.load(Ordering::Relaxed)
@@ -51,6 +85,21 @@ impl CloudMediaSource {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
+
+        // Re-opening a track the user played before should show its cache
+        // immediately, not look empty until something is fetched again.
+        {
+            let mut existing = Vec::new();
+            let chunk_count = total_size.div_ceil(CHUNK_SIZE);
+            for i in 0..chunk_count {
+                if cache_dir.join(format!("{}_chunk_{}.dat", file_id, i)).exists() {
+                    existing.push(i);
+                }
+            }
+            if let Ok(mut guard) = CACHED.lock() {
+                *guard = Some((file_id.clone(), total_size, existing));
+            }
+        }
 
         Ok(Self {
             file_id,
@@ -103,6 +152,13 @@ impl CloudMediaSource {
                 let mut file = File::create(&temp_path)?;
                 file.write_all(&data)?;
                 fs::rename(temp_path, chunk_path)?;
+                if let Ok(mut guard) = CACHED.lock() {
+                    if let Some((id, _, chunks)) = guard.as_mut() {
+                        if *id == self.file_id && !chunks.contains(&chunk_index) {
+                            chunks.push(chunk_index);
+                        }
+                    }
+                }
                 Ok(())
             }
             Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.to_string())),

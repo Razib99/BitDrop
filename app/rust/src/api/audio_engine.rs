@@ -77,6 +77,13 @@ pub struct PlayerState {
 
     /// Roughly how much decoded audio is queued ahead of the output.
     pub buffered_ms: u32,
+
+    /// What the current track actually is, as the decoder read it. The UI
+    /// must never infer these from a filename.
+    pub source_codec: String,
+    pub source_sample_rate: u32,
+    pub source_bits: u32,
+    pub source_channels: u32,
 }
 
 /// How long a track-change ramp takes. Long enough to be inaudible as a
@@ -189,6 +196,9 @@ struct OpenedTrack {
     sample_rate: u32,
     time_base: Option<symphonia::core::units::TimeBase>,
     duration_ms: u32,
+    codec: String,
+    bits_per_sample: u32,
+    channels: u32,
 }
 
 /// Probes any `MediaSource` and builds a decoder for its default track.
@@ -227,6 +237,13 @@ fn open_media_source(source: Box<dyn MediaSource>, ext: &str) -> Option<OpenedTr
         _ => 0,
     };
 
+    // Taken from the decoder, not guessed from the file name: this is what
+    // the signal path reports as the source format.
+    let codec = symphonia::default::get_codecs()
+        .get_codec(track.codec_params.codec)
+        .map(|d| d.short_name.to_uppercase())
+        .unwrap_or_else(|| "UNKNOWN".to_string());
+
     Some(OpenedTrack {
         format,
         decoder,
@@ -234,6 +251,13 @@ fn open_media_source(source: Box<dyn MediaSource>, ext: &str) -> Option<OpenedTr
         sample_rate,
         time_base,
         duration_ms,
+        codec,
+        bits_per_sample: track.codec_params.bits_per_sample.unwrap_or(0),
+        channels: track
+            .codec_params
+            .channels
+            .map(|c| c.count() as u32)
+            .unwrap_or(2),
     })
 }
 
@@ -549,6 +573,10 @@ pub fn init_engine() {
                                     state.duration_ms = opened.duration_ms;
                                     state.current_track_id = path.clone();
                                     state.fade_target = 1.0;
+                                    state.source_codec = opened.codec.clone();
+                                    state.source_sample_rate = opened.sample_rate;
+                                    state.source_bits = opened.bits_per_sample;
+                                    state.source_channels = opened.channels;
                                 }
                                 None => eprintln!("[bitdrop] could not decode {}", path),
                             },
@@ -592,6 +620,10 @@ pub fn init_engine() {
                                     state.duration_ms = opened.duration_ms;
                                     state.current_track_id = file_id.clone();
                                     state.fade_target = 1.0;
+                                    state.source_codec = opened.codec.clone();
+                                    state.source_sample_rate = opened.sample_rate;
+                                    state.source_bits = opened.bits_per_sample;
+                                    state.source_channels = opened.channels;
                                 }
                                 None => {
                                     eprintln!("[bitdrop] could not decode cloud track {}", file_id)
@@ -609,10 +641,26 @@ pub fn init_engine() {
                         PLAYER_STATE.lock().unwrap().is_playing = true;
                     },
                     DecoderCmd::Seek(ms) => {
+                        if PLAYER_STATE.lock().unwrap().is_playing {
+                            thread::sleep(std::time::Duration::from_millis(
+                                FADE_MS as u64 + 20,
+                            ));
+                        }
+                        {
+                            let mut state = PLAYER_STATE.lock().unwrap();
+                            state.flush_requested = true;
+                            // Nothing decoded ahead any more, so say so rather
+                            // than leaving a stale buffer reading on screen.
+                            state.buffered_ms = 0;
+                        }
                         if let (Some(format), Some(t)) = (current_format.as_mut(), tb) {
                             let ts = (ms as u64 * t.denom as u64) / (1000 * t.numer as u64);
                             let _ = format.seek(symphonia::core::formats::SeekMode::Coarse, symphonia::core::formats::SeekTo::TimeStamp { ts, track_id: current_track_id });
-                            PLAYER_STATE.lock().unwrap().position_ms = ms;
+                            let mut state = PLAYER_STATE.lock().unwrap();
+                            state.position_ms = ms;
+                            state.fade_target = 1.0;
+                        } else {
+                            PLAYER_STATE.lock().unwrap().fade_target = 1.0;
                         }
                     },
                     DecoderCmd::Stop => {
@@ -788,6 +836,11 @@ pub fn engine_resume() {
     }
 }
 
+/// Seeks, fading out and back in around the jump.
+///
+/// The ring still holds audio from before the jump, so without a flush the
+/// user hears a moment of the old position after landing. Without the ramp,
+/// cutting the ring mid-waveform clicks.
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_seek(position_ms: u32) {
     {
@@ -810,6 +863,72 @@ pub struct EngineBufferState {
     pub fetches_in_flight: u32,
     /// Bytes pulled from the network this session.
     pub bytes_fetched: u64,
+}
+
+/// What the engine is really doing with the samples right now.
+///
+/// Every quality claim the UI makes is built from this. Nothing here is
+/// inferred: the source fields come from the decoder and the output rate from
+/// the stream the device actually granted.
+pub struct EngineOutputState {
+    pub source_codec: String,
+    pub source_sample_rate: u32,
+    pub source_bits: u32,
+    pub source_channels: u32,
+    /// The rate the output stream was opened at. A mismatch with the source
+    /// rate means the engine is resampling.
+    pub output_sample_rate: u32,
+    /// True when the EQ chain is altering samples.
+    pub dsp_active: bool,
+    pub has_track: bool,
+}
+
+/// A span of the current track that is already on disk.
+pub struct CachedRangeMs {
+    pub start_ms: u32,
+    pub end_ms: u32,
+}
+
+/// Which parts of the current track would play without touching the network.
+///
+/// Byte offsets are mapped to time proportionally. That is exact for the
+/// constant-rate formats this matters for and close enough for the rest; it
+/// drives a progress bar, not a seek target.
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_cached_ranges() -> Vec<CachedRangeMs> {
+    let duration_ms = PLAYER_STATE.lock().unwrap().duration_ms as u64;
+    if duration_ms == 0 {
+        return Vec::new();
+    }
+
+    let (total, ranges) = crate::cloud::media_source::cached_byte_ranges();
+    if total == 0 {
+        return Vec::new();
+    }
+
+    ranges
+        .into_iter()
+        .map(|(start, end)| CachedRangeMs {
+            start_ms: ((start * duration_ms) / total) as u32,
+            end_ms: ((end * duration_ms) / total) as u32,
+        })
+        .collect()
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_output_state() -> EngineOutputState {
+    let state = PLAYER_STATE.lock().unwrap();
+    EngineOutputState {
+        source_codec: state.source_codec.clone(),
+        source_sample_rate: state.source_sample_rate,
+        source_bits: state.source_bits,
+        source_channels: state.source_channels,
+        output_sample_rate: state.target_sample_rate,
+        // Preamp counts: it is a gain change like any other.
+        dsp_active: state.eq_enabled
+            && (state.eq_gains.iter().any(|g| *g != 0.0) || state.eq_preamp != 0.0),
+        has_track: !state.current_track_id.is_empty(),
+    }
 }
 
 #[flutter_rust_bridge::frb(sync)]
