@@ -48,6 +48,7 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
     
     final positionMs = rust.engineGetPosition();
     final isPlaying = rust.engineIsPlaying();
+    final buffer = rust.engineBufferState();
     
     // EOF Detection (if it stopped playing naturally)
     if (_wasPlaying && !isPlaying && positionMs > 0) {
@@ -74,9 +75,15 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
         MediaAction.seekBackward,
       },
       androidCompactActionIndices: const [0, 1, 3],
-      processingState: isPlaying ? AudioProcessingState.ready : AudioProcessingState.idle,
+      // Buffering is a distinct state from paused: the user did not stop
+      // this, the network did, and the UI should say which.
+      processingState: buffer.buffering
+          ? AudioProcessingState.buffering
+          : (isPlaying ? AudioProcessingState.ready : AudioProcessingState.idle),
       playing: isPlaying,
       updatePosition: Duration(milliseconds: positionMs),
+      bufferedPosition:
+          Duration(milliseconds: positionMs + buffer.bufferedMs),
     ));
   }
 

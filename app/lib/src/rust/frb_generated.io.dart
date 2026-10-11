@@ -33,6 +33,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DecodedAudio dco_decode_decoded_audio(dynamic raw);
 
   @protected
+  EngineBufferState dco_decode_engine_buffer_state(dynamic raw);
+
+  @protected
   double dco_decode_f_32(dynamic raw);
 
   @protected
@@ -94,6 +97,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DecodedAudio sse_decode_decoded_audio(SseDeserializer deserializer);
+
+  @protected
+  EngineBufferState sse_decode_engine_buffer_state(
+      SseDeserializer deserializer);
 
   @protected
   double sse_decode_f_32(SseDeserializer deserializer);
@@ -161,6 +168,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_decoded_audio(DecodedAudio self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_engine_buffer_state(
+      EngineBufferState self, SseSerializer serializer);
 
   @protected
   void sse_encode_f_32(double self, SseSerializer serializer);

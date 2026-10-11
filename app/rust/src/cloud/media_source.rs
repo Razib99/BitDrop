@@ -1,11 +1,30 @@
 use crate::cloud::range_fetcher::RangeFetcher;
 use std::cmp;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use symphonia::core::io::MediaSource;
 
 const CHUNK_SIZE: u64 = 2 * 1024 * 1024; // 2 MB chunks
+
+/// How many byte-range fetches are in flight right now.
+///
+/// `Read` blocks while a chunk is downloading, which starves the decoder and
+/// then the audio callback. The engine watches this so the UI can say
+/// "buffering" instead of just going quiet.
+pub static FETCHES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// Total bytes pulled from the network this session, for diagnostics.
+pub static BYTES_FETCHED: AtomicUsize = AtomicUsize::new(0);
+
+pub fn fetches_in_flight() -> usize {
+    FETCHES_IN_FLIGHT.load(Ordering::Relaxed)
+}
+
+pub fn bytes_fetched() -> usize {
+    BYTES_FETCHED.load(Ordering::Relaxed)
+}
 
 pub struct CloudMediaSource {
     file_id: String,
@@ -66,11 +85,16 @@ impl CloudMediaSource {
         // Bridge sync Read trait to async RangeFetcher
         let url = self.url.clone();
         let token = self.auth_token.clone();
+        FETCHES_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
         let fetch_result = self.rt.block_on(async {
             self.fetcher
                 .fetch_range(&url, start_byte, end_byte, token.as_deref())
                 .await
         });
+        FETCHES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+        if let Ok((ref data, _)) = fetch_result {
+            BYTES_FETCHED.fetch_add(data.len(), Ordering::Relaxed);
+        }
 
         match fetch_result {
             Ok((data, _measurement)) => {

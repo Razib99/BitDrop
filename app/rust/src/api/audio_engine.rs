@@ -60,7 +60,28 @@ pub struct PlayerState {
     pub eq_preamp: f32,
     pub auto_gain: f32,
     pub eq_updated: bool,
+
+    /// Where the output gain is heading, 0.0 or 1.0.
+    ///
+    /// Track changes ramp to silence, swap, then ramp back. Cutting straight
+    /// from one track's samples to another's puts a step discontinuity into
+    /// the stream, which is audible as a click and is worse on good gear.
+    pub fade_target: f32,
+
+    /// Gain change per frame, derived from the output rate.
+    pub fade_step: f32,
+
+    /// True while playback is waiting on the network rather than simply
+    /// paused, so the UI can say which it is.
+    pub buffering: bool,
+
+    /// Roughly how much decoded audio is queued ahead of the output.
+    pub buffered_ms: u32,
 }
+
+/// How long a track-change ramp takes. Long enough to be inaudible as a
+/// click, short enough not to feel like a crossfade.
+pub const FADE_MS: u32 = 120;
 
 
 #[derive(Clone, Copy, Default)]
@@ -222,6 +243,8 @@ struct PlayerCallback {
     current_buffer: Vec<f32>,
     buffer_idx: usize,
     eq: GraphicEq,
+    /// Survives across callbacks: a ramp spans several buffers.
+    fade_gain: f32,
 }
 
 #[cfg(target_os = "android")]
@@ -238,7 +261,7 @@ impl AudioOutputCallback for PlayerCallback {
     ) -> DataCallbackResult {
         // One short lock, then nothing else blocking: this runs on the
         // real-time audio thread and must not allocate or wait.
-        let (is_playing, eq_enabled, eq_updated, gains, preamp) = {
+        let (is_playing, eq_enabled, eq_updated, gains, preamp, fade_target, fade_step) = {
             let mut state = PLAYER_STATE.lock().unwrap();
             let up = state.eq_updated;
             state.eq_updated = false;
@@ -248,6 +271,8 @@ impl AudioOutputCallback for PlayerCallback {
                 up,
                 state.eq_gains,
                 state.eq_preamp,
+                state.fade_target,
+                state.fade_step,
             )
         };
 
@@ -288,7 +313,13 @@ impl AudioOutputCallback for PlayerCallback {
                 r = pr;
             }
 
-            *frame = (l, r);
+            if self.fade_gain < fade_target {
+                self.fade_gain = (self.fade_gain + fade_step).min(fade_target);
+            } else if self.fade_gain > fade_target {
+                self.fade_gain = (self.fade_gain - fade_step).max(fade_target);
+            }
+
+            *frame = (l * self.fade_gain, r * self.fade_gain);
         }
 
         DataCallbackResult::Continue
@@ -296,6 +327,14 @@ impl AudioOutputCallback for PlayerCallback {
 }
 
 pub fn init_engine() {
+    {
+        // Derived defaults: a zeroed fade target would mute the output for
+        // good, since the ramp would have nowhere to go.
+        let mut state = PLAYER_STATE.lock().unwrap();
+        state.fade_target = 1.0;
+        state.fade_step = 1.0 / (FADE_MS as f32 * 48.0);
+    }
+
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<DecoderCmd>();
     *CMD_SENDER.lock().unwrap() = Some(cmd_tx);
 
@@ -314,15 +353,19 @@ pub fn init_engine() {
                 let mut current_buffer: Vec<f32> = Vec::new();
                 let mut buffer_idx = 0;
                 let mut eq = GraphicEq::new(config.sample_rate.0 as f32);
+                // Lives across callbacks: the ramp spans several buffers.
+                let mut fade_gain: f32 = 1.0;
                 
                 let stream = device.build_output_stream(
                     &config,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        let (is_playing, eq_enabled, eq_updated, gains, preamp) = {
+                        let (is_playing, eq_enabled, eq_updated, gains, preamp,
+                             fade_target, fade_step) = {
                             let mut state = PLAYER_STATE.lock().unwrap();
                             let up = state.eq_updated;
                             state.eq_updated = false;
-                            (state.is_playing, state.eq_enabled, up, state.eq_gains, state.eq_preamp)
+                            (state.is_playing, state.eq_enabled, up, state.eq_gains,
+                             state.eq_preamp, state.fade_target, state.fade_step)
                         };
                         
                         if eq_updated {
@@ -370,7 +413,17 @@ pub fn init_engine() {
                                     l = fl;
                                     r = fr;
                                 }
-                                
+
+                                // Per-frame ramp toward the target. Applied
+                                // last so it also smooths any EQ transient.
+                                if fade_gain < fade_target {
+                                    fade_gain = (fade_gain + fade_step).min(fade_target);
+                                } else if fade_gain > fade_target {
+                                    fade_gain = (fade_gain - fade_step).max(fade_target);
+                                }
+                                l *= fade_gain;
+                                r *= fade_gain;
+
                                 data[out_idx] = l;
                                 if channels > 1 {
                                     data[out_idx + 1] = r;
@@ -408,6 +461,7 @@ pub fn init_engine() {
                 // The decoder resamples to the stream rate before sending, so
                 // the filters are designed for the output rate.
                 eq: GraphicEq::new(48000.0),
+                fade_gain: 1.0,
             }
         }
 
@@ -463,6 +517,18 @@ pub fn init_engine() {
             if let Ok(cmd) = cmd_rx.try_recv() {
                 match cmd {
                     DecoderCmd::Play(path) => {
+                        // Let the ramp reach silence before cutting the
+                        // old track, then flush and ramp the new one in.
+                        if PLAYER_STATE.lock().unwrap().is_playing {
+                            thread::sleep(std::time::Duration::from_millis(
+                                FADE_MS as u64 + 20,
+                            ));
+                        }
+                        {
+                            let mut state = PLAYER_STATE.lock().unwrap();
+                            state.flush_requested = true;
+                            state.position_ms = 0;
+                        }
                         let ext = std::path::Path::new(&path)
                             .extension()
                             .and_then(|e| e.to_str())
@@ -482,6 +548,7 @@ pub fn init_engine() {
                                     state.position_ms = 0;
                                     state.duration_ms = opened.duration_ms;
                                     state.current_track_id = path.clone();
+                                    state.fade_target = 1.0;
                                 }
                                 None => eprintln!("[bitdrop] could not decode {}", path),
                             },
@@ -489,6 +556,19 @@ pub fn init_engine() {
                         }
                     },
                     DecoderCmd::PlayCloud { file_id, url, auth_token, total_size, cache_dir, ext } => {
+                        // Let the ramp reach silence before cutting the
+                        // old track, then flush and ramp the new one in.
+                        if PLAYER_STATE.lock().unwrap().is_playing {
+                            thread::sleep(std::time::Duration::from_millis(
+                                FADE_MS as u64 + 20,
+                            ));
+                        }
+                        {
+                            let mut state = PLAYER_STATE.lock().unwrap();
+                            state.flush_requested = true;
+                            state.position_ms = 0;
+                        }
+
                         // Build the streaming source on this thread: it owns a
                         // tokio runtime and blocks inside Read/Seek, so it must
                         // not be constructed on the audio callback thread.
@@ -511,6 +591,7 @@ pub fn init_engine() {
                                     state.position_ms = 0;
                                     state.duration_ms = opened.duration_ms;
                                     state.current_track_id = file_id.clone();
+                                    state.fade_target = 1.0;
                                 }
                                 None => {
                                     eprintln!("[bitdrop] could not decode cloud track {}", file_id)
@@ -600,7 +681,28 @@ pub fn init_engine() {
                                 samples = resampled;
                             }
                             
+                            // Queue depth is the honest measure of how much
+                            // runway the output has before it starves.
+                            let frames = samples.len() / 2;
                             let _ = audio_tx.send(samples);
+
+                            {
+                                let mut state = PLAYER_STATE.lock().unwrap();
+                                let sr = if state.target_sample_rate == 0 {
+                                    48000
+                                } else {
+                                    state.target_sample_rate
+                                };
+                                let queued_frames =
+                                    (audio_tx.len() as u64 + 1) * frames as u64;
+                                state.buffered_ms =
+                                    ((queued_frames * 1000) / sr as u64) as u32;
+                                // Waiting on the network with little runway is
+                                // buffering; a fetch with a healthy queue is
+                                // just prefetching and must not say so.
+                                state.buffering = crate::cloud::media_source::fetches_in_flight() > 0
+                                    && state.buffered_ms < 500;
+                            }
                             
                             // Update position based on packet timestamp
                             if let Some(t) = tb {
@@ -620,13 +722,25 @@ pub fn init_engine() {
     });
 }
 
+/// Begins a track change: ramp to silence here, swap on the decode thread.
+///
+/// Flushing immediately would cut mid-waveform and click. The decode thread
+/// waits for the ramp before it swaps, then ramps back in.
+fn begin_switch() -> bool {
+    let mut state = PLAYER_STATE.lock().unwrap();
+    let was_playing = state.is_playing;
+    if was_playing {
+        state.fade_target = 0.0;
+    } else {
+        // Nothing audible to fade; start silent and ramp in.
+        state.fade_target = 1.0;
+    }
+    was_playing
+}
+
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_play(path: String) {
-    {
-        let mut state = PLAYER_STATE.lock().unwrap();
-        state.flush_requested = true;
-        state.position_ms = 0;
-    }
+    begin_switch();
     if let Some(sender) = CMD_SENDER.lock().unwrap().as_ref() {
         let _ = sender.send(DecoderCmd::Play(path));
     }
@@ -647,11 +761,7 @@ pub fn engine_play_cloud(
     cache_dir: String,
     ext: String,
 ) {
-    {
-        let mut state = PLAYER_STATE.lock().unwrap();
-        state.flush_requested = true;
-        state.position_ms = 0;
-    }
+    begin_switch();
     if let Some(sender) = CMD_SENDER.lock().unwrap().as_ref() {
         let _ = sender.send(DecoderCmd::PlayCloud {
             file_id,
@@ -687,6 +797,29 @@ pub fn engine_seek(position_ms: u32) {
     }
     if let Some(sender) = CMD_SENDER.lock().unwrap().as_ref() {
         let _ = sender.send(DecoderCmd::Seek(position_ms));
+    }
+}
+
+/// What the output is waiting on, for the UI's buffering state.
+pub struct EngineBufferState {
+    /// Playback is stalled on the network, as opposed to merely paused.
+    pub buffering: bool,
+    /// Decoded audio queued ahead of the output.
+    pub buffered_ms: u32,
+    /// Byte-range requests currently in flight.
+    pub fetches_in_flight: u32,
+    /// Bytes pulled from the network this session.
+    pub bytes_fetched: u64,
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_buffer_state() -> EngineBufferState {
+    let state = PLAYER_STATE.lock().unwrap();
+    EngineBufferState {
+        buffering: state.buffering,
+        buffered_ms: state.buffered_ms,
+        fetches_in_flight: crate::cloud::media_source::fetches_in_flight() as u32,
+        bytes_fetched: crate::cloud::media_source::bytes_fetched() as u64,
     }
 }
 

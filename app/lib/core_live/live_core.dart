@@ -25,6 +25,12 @@ class LiveBitDropCore implements BitDropCore {
   final CloudLibrary? _cloud;
 
   final Map<String, Track> _realTracks = {};
+
+  /// When the current stall began, for escalating the buffering copy.
+  DateTime? _bufferingSince;
+
+  /// What the engine builds up before it resumes after a stall.
+  static const _bufferTargetMs = 2000;
   Album? _realAlbum;
 
   LiveBitDropCore(this._audioHandler, {CloudLibrary? cloudLibrary})
@@ -38,11 +44,33 @@ class LiveBitDropCore implements BitDropCore {
 
     _audioHandler.playbackState.listen((state) {
       final isPlaying = state.playing;
-      _playback.add(isPlaying ? const PlayingState() : const PausedState());
-      
+      final buffering =
+          state.processingState == audio_svc.AudioProcessingState.buffering;
+
+      final aheadMs = (state.bufferedPosition - state.updatePosition)
+          .inMilliseconds
+          .clamp(0, 600000);
+
+      // Buffering is not pausing: the user did not stop this, the network
+      // did. The wording escalates with the length of the stall so a brief
+      // hiccup and a failing connection do not read the same.
+      if (buffering) {
+        _bufferingSince ??= DateTime.now();
+        final stalled = DateTime.now().difference(_bufferingSince!);
+        _playback.add(BufferingState(
+          bufferedMs: aheadMs,
+          targetMs: _bufferTargetMs,
+          attempt: stalled.inSeconds >= 4 ? 2 : 1,
+        ));
+      } else {
+        _bufferingSince = null;
+        _playback.add(isPlaying ? const PlayingState() : const PausedState());
+      }
+
       _position.add(PositionInfo(
         positionMs: state.updatePosition.inMilliseconds,
         durationMs: _audioHandler.mediaItem.value?.duration?.inMilliseconds ?? 0,
+        bufferAheadMs: aheadMs,
       ));
     });
     

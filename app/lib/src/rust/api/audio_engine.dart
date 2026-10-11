@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `open_media_source`
+// These functions are ignored because they are not marked as `pub`: `begin_switch`, `open_media_source`
 // These types are ignored because they are not used by any `pub` functions: `Biquad`, `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DecoderCmd`, `GraphicEq`, `OpenedTrack`, `PLAYER_STATE`, `PlayerState`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `default`, `default`, `deref`, `deref`, `deref`, `initialize`, `initialize`, `initialize`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `new`, `process_stereo`, `process`, `set_peaking`, `update_gains`
@@ -45,6 +45,9 @@ void engineResume() => RustLib.instance.api.crateApiAudioEngineEngineResume();
 void engineSeek({required int positionMs}) =>
     RustLib.instance.api.crateApiAudioEngineEngineSeek(positionMs: positionMs);
 
+EngineBufferState engineBufferState() =>
+    RustLib.instance.api.crateApiAudioEngineEngineBufferState();
+
 int engineGetPosition() =>
     RustLib.instance.api.crateApiAudioEngineEngineGetPosition();
 
@@ -59,3 +62,42 @@ void engineSetEq({required List<double> gains}) =>
 
 void engineSetEqEnabled({required bool enabled}) => RustLib.instance.api
     .crateApiAudioEngineEngineSetEqEnabled(enabled: enabled);
+
+/// What the output is waiting on, for the UI's buffering state.
+class EngineBufferState {
+  /// Playback is stalled on the network, as opposed to merely paused.
+  final bool buffering;
+
+  /// Decoded audio queued ahead of the output.
+  final int bufferedMs;
+
+  /// Byte-range requests currently in flight.
+  final int fetchesInFlight;
+
+  /// Bytes pulled from the network this session.
+  final BigInt bytesFetched;
+
+  const EngineBufferState({
+    required this.buffering,
+    required this.bufferedMs,
+    required this.fetchesInFlight,
+    required this.bytesFetched,
+  });
+
+  @override
+  int get hashCode =>
+      buffering.hashCode ^
+      bufferedMs.hashCode ^
+      fetchesInFlight.hashCode ^
+      bytesFetched.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is EngineBufferState &&
+          runtimeType == other.runtimeType &&
+          buffering == other.buffering &&
+          bufferedMs == other.bufferedMs &&
+          fetchesInFlight == other.fetchesInFlight &&
+          bytesFetched == other.bytesFetched;
+}
