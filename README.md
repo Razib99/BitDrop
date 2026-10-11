@@ -117,15 +117,30 @@ The project is actively being built in two parallel tracks by a 2-person team:
   - [x] Native FLAC artwork extraction & zero-flicker memory caching
   - [x] Global navigation shell with permanently docked mini-player across album/artist/playlist routes
 
-### Track A: Google Drive Architecture (Next Up 🚀)
-- [ ] **Phase 2: Cloud Streaming Core**
-  - [ ] GCP OAuth2 authentication flow in Flutter
-  - [ ] `StorageProvider` Google Drive integration (REST API)
-  - [ ] Sparse disk cache (LRU chunking) for progressive `.flac` buffering
-  - [ ] HTTP byte-range requests for metadata scanning without full download
-- [ ] **Phase 3: Library & Metadata Engine**
-  - [ ] Recursive folder scanning and tag extraction (`symphonia` over cloud cache)
-  - [ ] SQLite local metadata persistence
+### Track A: Google Drive Architecture (Completed ✅)
+- [x] **Phase 2: Cloud Streaming Core**
+  - [x] GCP OAuth2 authentication flow in Flutter (`google_sign_in`)
+  - [x] `StorageProvider` Google Drive integration (REST API & breadth-first folder scan)
+  - [x] Sparse disk cache (2MB chunks) for progressive network buffering
+  - [x] HTTP byte-range requests for metadata scanning without full download
+- [x] **Phase 3: Library & Metadata Engine**
+  - [x] Selective folder scanning & two-pass library sync (`DriveFolderPicker`)
+  - [x] Symphonia container probe over byte ranges for multi-format metadata & embedded artwork
+  - [x] SQLite local metadata persistence with WAL mode & fast indexed queries
+
+### Track C: Integration & GCP Setup (Completed ✅)
+- [x] Google Cloud Project configured with `drive.readonly` scope
+- [x] Client IDs linked for Android (`com.bitdrop.bitdrop` + SHA-1) and iOS
+- [x] End-to-end cloud streaming from Google Drive to Android NDK audio output verified on real hardware (Galaxy S10+)
+
+### Track D: Audiophile Polish & Cloud Caching (In Progress 🚀)
+- [x] Zero-Server Cloud Metadata Sync & embedded artwork cache
+- [x] Dynamic sparse chunk caching & seek-bar buffer visualization
+- [x] Background loader thread & 120ms declick track transition ramps
+- [x] Live hardware DAC signal path probe & Tier classification
+- [ ] Advanced Queue State (`Play Next`, `Add to End`, `Shuffle by Album`)
+- [ ] Subsonic / Navidrome backend support
+- [ ] Auto-tagging & synced `.lrc` lyrics scraper
 
 
 ---

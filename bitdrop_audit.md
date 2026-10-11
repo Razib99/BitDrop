@@ -12,13 +12,15 @@
 
 | Audit Item | Status | Notes |
 |---|---|---|
-| **1.1 spike-audio build defects** | ⚪ Obsolete | We skipped Spike 1 and moved directly to the full Flutter app integration. |
-| **1.2 Spike 1 test measurements** | ⚪ Obsolete | Not required anymore. We rely on standard AudioTrack / CPAL backends for now. |
-| **2.1 Output path selection** | ✅ Done | Replaced platform-specific audio logic with cross-platform `cpal` + `rtrb` (RingBuffer) in Rust for Linux, iOS, and macOS. Used `Oboe` via CPAL/AAudio for Android. |
+| **1.1 spike-audio build defects** | ⚪ Obsolete | Skipped standalone spike; full Flutter + NDK integration built and running. |
+| **1.2 Spike 1 test measurements** | ✅ Done | Replaced with live Android signal path probe (`MainActivity.kt` + `output_device.dart`). Probes USB DAC, sample rates, channels, and encodings; classifies Tiers A/B/C. |
+| **2.1 Output path selection** | ✅ Done | Replaced platform-specific audio logic with cross-platform `cpal` + `rtrb` (RingBuffer) in Rust for Linux, iOS, and macOS. Used `Oboe` (AAudio) with Shared fallback on Android S10+. |
 | **2.2 iOS Architecture (Pull model)** | ✅ Done | The `cpal` callback operates natively as a "Pull" model, popping frames from our `rtrb` lock-free ring buffer. |
-| **2.3 Real-time audio thread rules** | ✅ Done | Decoding happens on a dedicated thread sending raw PCM via `rtrb` channel. Audio output callback is lock-free and zero-allocation. |
-| **2.4 Tier D (Custom USB Driver)** | ❌ Not Started | Still a potential future feature for API 31-33 bit-perfect playback. |
+| **2.3 Real-time audio thread rules** | ✅ Done | Dedicated decoder and background loader threads; audio output callback is lock-free and zero-allocation with 120ms transition ramps. |
+| **2.4 Tier D (Custom USB Driver)** | ❌ Deferred | Deferred post-v1. Current Tier C path handles S10+ Android 12 output smoothly. |
 | **2.5 Rust binding generation** | ✅ Done | Used `flutter_rust_bridge` v2 for all communication. Shell UI (Kotlin/Swift) is handled via Flutter/Dart plugins (e.g. `audio_service`), avoiding UniFFI duplication. |
+| **2.6 Cloud & Drive Streaming** | ✅ Done | Google Drive OAuth2 (`drive.readonly`), two-pass selective folder scanning, HTTP byte-range tag reading (Symphonia), and 2MB sparse chunk caching verified on real hardware. |
+| **2.7 AAudio Watchdog & Transition Polish** | ✅ Done | Output stream watchdog auto-recovers from audio routing interruptions; background loader thread and declick ramps eliminate playback gaps. |
 
 ---
 

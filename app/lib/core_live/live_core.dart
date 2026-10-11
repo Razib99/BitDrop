@@ -138,14 +138,7 @@ class LiveBitDropCore implements BitDropCore {
       ));
     });
     
-    _audioHandler.queue.listen((items) {
-      if (items.isEmpty) return;
-      final currentItem = _audioHandler.mediaItem.value;
-      final currentIndex = currentItem == null ? 0 : items.indexOf(currentItem);
-      final tracks = items.map((i) => _lookupTrack(i.id)).whereType<Track>().toList();
-      final queueItems = tracks.map((t) => QueueItem(track: t, id: t.id)).toList();
-      _queue.add(QueueState(items: queueItems, currentIndex: currentIndex < 0 ? 0 : currentIndex, shuffle: false, repeat: RepeatMode.off));
-    });
+    _audioHandler.queue.listen((_) => _emitQueue());
     
     _audioHandler.mediaItem.listen((item) {
       if (item != null) {
@@ -153,19 +146,15 @@ class LiveBitDropCore implements BitDropCore {
         if (track != null) {
           _nowPlaying.add(NowPlaying(
             track: track,
-            contextLabel: track.folderPath.isNotEmpty
-                ? track.folderPath
-                : 'Local Music',
+            contextLabel: _currentContextLabel.isNotEmpty
+                ? _currentContextLabel
+                : (track.folderPath.isNotEmpty
+                    ? track.folderPath
+                    : 'Local Music'),
           ));
-          
-          // Update queue index
-          final q = _queue.value;
-          final idx = q.items.indexWhere((i) => i.id == item.id);
-          if (idx >= 0) {
-            _queue.add(QueueState(items: q.items, currentIndex: idx, shuffle: q.shuffle, repeat: q.repeat));
-          }
         }
       }
+      _emitQueue();
     });
 
     _mockCore.eq.listen((eqState) {
@@ -415,17 +404,68 @@ class LiveBitDropCore implements BitDropCore {
   @override Future<List<AutoEqProfile>> searchAutoEq(String model) => _mockCore.searchAutoEq(model);
   @override Future<List<String>> recentSearches() => _mockCore.recentSearches();
 
+  String _currentContextLabel = '';
+
+  void _emitQueue() {
+    final items = _audioHandler.queue.value;
+    if (items.isEmpty) {
+      _queue.add(QueueState.empty);
+      return;
+    }
+    final currentItem = _audioHandler.mediaItem.value;
+    final currentIndex = currentItem == null
+        ? _audioHandler.currentIndex
+        : items.indexOf(currentItem);
+    final tracks =
+        items.map((i) => _lookupTrack(i.id)).whereType<Track>().toList();
+    final queueItems =
+        tracks.map((t) => QueueItem(track: t, id: t.id)).toList();
+    _queue.add(QueueState(
+      items: queueItems,
+      currentIndex: currentIndex < 0 ? 0 : currentIndex,
+      shuffle: _audioHandler.shuffleMode,
+      repeat: _audioHandler.repeatMode,
+      contextLabel: _currentContextLabel,
+    ));
+  }
+
+  List<audio_svc.MediaItem> _resolveMediaItems(List<String> trackIds) {
+    final tracks = trackIds.map(_lookupTrack).whereType<Track>().toList();
+    return tracks.map((t) {
+      final isCloud = _cloud?.trackById(t.id) != null;
+      return audio_svc.MediaItem(
+        id: t.id,
+        title: t.title,
+        album: t.albumTitle,
+        artist: t.artist,
+        duration: Duration(milliseconds: t.durationMs),
+        extras: isCloud
+            ? cloudTrackExtras(
+                fileId: t.id,
+                url: 'https://www.googleapis.com/drive/v3/files/${t.id}?alt=media',
+                sizeBytes: t.sizeBytes,
+                ext: t.format.codec.label.toLowerCase(),
+              )
+            : null,
+      );
+    }).toList();
+  }
+
   // Intercepted commands
   @override
   Future<void> send(PlayerCommand cmd) async {
     if (cmd is PlayContext) {
-      // Must go through _lookupTrack: resolving against local and mock only
-      // meant every cloud track came back empty and the tap did nothing.
+      if (cmd.contextId == 'queue') {
+        await _audioHandler.skipToQueueItem(cmd.startIndex);
+        _emitQueue();
+        return;
+      }
+      _currentContextLabel = cmd.contextLabel;
       final tracks =
           cmd.trackIds.map(_lookupTrack).whereType<Track>().toList();
       debugPrint('[play] PlayContext ${cmd.contextId}: '
           '${cmd.trackIds.length} ids -> ${tracks.length} resolved, '
-          'startIndex ${cmd.startIndex}');
+          'startIndex ${cmd.startIndex}, shuffle: ${cmd.shuffle}');
       if (tracks.isEmpty) {
         debugPrint('[play] nothing resolved; first id was '
             '${cmd.trackIds.isEmpty ? '(none)' : cmd.trackIds.first}');
@@ -452,11 +492,12 @@ class LiveBitDropCore implements BitDropCore {
           );
         }).toList();
         
-        if (cmd.shuffle) {
-          items.shuffle();
-        }
-        
-        await _audioHandler.setQueueAndPlay(items, cmd.startIndex);
+        await _audioHandler.setQueueAndPlay(
+          items,
+          cmd.startIndex,
+          shuffle: cmd.shuffle,
+        );
+        _emitQueue();
       }
     } else if (cmd is Pause) {
       await _audioHandler.pause();
@@ -473,16 +514,36 @@ class LiveBitDropCore implements BitDropCore {
       }
     } else if (cmd is Next) {
       await _audioHandler.skipToNext();
+      _emitQueue();
     } else if (cmd is Previous) {
-      // Back means \"start this track again\" once you are into it, and only
-      // means the previous track near the beginning. Jumping straight off a
-      // song you are three minutes into is never what the button was for.
-      final pos = _position.valueOrNull?.positionMs ?? 0;
-      if (pos > 3000) {
-        await _audioHandler.seek(Duration.zero);
-      } else {
-        await _audioHandler.skipToPrevious();
-      }
+      await _audioHandler.skipToPrevious();
+      _emitQueue();
+    } else if (cmd is SetShuffle) {
+      await _audioHandler.setShuffle(cmd.enabled);
+      _emitQueue();
+    } else if (cmd is SetRepeat) {
+      await _audioHandler.setRepeat(cmd.mode);
+      _emitQueue();
+    } else if (cmd is ShuffleRemaining) {
+      await _audioHandler.shuffleRemaining();
+      _emitQueue();
+    } else if (cmd is ClearQueue) {
+      await _audioHandler.clearQueue();
+      _emitQueue();
+    } else if (cmd is RemoveFromQueue) {
+      await _audioHandler.removeQueueItemAtId(cmd.itemId);
+      _emitQueue();
+    } else if (cmd is Reorder) {
+      await _audioHandler.reorderQueue(cmd.oldIndex, cmd.newIndex);
+      _emitQueue();
+    } else if (cmd is PlayNext) {
+      final items = _resolveMediaItems(cmd.trackIds);
+      await _audioHandler.playNext(items);
+      _emitQueue();
+    } else if (cmd is Enqueue) {
+      final items = _resolveMediaItems(cmd.trackIds);
+      await _audioHandler.enqueue(items);
+      _emitQueue();
     } else {
       await _mockCore.send(cmd);
     }
