@@ -138,10 +138,10 @@ The project is actively being built in two parallel tracks by a 2-person team:
 - [x] Dynamic sparse chunk caching & seek-bar buffer visualization
 - [x] Background loader thread & 120ms declick track transition ramps
 - [x] Live hardware DAC signal path probe & Tier classification
-- [ ] Advanced Queue State (`Play Next`, `Add to End`, `Shuffle by Album`)
+- [x] Advanced Queue Management & Shuffle/Repeat (`Shuffle`, `Repeat Off/All/One`, `Play Next`, `Enqueue`, `Reorder`)
 - [ ] Subsonic / Navidrome backend support
-- [ ] Auto-tagging & synced `.lrc` lyrics scraper
-
+- [ ] Local auto-tagging & synced `.lrc` lyrics scraper
+- [ ] Android Auto full MediaBrowser tree hierarchy
 
 ---
 
@@ -151,17 +151,49 @@ The project is actively being built in two parallel tracks by a 2-person team:
 BitDrop/
 ├── README.md                 # Project vision, architecture & roadmap
 ├── SETUP.md                  # Development environment bootstrap guide
+├── task.md                   # Granular engineering sprint tracker
 ├── bitdrop_audit.md          # Architectural review, risk register & findings
-├── docs/                     # Project documentation and specifications
+├── docs/                     # Project specifications & design briefs
 │   └── UI_UX_DESIGN_BRIEF.md # Comprehensive UI/UX prompt for external agents
-├── spike-audio/              # Phase 0: Android USB audio probe app
-│   ├── app/src/main/java/com/bitdrop/spike/audio/
-│   │   ├── AudioDeviceProbe.kt        # USB device & capability enumeration
-│   │   ├── MixerAttributesProbe.kt    # API 34+ bit-perfect mixer query
-│   │   ├── TierDetector.kt            # Tier A/B/C classification logic
-│   │   └── AudioProbeActivity.kt      # Diagnostic UI & AudioTrack probe
-│   └── build.gradle.kts
-└── spike-drive/              # Phase 0: Cloud fetch spike (Upcoming)
+├── app/                      # Primary Flutter client application
+│   ├── lib/                  # Dart application code (UI, state, routing)
+│   │   ├── core_api/         # Abstract core API models & player commands
+│   │   ├── core_live/        # Live Rust FFI bridge & AudioHandler integration
+│   │   ├── features/         # Feature screens (Now Playing, Library, Sources, EQ)
+│   │   └── theme/            # Theme tokens, typography, and styling
+│   ├── rust/                 # Native Rust audio core (Single Source of Truth)
+│   │   └── src/              # Symphonia decoders, Oboe/CPAL audio loops, chunk cache
+│   ├── rust_builder/         # flutter_rust_bridge v2 build integration
+│   ├── android/              # Android native shell & MediaSession service
+│   ├── ios/                  # iOS native shell & AudioSession setup
+│   ├── linux/                # Linux desktop shell
+│   └── test/                 # Automated unit and widget test suite
+├── spike-audio/              # Standalone Android USB audio & DAC capability probe
+└── scripts/                  # Build, test, and automation helper scripts
+```
+
+---
+
+## 🛠️ Building & Running
+
+### Prerequisites
+- **Flutter SDK**: 3.24+
+- **Rust Toolchain**: 1.80+ with `cargo`
+- **Android SDK & NDK**: API 34, NDK r26d+ (for Android builds)
+
+### Development Commands
+```bash
+# Run automated test suite
+cd app
+flutter test
+
+# Run Rust engine validation
+cd app/rust
+cargo check
+
+# Launch debug app on connected device / emulator
+cd app
+flutter run
 ```
 
 ---
@@ -179,7 +211,9 @@ BitDrop/
 
 ## 📄 References & Documentation
 
+*   [BitDrop Task Tracker](task.md)
 *   [BitDrop Comprehensive Audit](bitdrop_audit.md)
 *   [Environment Setup Guide](SETUP.md)
 *   [AOSP Preferred Mixer Attributes](https://source.android.com/docs/core/audio/preferred-mixer-attr)
 *   [Android Audio Architecture Guide](https://developer.android.com/media/platform/improve-audio-playback)
+
