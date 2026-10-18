@@ -88,6 +88,11 @@ class _Toolbar extends ConsumerWidget {
         children: [
           Text(context.l10n.navLibrary, style: context.t.headline),
           const Spacer(),
+          IconButton(
+            tooltip: context.l10n.navSearch,
+            icon: const Icon(Icons.search),
+            onPressed: () => context.go(Routes.search),
+          ),
           // Layout, sort and filter are one question, so they are one
           // control. The dot says the view is not the default without
           // spending a second icon to say it.

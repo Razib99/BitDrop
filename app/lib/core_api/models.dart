@@ -1049,4 +1049,6 @@ class SearchResults {
 
   bool get isEmpty =>
       tracks.isEmpty && albums.isEmpty && artists.isEmpty && folders.isEmpty;
+
+  bool get isNotEmpty => !isEmpty;
 }

@@ -39,6 +39,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<String>(searchQueryProvider, (previous, next) {
+      if (_controller.text != next) {
+        _controller.text = next;
+        _controller.selection = TextSelection.collapsed(offset: next.length);
+      }
+    });
+
     final query = ref.watch(searchQueryProvider);
     final filters = ref.watch(searchFiltersProvider);
     final results = ref.watch(searchResultsProvider);
@@ -55,6 +62,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             autofocus: false,
             textInputAction: TextInputAction.search,
             onChanged: (v) => ref.read(searchQueryProvider.notifier).state = v,
+            onSubmitted: (v) {
+              ref.read(searchQueryProvider.notifier).state = v;
+              _focus.unfocus();
+            },
             decoration: InputDecoration(
               hintText: 'Tracks, albums, artists, folders',
               prefixIcon: const Icon(Icons.search),

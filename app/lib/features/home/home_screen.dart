@@ -45,6 +45,11 @@ class HomeScreen extends ConsumerWidget {
           title: const Text('BitDrop'),
           actions: [
             IconButton(
+              tooltip: context.l10n.navSearch,
+              icon: const Icon(Icons.search),
+              onPressed: () => context.go(Routes.search),
+            ),
+            IconButton(
               tooltip: context.l10n.navSettings,
               icon: const Icon(Icons.settings_outlined),
               onPressed: () => context.push(Routes.settings),

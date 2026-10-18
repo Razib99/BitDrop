@@ -389,34 +389,156 @@ class LiveBitDropCore implements BitDropCore {
   Future<SearchResults> search(String text, SearchFilters f) async {
     final q = text.trim();
     if (q.isEmpty) return const SearchResults();
+    final lq = q.toLowerCase();
 
-    final ftsTracks = _cloud != null ? await _cloud!.search(q, limit: 30) : const <Track>[];
-    final tracks = ftsTracks.isNotEmpty
-        ? ftsTracks
-        : _cloudTracks
-            .where((t) =>
-                t.title.toLowerCase().contains(q.toLowerCase()) ||
-                t.artist.toLowerCase().contains(q.toLowerCase()) ||
-                t.albumTitle.toLowerCase().contains(q.toLowerCase()) ||
-                t.format.badgeLabel.toLowerCase() == q.toLowerCase())
-            .take(20)
-            .toList();
+    // Format-aware query matching: "24/192", "flac", "hi-res", "96khz"
+    bool matchesFormat(AudioFormat fmt) {
+      if (lq == 'hi-res' || lq == 'hires') return fmt.isHiRes;
+      if (fmt.codec.label.toLowerCase() == lq) return true;
+      if (fmt.shortLabel.toLowerCase() == lq) return true;
+      if (fmt.badgeLabel.toLowerCase() == lq) return true;
+      if (lq.endsWith('khz') &&
+          fmt.shortLabel.toLowerCase().contains(lq.replaceAll('khz', '').trim())) {
+        return true;
+      }
+      return false;
+    }
 
-    final albums = _cloudAlbums
-        .where((a) =>
-            a.title.toLowerCase().contains(q.toLowerCase()) ||
-            a.artist.toLowerCase().contains(q.toLowerCase()))
-        .take(12)
-        .toList();
+    bool keepTrack(Track t) {
+      if (f.offlineOnly &&
+          t.availability != Availability.pinned &&
+          t.availability != Availability.cached) {
+        return false;
+      }
+      if (f.codecs.isNotEmpty && !f.codecs.contains(t.format.codec)) {
+        return false;
+      }
+      if (f.quality == QualityFilter.hiRes && !t.format.isHiRes) return false;
+      if (f.quality == QualityFilter.cdQuality && !t.format.isCdQuality) return false;
+      if (f.quality == QualityFilter.lossy && t.format.codec.isLossless) return false;
+      return true;
+    }
+
+    bool keepAlbum(Album a) {
+      if (f.codecs.isNotEmpty && !f.codecs.contains(a.format.codec)) {
+        return false;
+      }
+      if (f.quality == QualityFilter.hiRes && !a.format.isHiRes) return false;
+      if (f.quality == QualityFilter.cdQuality && !a.format.isCdQuality) return false;
+      if (f.quality == QualityFilter.lossy && a.format.codec.isLossless) return false;
+      return true;
+    }
+
+    // 1. Tracks from all sources: SQLite FTS5, cloud, local disk, and fallback mock
+    final ftsTracks = _cloud != null ? await _cloud!.search(q, limit: 50) : const <Track>[];
+    final cloudMatching = _cloudTracks.where((t) =>
+        t.title.toLowerCase().contains(lq) ||
+        t.artist.toLowerCase().contains(lq) ||
+        t.albumTitle.toLowerCase().contains(lq) ||
+        matchesFormat(t.format));
+    final localMatching = _realTracks.values.where((t) =>
+        t.title.toLowerCase().contains(lq) ||
+        t.artist.toLowerCase().contains(lq) ||
+        t.albumTitle.toLowerCase().contains(lq) ||
+        matchesFormat(t.format));
+    final mockMatching = MockCatalog.tracks.where((t) =>
+        t.title.toLowerCase().contains(lq) ||
+        t.artist.toLowerCase().contains(lq) ||
+        t.albumTitle.toLowerCase().contains(lq) ||
+        matchesFormat(t.format));
+
+    final seenTrackIds = <String>{};
+    final allTracks = <Track>[];
+    final trackSources = [
+      ftsTracks,
+      cloudMatching,
+      localMatching,
+      if (_cloudTracks.isEmpty && _realTracks.isEmpty) mockMatching,
+    ];
+    for (final source in trackSources) {
+      for (final t in source) {
+        if (seenTrackIds.add(t.id) && keepTrack(t)) {
+          allTracks.add(t);
+        }
+      }
+    }
+
+    // 2. Albums from all sources:
+    final seenAlbumIds = <String>{};
+    final allAlbums = <Album>[];
+    final candidateAlbums = [
+      ..._cloudAlbums,
+      if (_realAlbum != null) _realAlbum!,
+      if (_cloudAlbums.isEmpty && _realAlbum == null) ...MockCatalog.albums,
+    ];
+    for (final a in candidateAlbums) {
+      if (seenAlbumIds.add(a.id) && keepAlbum(a)) {
+        if (a.title.toLowerCase().contains(lq) ||
+            a.artist.toLowerCase().contains(lq) ||
+            matchesFormat(a.format)) {
+          allAlbums.add(a);
+        }
+      }
+    }
+
+    // 3. Artists from all sources:
+    final seenArtistIds = <String>{};
+    final allArtists = <Artist>[];
+    final candidateArtists = [
+      ...(await artists(const ArtistQuery())).items,
+      if (_cloudAlbums.isEmpty && _realAlbum == null) ...MockCatalog.artists,
+    ];
+    for (final art in candidateArtists) {
+      if (seenArtistIds.add(art.id)) {
+        if (art.name.toLowerCase().contains(lq)) {
+          allArtists.add(art);
+        }
+      }
+    }
+
+    // 4. Folders from matched tracks:
+    final seenFolders = <String>{};
+    final allFolders = <FolderEntry>[];
+    for (final t in allTracks) {
+      final p = t.folderPath;
+      if (p.isNotEmpty && p.toLowerCase().contains(lq)) {
+        if (seenFolders.add(p)) {
+          final folderName = p.split('/').where((s) => s.isNotEmpty).lastOrNull ?? p;
+          allFolders.add(FolderEntry(
+            id: p,
+            name: folderName,
+            isDirectory: true,
+            itemCount: 1,
+          ));
+        }
+      }
+    }
+
+    // 5. Intelligent Top Result:
+    final exactAlbum = allAlbums.cast<Album?>().firstWhere(
+      (a) => a!.title.toLowerCase() == lq || a.title.toLowerCase().startsWith(lq),
+      orElse: () => null,
+    );
+    final exactArtist = allArtists.cast<Artist?>().firstWhere(
+      (art) => art!.name.toLowerCase() == lq || art.name.toLowerCase().startsWith(lq),
+      orElse: () => null,
+    );
+    final exactTrack = allTracks.cast<Track?>().firstWhere(
+      (t) => t!.title.toLowerCase() == lq || t.title.toLowerCase().startsWith(lq),
+      orElse: () => null,
+    );
+
+    final topResult = exactAlbum ?? exactArtist ?? exactTrack ??
+        (allAlbums.isNotEmpty
+            ? allAlbums.first
+            : (allTracks.isNotEmpty ? allTracks.first : allArtists.firstOrNull));
 
     return SearchResults(
-      topResult: albums.isNotEmpty
-          ? albums.first
-          : (tracks.isNotEmpty ? tracks.first : null),
-      tracks: tracks,
-      albums: albums,
-      artists: const [],
-      folders: const [],
+      topResult: topResult,
+      tracks: allTracks.take(30).toList(),
+      albums: allAlbums.take(15).toList(),
+      artists: allArtists.take(10).toList(),
+      folders: allFolders.take(8).toList(),
     );
   }
   @override Future<List<AutoEqProfile>> searchAutoEq(String model) => _mockCore.searchAutoEq(model);
