@@ -21,6 +21,9 @@ anyhow = "1.0"
 
 rusqlite = { version = "0.31", features = ["bundled"] }
 rubato = "5.0.1"
+rtrb = "0.3"
+parking_lot = "0.12"
+futures-util = "0.3"
 
 [target.'cfg(target_os = "android")'.dependencies]
 # shared-stdcxx: link libc++ dynamically. The default static link drops
