@@ -249,7 +249,6 @@ class CloudLibrary {
     // Small concurrency: enough to hide round-trip latency, low enough to stay
     // well inside Drive's per-user request budget and leave headroom for
     // playback, which shares the same quota.
-    const concurrency = 4;
     const pageSize = 64;
 
     while (true) {
@@ -267,37 +266,34 @@ class CloudLibrary {
         return;
       }
 
-      for (var i = 0; i < pending.length; i += concurrency) {
-        if (_cancel?.isCompleted ?? false) return;
-
-        final slice = pending.skip(i).take(concurrency);
-        await Future.wait(slice.map((id) async {
-          try {
-            await rust.cloudLibraryReadTags(
-              fileId: id,
-              url: 'https://www.googleapis.com/drive/v3/files/$id?alt=media',
-              authToken: token,
-            );
-          } catch (e) {
-            // One unreadable file must not stop the pass; the row keeps its
-            // filename-derived title.
-            debugPrint('[library] tag read failed for $id: $e');
-          }
-        }));
-
-        done += slice.length;
-        _status.add(SyncStatus(
-          phase: SyncPhase.tags,
-          processed: done,
-          total: total,
-        ));
-      }
+      final scanned = await rust.cloudLibraryScanTagsBatch(
+        fileIds: pending,
+        authToken: token,
+      );
+      done += scanned;
+      _status.add(SyncStatus(
+        phase: SyncPhase.tags,
+        processed: done,
+        total: total,
+      ));
 
       await _reload();
     }
 
     await _reload();
     _status.add(SyncStatus(phase: SyncPhase.idle, processed: total, total: total));
+  }
+
+  /// Instant ranked FTS5 search query against SQLite.
+  Future<List<Track>> search(String query, {int limit = 50}) async {
+    if (!_opened || query.trim().isEmpty) return const [];
+    try {
+      final rows = await rust.cloudLibrarySearch(query: query, limit: limit);
+      return rows.map(_toTrack).toList();
+    } catch (e) {
+      debugPrint('[library] FTS5 search failed: $e');
+      return const [];
+    }
   }
 
   /// Re-reads the database and rebuilds the track and album lists.

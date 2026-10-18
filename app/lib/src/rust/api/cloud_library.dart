@@ -6,9 +6,9 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `with_db`
-// These types are ignored because they are not used by any `pub` functions: `CACHE_DIR`, `DB`, `RT`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `deref`, `deref`, `deref`, `from`, `initialize`, `initialize`, `initialize`
+// These functions are ignored because they are not marked as `pub`: `parse_index_number`, `parse_year`, `sanitize_filename`, `with_db_mut`, `with_db`
+// These types are ignored because they are not used by any `pub` functions: `CACHE_DIR`, `DB`, `HTTP_CLIENT`, `RATE_LIMITER`, `RT`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Opens (or creates) the library database. Safe to call repeatedly.
 Future<void> cloudLibraryOpen(
@@ -41,6 +41,26 @@ Future<bool> cloudLibraryReadTags(
         {required String fileId, required String url, String? authToken}) =>
     RustLib.instance.api.crateApiCloudLibraryCloudLibraryReadTags(
         fileId: fileId, url: url, authToken: authToken);
+
+/// Lists all albums from the materialized albums_summary table in <1ms.
+Future<List<AlbumSummary>> cloudLibraryAlbums() =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryAlbums();
+
+/// Sub-3ms multi-field instant search powered by SQLite FTS5 with BM25 ranking.
+Future<List<CloudTrack>> cloudLibrarySearch(
+        {required String query, int? limit}) =>
+    RustLib.instance.api
+        .crateApiCloudLibraryCloudLibrarySearch(query: query, limit: limit);
+
+/// High-throughput multiplexed tag scanner (25+ tracks/sec, F-06).
+///
+/// Fetches the first 64KB (`bytes=0-65535`) in parallel with a token-bucket rate limiter (35 req/sec),
+/// parses FLAC Vorbis comments and StreamInfo with FlacProgressiveParser,
+/// deduplicates artwork by (album_artist, album), and commits updates in batches into SQLite.
+Future<int> cloudLibraryScanTagsBatch(
+        {required List<String> fileIds, String? authToken}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryScanTagsBatch(
+        fileIds: fileIds, authToken: authToken);
 
 Future<List<String>> cloudLibraryPending({required int limit}) =>
     RustLib.instance.api.crateApiCloudLibraryCloudLibraryPending(limit: limit);
@@ -77,6 +97,54 @@ Future<CacheUsage> cacheUsage(
 Future<BigInt> clearAudioCache({required List<String> chunkDirs}) =>
     RustLib.instance.api
         .crateApiCloudLibraryClearAudioCache(chunkDirs: chunkDirs);
+
+/// Materialized album summary for instant grid/list rendering.
+class AlbumSummary {
+  final String albumKey;
+  final String album;
+  final String albumArtist;
+  final int year;
+  final String artworkPath;
+  final int trackCount;
+  final int maxSampleRate;
+  final int maxBitDepth;
+
+  const AlbumSummary({
+    required this.albumKey,
+    required this.album,
+    required this.albumArtist,
+    required this.year,
+    required this.artworkPath,
+    required this.trackCount,
+    required this.maxSampleRate,
+    required this.maxBitDepth,
+  });
+
+  @override
+  int get hashCode =>
+      albumKey.hashCode ^
+      album.hashCode ^
+      albumArtist.hashCode ^
+      year.hashCode ^
+      artworkPath.hashCode ^
+      trackCount.hashCode ^
+      maxSampleRate.hashCode ^
+      maxBitDepth.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AlbumSummary &&
+          runtimeType == other.runtimeType &&
+          albumKey == other.albumKey &&
+          album == other.album &&
+          albumArtist == other.albumArtist &&
+          year == other.year &&
+          artworkPath == other.artworkPath &&
+          trackCount == other.trackCount &&
+          maxSampleRate == other.maxSampleRate &&
+          maxBitDepth == other.maxBitDepth;
+}
 
 /// What the streamed-audio cache is using, and what a clear would reclaim.
 class CacheUsage {

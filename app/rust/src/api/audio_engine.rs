@@ -198,8 +198,7 @@ fn set_ramp(state: &mut PlayerState, target: f32, ms: u32) {
 }
 
 #[derive(Clone, Copy, Default)]
-#[flutter_rust_bridge::frb(ignore)]
-pub struct StereoBiquad {
+pub(crate) struct StereoBiquad {
     b0: f32, b1: f32, b2: f32,
     a1: f32, a2: f32,
     s1: [f32; 2],
@@ -208,7 +207,7 @@ pub struct StereoBiquad {
 
 impl StereoBiquad {
     #[inline(always)]
-    pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+    pub(crate) fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
         #[cfg(target_arch = "aarch64")]
         unsafe {
             use std::arch::aarch64::*;
@@ -257,7 +256,7 @@ impl StereoBiquad {
     /// Mirrors `lib/util/biquad.dart` exactly, so what the curve on screen
     /// shows is what the engine does. Only coefficients change; the filter
     /// state is kept so live edits do not click.
-    pub fn set_coeffs(&mut self, kind: u8, f0: f32, fs: f32, q: f32, db_gain: f32) {
+    pub(crate) fn set_coeffs(&mut self, kind: u8, f0: f32, fs: f32, q: f32, db_gain: f32) {
         let fs = if fs > 0.0 { fs as f64 } else { 48000.0 };
         let f0 = (f0 as f64).clamp(10.0, fs / 2.0 - 10.0);
         let q = if q > 0.0 { q as f64 } else { 0.707 };
@@ -321,7 +320,7 @@ impl StereoBiquad {
         self.a2 = (a2 / a0) as f32;
     }
 
-    pub fn set_peaking(&mut self, f0: f32, fs: f32, q: f32, db_gain: f32) {
+    pub(crate) fn set_peaking(&mut self, f0: f32, fs: f32, q: f32, db_gain: f32) {
         self.set_coeffs(EQ_PEAK, f0, fs, q, db_gain);
     }
 
@@ -347,12 +346,11 @@ const ISO_10_BAND: [f32; 10] =
     [31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0];
 
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
-#[flutter_rust_bridge::frb(ignore)]
-pub struct EqBandSpec {
-    pub kind: u8,
-    pub freq: f32,
-    pub gain_db: f32,
-    pub q: f32,
+pub(crate) struct EqBandSpec {
+    pub(crate) kind: u8,
+    pub(crate) freq: f32,
+    pub(crate) gain_db: f32,
+    pub(crate) q: f32,
 }
 
 /// A cascade of up to [`MAX_EQ_BANDS`] stereo biquads plus preamp.
@@ -360,17 +358,16 @@ pub struct EqBandSpec {
 /// The name is historical; it is a full parametric EQ. Graphic and tone modes
 /// are expressed as bands on the Dart side, so every mode runs through the
 /// same filters the curve is drawn from.
-#[flutter_rust_bridge::frb(ignore)]
-pub struct GraphicEq {
+pub(crate) struct GraphicEq {
     preamp_linear: f32,
     bands: [StereoBiquad; MAX_EQ_BANDS],
     specs: [EqBandSpec; MAX_EQ_BANDS],
     active: usize,
-    pub sample_rate: f32,
+    pub(crate) sample_rate: f32,
 }
 
 impl GraphicEq {
-    pub fn new(sample_rate: f32) -> Self {
+    pub(crate) fn new(sample_rate: f32) -> Self {
         GraphicEq {
             bands: [StereoBiquad::default(); MAX_EQ_BANDS],
             specs: [EqBandSpec::default(); MAX_EQ_BANDS],
@@ -381,7 +378,7 @@ impl GraphicEq {
     }
 
     /// Legacy 10-band graphic entry point: peaking filters at ISO centres.
-    pub fn update_gains(&mut self, gains: &[f32; 10], preamp_db: f32) {
+    pub(crate) fn update_gains(&mut self, gains: &[f32; 10], preamp_db: f32) {
         let mut specs = [EqBandSpec::default(); 10];
         for i in 0..10 {
             specs[i] = EqBandSpec { kind: EQ_PEAK, freq: ISO_10_BAND[i], gain_db: gains[i], q: 1.41 };
@@ -390,7 +387,7 @@ impl GraphicEq {
     }
 
     /// Installs a new band set. Allocation-free, so safe on the audio thread.
-    pub fn set_bands(&mut self, specs: &[EqBandSpec], preamp_db: f32) {
+    pub(crate) fn set_bands(&mut self, specs: &[EqBandSpec], preamp_db: f32) {
         self.preamp_linear = 10f32.powf(preamp_db / 20.0);
         let n = specs.len().min(MAX_EQ_BANDS);
         for i in 0..n {
@@ -405,7 +402,7 @@ impl GraphicEq {
         self.recompute();
     }
 
-    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+    pub(crate) fn set_sample_rate(&mut self, sample_rate: f32) {
         if sample_rate > 0.0 && (self.sample_rate - sample_rate).abs() > 0.5 {
             self.sample_rate = sample_rate;
             for b in self.bands.iter_mut() {
@@ -423,12 +420,12 @@ impl GraphicEq {
         }
     }
 
-    pub fn active_bands(&self) -> usize {
+    pub(crate) fn active_bands(&self) -> usize {
         self.active
     }
 
     #[inline(always)]
-    pub fn process_stereo(&mut self, mut left: f32, mut right: f32) -> (f32, f32) {
+    pub(crate) fn process_stereo(&mut self, mut left: f32, mut right: f32) -> (f32, f32) {
         left *= self.preamp_linear;
         right *= self.preamp_linear;
         for i in 0..self.active {

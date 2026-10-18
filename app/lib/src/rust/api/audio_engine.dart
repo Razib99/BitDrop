@@ -6,10 +6,16 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `open_media_source`, `ramp_step`, `request_load`, `set_ramp`, `stream_opens`
-// These types are ignored because they are not used by any `pub` functions: `Biquad`, `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DecoderCmd`, `GraphicEq`, `LOAD_SENDER`, `OpenedTrack`, `PLAYER_STATE`, `PlayerState`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `default`, `default`, `deref`, `deref`, `deref`, `deref`, `initialize`, `initialize`, `initialize`, `initialize`
-// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `new`, `process_stereo`, `process`, `set_peaking`, `update_gains`
+// These functions are ignored because they are not marked as `pub`: `active_bands`, `new`, `open_media_source`, `process_stereo`, `process`, `ramp_step`, `recompute`, `request_load`, `reset_state`, `set_bands`, `set_coeffs`, `set_peaking`, `set_ramp`, `set_sample_rate`, `stream_opens`, `update_gains`
+// These types are ignored because they are not used by any `pub` functions: `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DecoderCmd`, `EqBandSpec`, `GraphicEq`, `LOAD_SENDER`, `OpenedTrack`, `PLAYER_STATE`, `PlayerState`, `StereoBiquad`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `default`, `default`, `default`, `deref`, `deref`, `deref`, `deref`, `eq`, `fmt`, `initialize`, `initialize`, `initialize`, `initialize`
+
+/// Enables hardware Flush-to-Zero (FTZ) and Denormals-are-Zero (DAZ) mode.
+/// On ARM64 (Android), this sets bits 24 (FZ) and 19 (DN) of FPCR.
+/// On x86_64, this sets FTZ (bit 15) and DAZ (bit 6) flags in MXCSR.
+/// Prevents catastrophic CPU denormal microcode exceptions during filter decays and fades.
+Future<void> enableHardwareFlushToZero() =>
+    RustLib.instance.api.crateApiAudioEngineEnableHardwareFlushToZero();
 
 Future<void> initEngine() =>
     RustLib.instance.api.crateApiAudioEngineInitEngine();

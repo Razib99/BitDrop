@@ -387,21 +387,25 @@ class LiveBitDropCore implements BitDropCore {
   @override Future<List<String>> genres() async => const [];
   @override
   Future<SearchResults> search(String text, SearchFilters f) async {
-    final q = text.trim().toLowerCase();
+    final q = text.trim();
     if (q.isEmpty) return const SearchResults();
 
-    final tracks = _cloudTracks
-        .where((t) =>
-            t.title.toLowerCase().contains(q) ||
-            t.artist.toLowerCase().contains(q) ||
-            t.albumTitle.toLowerCase().contains(q) ||
-            t.format.badgeLabel.toLowerCase() == q)
-        .take(20)
-        .toList();
+    final ftsTracks = _cloud != null ? await _cloud!.search(q, limit: 30) : const <Track>[];
+    final tracks = ftsTracks.isNotEmpty
+        ? ftsTracks
+        : _cloudTracks
+            .where((t) =>
+                t.title.toLowerCase().contains(q.toLowerCase()) ||
+                t.artist.toLowerCase().contains(q.toLowerCase()) ||
+                t.albumTitle.toLowerCase().contains(q.toLowerCase()) ||
+                t.format.badgeLabel.toLowerCase() == q.toLowerCase())
+            .take(20)
+            .toList();
+
     final albums = _cloudAlbums
         .where((a) =>
-            a.title.toLowerCase().contains(q) ||
-            a.artist.toLowerCase().contains(q))
+            a.title.toLowerCase().contains(q.toLowerCase()) ||
+            a.artist.toLowerCase().contains(q.toLowerCase()))
         .take(12)
         .toList();
 

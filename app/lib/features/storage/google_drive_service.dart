@@ -129,25 +129,15 @@ class DriveScanProgress {
 /// user's own Drive with a read-only scope. Nothing is uploaded and nothing is
 /// written back.
 class GoogleDriveService {
-  GoogleDriveService() {
+  GoogleDriveService({String? customClientId, bool useFullScope = false})
+      : _customClientId = customClientId,
+        _useFullScope = useFullScope {
     if (!isPlatformSupported) {
       debugPrint('[drive] Google Sign-In is unavailable on this platform; '
           'cloud features are disabled.');
       return;
     }
-
-    _googleSignIn.onCurrentUserChanged.listen((account) {
-      _accountController.add(account);
-      if (account == null) {
-        _driveApi = null;
-      } else {
-        unawaited(_initDriveApi());
-      }
-    });
-    // Restoring a session would throw on a platform with no plugin.
-    if (isPlatformSupported) {
-      unawaited(_googleSignIn.signInSilently());
-    }
+    _initGoogleSignIn();
   }
 
   /// Extensions the Rust engine can actually decode. Anything else in the
@@ -178,9 +168,53 @@ class GoogleDriveService {
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.iOS;
 
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: [drive.DriveApi.driveReadonlyScope],
-  );
+  /// Default non-sensitive scope eliminating CASA Tier-2 audit fees ($600-$3,000/yr)
+  /// and 7-day token expirations under Google Cloud policies (F-04).
+  static const String defaultScope = drive.DriveApi.driveFileScope;
+  static const String fullReadonlyScope = drive.DriveApi.driveReadonlyScope;
+
+  String? _customClientId;
+  bool _useFullScope = false;
+
+  String? get customClientId => _customClientId;
+  bool get useFullScope => _useFullScope;
+
+  late GoogleSignIn _googleSignIn;
+  StreamSubscription<GoogleSignInAccount?>? _sub;
+
+  void _initGoogleSignIn() {
+    _sub?.cancel();
+    _googleSignIn = GoogleSignIn(
+      clientId: _customClientId,
+      scopes: [
+        _useFullScope
+            ? drive.DriveApi.driveReadonlyScope
+            : drive.DriveApi.driveFileScope,
+      ],
+    );
+    _sub = _googleSignIn.onCurrentUserChanged.listen((account) {
+      _accountController.add(account);
+      if (account == null) {
+        _driveApi = null;
+      } else {
+        unawaited(_initDriveApi());
+      }
+    });
+    if (isPlatformSupported) {
+      unawaited(_googleSignIn.signInSilently());
+    }
+  }
+
+  /// Power-user configuration: switch between default `drive.file` and custom GCP OAuth Client ID (F-04).
+  Future<void> configureAuth(
+      {String? customClientId, bool useFullScope = false}) async {
+    _customClientId = (customClientId != null && customClientId.trim().isNotEmpty)
+        ? customClientId.trim()
+        : null;
+    _useFullScope = useFullScope;
+    await signOut();
+    _initGoogleSignIn();
+  }
 
   drive.DriveApi? _driveApi;
 
