@@ -17,6 +17,7 @@ import 'output_device.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
 import '../src/rust/api/cloud_library.dart' as rust_cache;
 import '../src/rust/api/simple.dart' as rust_simple;
+import '../util/biquad.dart';
 
 class LiveBitDropCore implements BitDropCore {
   final BitDropAudioHandler _audioHandler;
@@ -167,16 +168,29 @@ class LiveBitDropCore implements BitDropCore {
         finalGains[7] = eqState.trebleDb * 0.4;
         finalGains[8] = eqState.trebleDb * 0.8;
         finalGains[9] = eqState.trebleDb;
-      } else if (eqState.graphicGains.isNotEmpty) {
-        finalGains = eqState.graphicGains.take(10).toList();
+      } else if (eqState.mode == EqMode.graphic) {
+        finalGains = eqState.graphicGains.isNotEmpty
+            ? eqState.graphicGains.take(10).toList()
+            : List.filled(10, 0.0);
+      } else if (eqState.mode == EqMode.parametric) {
+        // Map parametric EQ bands (including AutoEQ profiles) across the 10 ISO center frequencies:
+        // [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000] Hz
+        const centers = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+        finalGains = centers
+            .map((c) => Biquad.combinedDb(eqState.bands, c.toDouble(), preampDb: 0.0))
+            .toList();
       } else {
         finalGains = List.filled(10, 0.0);
+      }
+      while (finalGains.length < 10) {
+        finalGains.add(0.0);
       }
       // Pass the preamp as the 11th element of the gains list!
       finalGains.add(eqState.preampDb);
       
       rust.engineSetEq(gains: finalGains);
       rust.engineSetEqEnabled(enabled: !eqState.bypass);
+      _recomputeSignalPath();
     });
 
     _scanRealMusic();

@@ -57,10 +57,10 @@ class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
           // Master bypass. True bypass: nothing in the chain runs.
           Row(
             children: [
-              Text('Bypass', style: context.t.label),
+              Text(eq.bypass ? 'Bypassed' : 'Active', style: context.t.label),
               Switch(
-                value: eq.bypass,
-                onChanged: (v) => sendCommand(ref, SetBypass(v)),
+                value: !eq.bypass,
+                onChanged: (v) => sendCommand(ref, SetBypass(!v)),
               ),
             ],
           ),

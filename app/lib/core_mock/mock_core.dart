@@ -517,11 +517,18 @@ class MockBitDropCore implements BitDropCore {
 
     final dspStages = <String>[];
     if (eq.isActive) {
-      dspStages.add(
-        eq.presetName != null
-            ? 'EQ: ${eq.presetName} (${eq.bands.where((b) => b.enabled).length} bands)'
-            : 'EQ: ${eq.bands.where((b) => b.enabled && b.gainDb != 0).length} bands',
-      );
+      if (eq.mode == EqMode.graphic) {
+        final activeGraphic = eq.graphicGains.where((g) => g != 0).length;
+        dspStages.add('EQ: Graphic ($activeGraphic bands)');
+      } else if (eq.mode == EqMode.simple) {
+        dspStages.add('Tone: Bass ${_db(eq.bassDb)}, Treble ${_db(eq.trebleDb)}');
+      } else {
+        dspStages.add(
+          eq.presetName != null
+              ? 'EQ: ${eq.presetName} (${eq.bands.where((b) => b.enabled).length} bands)'
+              : 'EQ: ${eq.bands.where((b) => b.enabled && b.gainDb != 0).length} bands',
+        );
+      }
       if (eq.preampDb != 0) {
         dspStages.add('Preamp ${_db(eq.preampDb)}');
       }

@@ -252,54 +252,186 @@ impl StereoBiquad {
         }
     }
 
+    /// RBJ Audio EQ Cookbook coefficients for any supported filter shape.
+    ///
+    /// Mirrors `lib/util/biquad.dart` exactly, so what the curve on screen
+    /// shows is what the engine does. Only coefficients change; the filter
+    /// state is kept so live edits do not click.
+    pub fn set_coeffs(&mut self, kind: u8, f0: f32, fs: f32, q: f32, db_gain: f32) {
+        let fs = if fs > 0.0 { fs as f64 } else { 48000.0 };
+        let f0 = (f0 as f64).clamp(10.0, fs / 2.0 - 10.0);
+        let q = if q > 0.0 { q as f64 } else { 0.707 };
+        let a = 10f64.powf(db_gain as f64 / 40.0);
+        let w0 = 2.0 * std::f64::consts::PI * f0 / fs;
+        let (sin_w0, cos_w0) = w0.sin_cos();
+        let alpha = sin_w0 / (2.0 * q);
+        let sqrt_a = a.sqrt();
+
+        let (b0, b1, b2, a0, a1, a2) = match kind {
+            EQ_LOW_SHELF => (
+                a * ((a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha),
+                2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0),
+                a * ((a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha),
+                (a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha,
+                -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0),
+                (a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha,
+            ),
+            EQ_HIGH_SHELF => (
+                a * ((a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha),
+                -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0),
+                a * ((a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha),
+                (a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha,
+                2.0 * ((a - 1.0) - (a + 1.0) * cos_w0),
+                (a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha,
+            ),
+            EQ_LOW_PASS => (
+                (1.0 - cos_w0) / 2.0,
+                1.0 - cos_w0,
+                (1.0 - cos_w0) / 2.0,
+                1.0 + alpha,
+                -2.0 * cos_w0,
+                1.0 - alpha,
+            ),
+            EQ_HIGH_PASS => (
+                (1.0 + cos_w0) / 2.0,
+                -(1.0 + cos_w0),
+                (1.0 + cos_w0) / 2.0,
+                1.0 + alpha,
+                -2.0 * cos_w0,
+                1.0 - alpha,
+            ),
+            // EQ_PEAK and anything unknown.
+            _ => (
+                1.0 + alpha * a,
+                -2.0 * cos_w0,
+                1.0 - alpha * a,
+                1.0 + alpha / a,
+                -2.0 * cos_w0,
+                1.0 - alpha / a,
+            ),
+        };
+
+        if a0.abs() < 1e-12 || !a0.is_finite() {
+            return;
+        }
+        self.b0 = (b0 / a0) as f32;
+        self.b1 = (b1 / a0) as f32;
+        self.b2 = (b2 / a0) as f32;
+        self.a1 = (a1 / a0) as f32;
+        self.a2 = (a2 / a0) as f32;
+    }
+
     pub fn set_peaking(&mut self, f0: f32, fs: f32, q: f32, db_gain: f32) {
-        let w0 = 2.0 * std::f32::consts::PI * f0 / fs;
-        let alpha = w0.sin() / (2.0 * q);
-        let a = (10.0_f32).powf(db_gain / 40.0);
-        
-        let a0 = 1.0 + alpha / a;
-        self.b0 = (1.0 + alpha * a) / a0;
-        self.b1 = (-2.0 * w0.cos()) / a0;
-        self.b2 = (1.0 - alpha * a) / a0;
-        self.a1 = (-2.0 * w0.cos()) / a0;
-        self.a2 = (1.0 - alpha / a) / a0;
+        self.set_coeffs(EQ_PEAK, f0, fs, q, db_gain);
+    }
+
+    fn reset_state(&mut self) {
+        self.s1 = [0.0; 2];
+        self.s2 = [0.0; 2];
     }
 }
 
+/// Filter shapes, as sent over FFI. Kept as plain codes so the Dart side maps
+/// its own enum explicitly instead of relying on declaration order.
+pub const EQ_PEAK: u8 = 0;
+pub const EQ_LOW_SHELF: u8 = 1;
+pub const EQ_HIGH_SHELF: u8 = 2;
+pub const EQ_LOW_PASS: u8 = 3;
+pub const EQ_HIGH_PASS: u8 = 4;
+
+/// Enough for any AutoEQ ParametricEQ.txt (10) plus tone/graphic modes.
+pub const MAX_EQ_BANDS: usize = 16;
+
+/// ISO centres used by the legacy 10-gain `engine_set_eq` entry point.
+const ISO_10_BAND: [f32; 10] =
+    [31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0];
+
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+#[flutter_rust_bridge::frb(ignore)]
+pub struct EqBandSpec {
+    pub kind: u8,
+    pub freq: f32,
+    pub gain_db: f32,
+    pub q: f32,
+}
+
+/// A cascade of up to [`MAX_EQ_BANDS`] stereo biquads plus preamp.
+///
+/// The name is historical; it is a full parametric EQ. Graphic and tone modes
+/// are expressed as bands on the Dart side, so every mode runs through the
+/// same filters the curve is drawn from.
 #[flutter_rust_bridge::frb(ignore)]
 pub struct GraphicEq {
     preamp_linear: f32,
-    bands: [StereoBiquad; 10],
-    freqs: [f32; 10],
-    q: f32,
-    sample_rate: f32,
+    bands: [StereoBiquad; MAX_EQ_BANDS],
+    specs: [EqBandSpec; MAX_EQ_BANDS],
+    active: usize,
+    pub sample_rate: f32,
 }
 
 impl GraphicEq {
     pub fn new(sample_rate: f32) -> Self {
         GraphicEq {
-            bands: [StereoBiquad::default(); 10],
-            freqs: [31.5, 63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0],
-            q: 1.414,
-            sample_rate,
+            bands: [StereoBiquad::default(); MAX_EQ_BANDS],
+            specs: [EqBandSpec::default(); MAX_EQ_BANDS],
+            active: 0,
+            sample_rate: if sample_rate > 0.0 { sample_rate } else { 48000.0 },
             preamp_linear: 1.0,
         }
     }
 
+    /// Legacy 10-band graphic entry point: peaking filters at ISO centres.
     pub fn update_gains(&mut self, gains: &[f32; 10], preamp_db: f32) {
-        self.preamp_linear = (10.0_f32).powf(preamp_db / 20.0);
+        let mut specs = [EqBandSpec::default(); 10];
         for i in 0..10 {
-            let mut b = self.bands[i];
-            b.set_peaking(self.freqs[i], self.sample_rate, self.q, gains[i]);
-            self.bands[i] = b;
+            specs[i] = EqBandSpec { kind: EQ_PEAK, freq: ISO_10_BAND[i], gain_db: gains[i], q: 1.41 };
         }
+        self.set_bands(&specs, preamp_db);
+    }
+
+    /// Installs a new band set. Allocation-free, so safe on the audio thread.
+    pub fn set_bands(&mut self, specs: &[EqBandSpec], preamp_db: f32) {
+        self.preamp_linear = 10f32.powf(preamp_db / 20.0);
+        let n = specs.len().min(MAX_EQ_BANDS);
+        for i in 0..n {
+            // A band that changes shape starts from rest; one that only moves
+            // keeps its state so dragging a handle stays click-free.
+            if i >= self.active || self.specs[i].kind != specs[i].kind {
+                self.bands[i].reset_state();
+            }
+            self.specs[i] = specs[i];
+        }
+        self.active = n;
+        self.recompute();
+    }
+
+    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+        if sample_rate > 0.0 && (self.sample_rate - sample_rate).abs() > 0.5 {
+            self.sample_rate = sample_rate;
+            for b in self.bands.iter_mut() {
+                b.reset_state();
+            }
+            self.recompute();
+        }
+    }
+
+    fn recompute(&mut self) {
+        let fs = self.sample_rate;
+        for i in 0..self.active {
+            let s = self.specs[i];
+            self.bands[i].set_coeffs(s.kind, s.freq, fs, s.q, s.gain_db);
+        }
+    }
+
+    pub fn active_bands(&self) -> usize {
+        self.active
     }
 
     #[inline(always)]
     pub fn process_stereo(&mut self, mut left: f32, mut right: f32) -> (f32, f32) {
         left *= self.preamp_linear;
         right *= self.preamp_linear;
-        for i in 0..10 {
+        for i in 0..self.active {
             let (l, r) = self.bands[i].process(left, right);
             left = l;
             right = r;
@@ -467,7 +599,10 @@ impl AudioOutputCallback for PlayerCallback {
             )
         };
 
-        if eq_updated {
+        if eq_updated || (rate > 0 && (self.eq.sample_rate - rate as f32).abs() > 1.0) {
+            if rate > 0 {
+                self.eq.sample_rate = rate as f32;
+            }
             self.eq.update_gains(&gains, preamp);
         }
 
@@ -1504,6 +1639,7 @@ pub fn engine_set_eq(gains: Vec<f32>) {
 pub fn engine_set_eq_enabled(enabled: bool) {
     let mut state = PLAYER_STATE.lock().unwrap();
     state.eq_enabled = enabled;
+    state.eq_updated = true;
 }
 
 #[cfg(test)]
@@ -1526,6 +1662,7 @@ mod tests {
         let mut eq = GraphicEq::new(48000.0);
         let gains = [3.0, 2.0, 1.0, 0.0, -1.0, -2.0, -3.0, 0.0, 1.0, 2.0];
         eq.update_gains(&gains, 0.0);
+        assert_eq!(eq.active_bands(), 10);
 
         // Process test frames
         for _ in 0..100 {
@@ -1533,6 +1670,21 @@ mod tests {
             assert!(l.is_finite());
             assert!(r.is_finite());
         }
+
+        // Test parametric band configuration (e.g. AutoEQ profile with shelves + peaks)
+        let specs = [
+            EqBandSpec { kind: EQ_LOW_SHELF, freq: 105.0, gain_db: 5.5, q: 0.71 },
+            EqBandSpec { kind: EQ_PEAK, freq: 1000.0, gain_db: -2.0, q: 1.4 },
+            EqBandSpec { kind: EQ_HIGH_SHELF, freq: 10000.0, gain_db: -3.0, q: 0.71 },
+        ];
+        eq.set_bands(&specs, -3.5);
+        assert_eq!(eq.active_bands(), 3);
+
+        let (pl, pr) = eq.process_stereo(0.5, -0.5);
+        assert!(pl.is_finite());
+        assert!(pr.is_finite());
+        // Preamp of -3.5 dB attenuates the signal below 0.5
+        assert!(pl.abs() < 0.5);
     }
 
     #[test]

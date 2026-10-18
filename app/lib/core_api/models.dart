@@ -775,7 +775,8 @@ class EqState {
           trebleDb != 0 ||
           balance != 0 ||
           mono ||
-          replayGain != ReplayGainMode.off);
+          replayGain != ReplayGainMode.off ||
+          graphicGains.any((g) => g != 0));
 
   EqState copyWith({
     EqMode? mode,

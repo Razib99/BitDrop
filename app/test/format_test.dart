@@ -107,5 +107,36 @@ void main() {
       expect(Biquad.positionOf(20), 0);
       expect(Biquad.positionOf(20000), 1);
     });
+
+    test('EqState.isActive detects graphic gains when not bypassed', () {
+      final inactive = EqState(
+        mode: EqMode.graphic,
+        bands: const [],
+        preampDb: 0,
+        bypass: false,
+        graphicGains: List.filled(10, 0.0),
+      );
+      expect(inactive.isActive, isFalse);
+
+      final active = inactive.copyWith(
+        graphicGains: [0, 0, 3.5, 0, 0, 0, 0, 0, 0, 0],
+      );
+      expect(active.isActive, isTrue);
+
+      final bypassed = active.copyWith(bypass: true);
+      expect(bypassed.isActive, isFalse);
+    });
+
+    test('Parametric bands map to ISO center frequencies with accurate gain', () {
+      const bands = [
+        EqBand(id: 1, type: BiquadType.peak, frequencyHz: 1000, gainDb: 6.0, q: 1.41),
+      ];
+      final gainAt1k = Biquad.combinedDb(bands, 1000.0);
+      expect(gainAt1k, closeTo(6.0, 0.1));
+
+      // Far from 1kHz, the peaking filter has negligible effect
+      final gainAt10k = Biquad.combinedDb(bands, 10000.0);
+      expect(gainAt10k, closeTo(0.0, 0.3));
+    });
   });
 }
