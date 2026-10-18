@@ -219,6 +219,15 @@ We have audited and completed the full search capabilities across BitDrop:
    - All 43 unit and integration tests passed cleanly.
 3. **Hot Reload**:
    - Hot-reloaded cleanly into the running Linux application.
-4. **Git Commit**:
-   - `83d40a0`: `feat(search): make search fully functional across cloud, local, and catalogue with format filters and toolbar buttons`.
+4. **Git Commits**:
+   - `83d40a0`: `feat(search): make search fully functional across cloud, local, and catalogue with format filters and toolbar buttons`
+   - `6191d24`: `feat(search): eliminate mock dummy searches and implement real persistent recent search history`
+
+### 4. Real Persistent Recent Search History
+- **Files**:
+  - [`app/lib/core_mock/catalog.dart`](file:///home/razib/Desktop/BitDrop/app/lib/core_mock/catalog.dart): Emptied hardcoded mock searches (`glass harbor`, `alac`, `aurora`, etc.).
+  - [`app/lib/core_live/live_core.dart`](file:///home/razib/Desktop/BitDrop/app/lib/core_live/live_core.dart): Implemented persistent JSON-backed storage for recent searches (`recent_searches.json`) with LRU/LIFO cap (15 items).
+  - [`app/lib/core_api/bitdrop_core.dart`](file:///home/razib/Desktop/BitDrop/app/lib/core_api/bitdrop_core.dart) & [`commands.dart`](file:///home/razib/Desktop/BitDrop/app/lib/core_api/commands.dart): Added `recordRecentSearch`, `removeRecentSearch`, and `clearRecentSearches`.
+  - [`app/lib/features/search/search_screen.dart`](file:///home/razib/Desktop/BitDrop/app/lib/features/search/search_screen.dart): Added "Clear" action button on recent searches header, per-item deletion buttons, and auto-record on keyboard submit and track/album/artist selection.
+  - [`app/test/search_test.dart`](file:///home/razib/Desktop/BitDrop/app/test/search_test.dart): Added tests ensuring clean empty start, deduplication, and removal/clear functionality (11 tests passing, 46 total in suite).
 
