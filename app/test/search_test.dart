@@ -79,5 +79,32 @@ void main() {
       final res = await core.search('flac', const SearchFilters());
       expect(res.topResult, isNotNull);
     });
+
+    test('recent searches starts empty with no dummy/random data', () async {
+      final recents = await core.recentSearches();
+      expect(recents, isEmpty);
+    });
+
+    test('recording recent searches persists in LIFO order and deduplicates', () async {
+      await core.recordRecentSearch('Pink Floyd');
+      await core.recordRecentSearch('Miles Davis');
+      await core.recordRecentSearch('Pink Floyd');
+
+      final recents = await core.recentSearches();
+      expect(recents, ['Pink Floyd', 'Miles Davis']);
+    });
+
+    test('removing and clearing recent searches works correctly', () async {
+      await core.recordRecentSearch('Track 1');
+      await core.recordRecentSearch('Track 2');
+      await core.removeRecentSearch('Track 1');
+
+      var recents = await core.recentSearches();
+      expect(recents, ['Track 2']);
+
+      await core.clearRecentSearches();
+      recents = await core.recentSearches();
+      expect(recents, isEmpty);
+    });
   });
 }

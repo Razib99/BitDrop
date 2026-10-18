@@ -237,3 +237,17 @@ class SetSetting extends PlayerCommand {
   final String key;
   final Object? value;
 }
+
+class RecordRecentSearch extends PlayerCommand {
+  const RecordRecentSearch(this.query);
+  final String query;
+}
+
+class RemoveRecentSearch extends PlayerCommand {
+  const RemoveRecentSearch(this.query);
+  final String query;
+}
+
+class ClearRecentSearches extends PlayerCommand {
+  const ClearRecentSearches();
+}

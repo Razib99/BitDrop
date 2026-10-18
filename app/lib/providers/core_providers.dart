@@ -201,8 +201,29 @@ final autoEqSearchProvider =
   return ref.watch(coreProvider).searchAutoEq(model);
 });
 
-final recentSearchesProvider = FutureProvider<List<String>>(
-    (ref) => ref.watch(coreProvider).recentSearches());
+final recentSearchesRevisionProvider = StateProvider<int>((ref) => 0);
+
+final recentSearchesProvider = FutureProvider<List<String>>((ref) {
+  ref.watch(recentSearchesRevisionProvider);
+  return ref.watch(coreProvider).recentSearches();
+});
+
+Future<void> recordRecentSearch(WidgetRef ref, String query) async {
+  final trimmed = query.trim();
+  if (trimmed.isEmpty) return;
+  await ref.read(coreProvider).recordRecentSearch(trimmed);
+  ref.read(recentSearchesRevisionProvider.notifier).state++;
+}
+
+Future<void> removeRecentSearch(WidgetRef ref, String query) async {
+  await ref.read(coreProvider).removeRecentSearch(query);
+  ref.read(recentSearchesRevisionProvider.notifier).state++;
+}
+
+Future<void> clearRecentSearches(WidgetRef ref) async {
+  await ref.read(coreProvider).clearRecentSearches();
+  ref.read(recentSearchesRevisionProvider.notifier).state++;
+}
 
 // ---- Search ---------------------------------------------------------------
 

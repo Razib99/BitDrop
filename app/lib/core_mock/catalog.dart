@@ -868,13 +868,7 @@ abstract final class MockCatalog {
     16000
   ];
 
-  static final List<String> recentSearches = [
-    '24/192',
-    'glass harbor',
-    'alac',
-    'aurora',
-    'hi-res',
-  ];
+  static final List<String> recentSearches = <String>[];
 }
 
 /// Internal album blueprint. Keeps the catalogue declarative.

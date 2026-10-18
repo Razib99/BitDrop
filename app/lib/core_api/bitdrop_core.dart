@@ -65,6 +65,9 @@ abstract interface class BitDropCore {
   Future<SearchResults> search(String text, SearchFilters f);
   Future<List<AutoEqProfile>> searchAutoEq(String model);
   Future<List<String>> recentSearches();
+  Future<void> recordRecentSearch(String query);
+  Future<void> removeRecentSearch(String query);
+  Future<void> clearRecentSearches();
 
   // ---- Commands ------------------------------------------------------------
 

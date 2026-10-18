@@ -1102,8 +1102,32 @@ class MockBitDropCore implements BitDropCore {
         .toList();
   }
 
+  final List<String> _recentSearches = [];
+
   @override
-  Future<List<String>> recentSearches() async => MockCatalog.recentSearches;
+  Future<List<String>> recentSearches() async =>
+      List.unmodifiable(_recentSearches);
+
+  @override
+  Future<void> recordRecentSearch(String query) async {
+    final q = query.trim();
+    if (q.isEmpty) return;
+    _recentSearches.remove(q);
+    _recentSearches.insert(0, q);
+    if (_recentSearches.length > 20) {
+      _recentSearches.removeLast();
+    }
+  }
+
+  @override
+  Future<void> removeRecentSearch(String query) async {
+    _recentSearches.remove(query);
+  }
+
+  @override
+  Future<void> clearRecentSearches() async {
+    _recentSearches.clear();
+  }
 
   bool _matchesQuality(AudioFormat fmt, QualityFilter quality) =>
       switch (quality) {
@@ -1674,6 +1698,15 @@ class MockBitDropCore implements BitDropCore {
         if (key == 'safetyAttenuationEnabled' || key == 'replayGain') {
           _recomputeSignalPath();
         }
+
+      case RecordRecentSearch(:final query):
+        await recordRecentSearch(query);
+
+      case RemoveRecentSearch(:final query):
+        await removeRecentSearch(query);
+
+      case ClearRecentSearches():
+        await clearRecentSearches();
     }
   }
 

@@ -65,6 +65,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             onSubmitted: (v) {
               ref.read(searchQueryProvider.notifier).state = v;
               _focus.unfocus();
+              if (v.trim().isNotEmpty) {
+                recordRecentSearch(ref, v);
+              }
             },
             decoration: InputDecoration(
               hintText: 'Tracks, albums, artists, folders',
@@ -163,12 +166,25 @@ class _RecentAndTips extends ConsumerWidget {
     return ListView(
       children: [
         if (recents.isNotEmpty) ...[
-          const SectionHeader(title: 'Recent searches'),
+          SectionHeader(
+            title: 'Recent searches',
+            actionLabel: 'Clear',
+            onAction: () => clearRecentSearches(ref),
+          ),
           for (final r in recents)
             ListTile(
+              dense: true,
               leading: const Icon(Icons.history, size: 20),
               title: Text(r),
-              onTap: () => ref.read(searchQueryProvider.notifier).state = r,
+              trailing: IconButton(
+                icon: const Icon(Icons.close, size: 16),
+                tooltip: 'Remove',
+                onPressed: () => removeRecentSearch(ref, r),
+              ),
+              onTap: () {
+                ref.read(searchQueryProvider.notifier).state = r;
+                recordRecentSearch(ref, r);
+              },
             ),
         ],
         const SectionHeader(
@@ -227,15 +243,18 @@ class _Results extends ConsumerWidget {
             TrackRow(
               track: results.tracks[i],
               badgeVisibility: settings.formatBadges,
-              onTap: () => sendCommand(
-                ref,
-                PlayContext(
-                  contextId: 'search',
-                  trackIds: results.tracks.map((t) => t.id).toList(),
-                  startIndex: i,
-                  contextLabel: 'Search · $query',
-                ),
-              ),
+              onTap: () {
+                if (query.trim().isNotEmpty) recordRecentSearch(ref, query);
+                sendCommand(
+                  ref,
+                  PlayContext(
+                    contextId: 'search',
+                    trackIds: results.tracks.map((t) => t.id).toList(),
+                    startIndex: i,
+                    contextLabel: 'Search · $query',
+                  ),
+                );
+              },
               onPlayNext: () =>
                   sendCommand(ref, PlayNext([results.tracks[i].id])),
               onAddToQueue: () =>
@@ -248,7 +267,10 @@ class _Results extends ConsumerWidget {
             AlbumRow(
               album: a,
               badgeVisibility: settings.formatBadges,
-              onTap: () => context.push(Routes.album(a.id)),
+              onTap: () {
+                if (query.trim().isNotEmpty) recordRecentSearch(ref, query);
+                context.push(Routes.album(a.id));
+              },
             ),
         ],
         if (results.artists.isNotEmpty) ...[
@@ -256,7 +278,10 @@ class _Results extends ConsumerWidget {
           for (final a in results.artists)
             ArtistTile(
               artist: a,
-              onTap: () => context.push(Routes.artist(a.id)),
+              onTap: () {
+                if (query.trim().isNotEmpty) recordRecentSearch(ref, query);
+                context.push(Routes.artist(a.id));
+              },
             ),
         ],
         if (results.folders.isNotEmpty) ...[
@@ -277,23 +302,32 @@ class _Results extends ConsumerWidget {
       final Album a => AlbumRow(
           album: a,
           badgeVisibility: badges,
-          onTap: () => context.push(Routes.album(a.id)),
+          onTap: () {
+            if (query.trim().isNotEmpty) recordRecentSearch(ref, query);
+            context.push(Routes.album(a.id));
+          },
         ),
       final Artist a => ArtistTile(
           artist: a,
-          onTap: () => context.push(Routes.artist(a.id)),
+          onTap: () {
+            if (query.trim().isNotEmpty) recordRecentSearch(ref, query);
+            context.push(Routes.artist(a.id));
+          },
         ),
       final Track t => TrackRow(
           track: t,
           badgeVisibility: badges,
-          onTap: () => sendCommand(
-            ref,
-            PlayContext(
-              contextId: 'search',
-              trackIds: [t.id],
-              contextLabel: 'Search · $query',
-            ),
-          ),
+          onTap: () {
+            if (query.trim().isNotEmpty) recordRecentSearch(ref, query);
+            sendCommand(
+              ref,
+              PlayContext(
+                contextId: 'search',
+                trackIds: [t.id],
+                contextLabel: 'Search · $query',
+              ),
+            );
+          },
         ),
       _ => const SizedBox.shrink(),
     };

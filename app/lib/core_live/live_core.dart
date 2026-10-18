@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:audio_service/audio_service.dart' as audio_svc;
@@ -542,7 +544,87 @@ class LiveBitDropCore implements BitDropCore {
     );
   }
   @override Future<List<AutoEqProfile>> searchAutoEq(String model) => _mockCore.searchAutoEq(model);
-  @override Future<List<String>> recentSearches() => _mockCore.recentSearches();
+
+  File? get _recentSearchesFile {
+    if (_chunkCacheDir == null) return null;
+    final parent = Directory(_chunkCacheDir).parent;
+    return File('${parent.path}/recent_searches.json');
+  }
+
+  List<String>? _recentSearchesList;
+
+  @override
+  Future<List<String>> recentSearches() async {
+    if (_recentSearchesList != null) {
+      return List.unmodifiable(_recentSearchesList!);
+    }
+    final file = _recentSearchesFile;
+    if (file != null && await file.exists()) {
+      try {
+        final text = await file.readAsString();
+        final raw = jsonDecode(text);
+        if (raw is List) {
+          _recentSearchesList = raw.map((e) => e.toString()).toList();
+          return List.unmodifiable(_recentSearchesList!);
+        }
+      } catch (e) {
+        debugPrint('[search] failed to read recent searches: $e');
+      }
+    }
+    _recentSearchesList = [];
+    return const [];
+  }
+
+  @override
+  Future<void> recordRecentSearch(String query) async {
+    final q = query.trim();
+    if (q.isEmpty) return;
+    if (_recentSearchesList == null) {
+      await recentSearches();
+    }
+    _recentSearchesList!.remove(q);
+    _recentSearchesList!.insert(0, q);
+    if (_recentSearchesList!.length > 15) {
+      _recentSearchesList!.removeRange(15, _recentSearchesList!.length);
+    }
+    final file = _recentSearchesFile;
+    if (file != null) {
+      try {
+        await file.writeAsString(jsonEncode(_recentSearchesList));
+      } catch (e) {
+        debugPrint('[search] failed to write recent searches: $e');
+      }
+    }
+  }
+
+  @override
+  Future<void> removeRecentSearch(String query) async {
+    if (_recentSearchesList == null) {
+      await recentSearches();
+    }
+    _recentSearchesList!.remove(query);
+    final file = _recentSearchesFile;
+    if (file != null) {
+      try {
+        await file.writeAsString(jsonEncode(_recentSearchesList));
+      } catch (e) {
+        debugPrint('[search] failed to update recent searches: $e');
+      }
+    }
+  }
+
+  @override
+  Future<void> clearRecentSearches() async {
+    _recentSearchesList = [];
+    final file = _recentSearchesFile;
+    if (file != null && await file.exists()) {
+      try {
+        await file.delete();
+      } catch (e) {
+        debugPrint('[search] failed to delete recent searches: $e');
+      }
+    }
+  }
 
   String _currentContextLabel = '';
 
@@ -684,6 +766,12 @@ class LiveBitDropCore implements BitDropCore {
       final items = _resolveMediaItems(cmd.trackIds);
       await _audioHandler.enqueue(items);
       _emitQueue();
+    } else if (cmd is RecordRecentSearch) {
+      await recordRecentSearch(cmd.query);
+    } else if (cmd is RemoveRecentSearch) {
+      await removeRecentSearch(cmd.query);
+    } else if (cmd is ClearRecentSearches) {
+      await clearRecentSearches();
     } else {
       await _mockCore.send(cmd);
     }
