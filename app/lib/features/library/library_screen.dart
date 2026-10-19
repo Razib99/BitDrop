@@ -353,6 +353,17 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
                   onLongPress: () => _toggle(t.id),
                   onPlayNext: () => sendCommand(ref, PlayNext([t.id])),
                   onAddToQueue: () => sendCommand(ref, Enqueue([t.id])),
+                  onToggleFavorite: () => sendCommand(
+                    ref,
+                    SetFavorite(trackId: t.id, favorite: !t.favorite),
+                  ),
+                  onDownload: () => sendCommand(
+                    ref,
+                    t.availability == Availability.pinned ||
+                            t.availability == Availability.cached
+                        ? Unpin(id: t.id, kind: 'track')
+                        : Pin(id: t.id, kind: 'track'),
+                  ),
                 );
               },
             ),

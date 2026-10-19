@@ -92,6 +92,7 @@ class LiveBitDropCore implements BitDropCore {
     _cloud?.open();
 
     refreshStorage();
+    _loadFavoritesAndPinned();
 
     _outputProbe.start();
     _outputProbe.stream.listen((_) => _recomputeSignalPath());
@@ -148,7 +149,7 @@ class LiveBitDropCore implements BitDropCore {
         final track = _lookupTrack(item.id);
         if (track != null) {
           _nowPlaying.add(NowPlaying(
-            track: track,
+            track: _enrichTrack(track),
             contextLabel: _currentContextLabel.isNotEmpty
                 ? _currentContextLabel
                 : (track.folderPath.isNotEmpty
@@ -322,38 +323,290 @@ class LiveBitDropCore implements BitDropCore {
   List<Album> get _cloudAlbums => _cloud?.currentAlbums ?? const [];
   List<Track> get _cloudTracks => _cloud?.currentTracks ?? const [];
 
+  final Set<String> _favoriteTrackIds = {};
+  final Set<String> _pinnedTrackIds = {};
+  final Set<String> _pinnedAlbumIds = {};
+
+  File? get _favoritesFile {
+    if (_chunkCacheDir == null) return null;
+    final parent = Directory(_chunkCacheDir).parent;
+    return File('${parent.path}/favorites.json');
+  }
+
+  File? get _pinnedFile {
+    if (_chunkCacheDir == null) return null;
+    final parent = Directory(_chunkCacheDir).parent;
+    return File('${parent.path}/pinned.json');
+  }
+
+  Future<void> _loadFavoritesAndPinned() async {
+    try {
+      final favFile = _favoritesFile;
+      if (favFile != null && await favFile.exists()) {
+        final text = await favFile.readAsString();
+        final raw = jsonDecode(text);
+        if (raw is List) {
+          _favoriteTrackIds.addAll(raw.map((e) => e.toString()));
+        }
+      }
+    } catch (e) {
+      debugPrint('[core] failed to read favorites: $e');
+    }
+
+    try {
+      final pinFile = _pinnedFile;
+      if (pinFile != null && await pinFile.exists()) {
+        final text = await pinFile.readAsString();
+        final raw = jsonDecode(text);
+        if (raw is Map) {
+          if (raw['tracks'] is List) {
+            _pinnedTrackIds.addAll((raw['tracks'] as List).map((e) => e.toString()));
+          }
+          if (raw['albums'] is List) {
+            _pinnedAlbumIds.addAll((raw['albums'] as List).map((e) => e.toString()));
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[core] failed to read pinned: $e');
+    }
+  }
+
+  Future<void> _saveFavorites() async {
+    final file = _favoritesFile;
+    if (file == null) return;
+    try {
+      await file.writeAsString(jsonEncode(_favoriteTrackIds.toList()));
+    } catch (e) {
+      debugPrint('[core] failed to write favorites: $e');
+    }
+  }
+
+  Future<void> _savePinned() async {
+    final file = _pinnedFile;
+    if (file == null) return;
+    try {
+      await file.writeAsString(jsonEncode({
+        'tracks': _pinnedTrackIds.toList(),
+        'albums': _pinnedAlbumIds.toList(),
+      }));
+    } catch (e) {
+      debugPrint('[core] failed to write pinned: $e');
+    }
+  }
+
+  bool _isTrackFullyCached(String trackId, int sizeBytes) {
+    if (_pinnedTrackIds.contains(trackId)) return true;
+    final chunks = _chunkCacheDir;
+    if (chunks == null || sizeBytes <= 0) return false;
+    final idxFile = File('$chunks/$trackId.idx');
+    if (!idxFile.existsSync()) return false;
+    try {
+      final lines = idxFile.readAsLinesSync();
+      final unique = lines
+          .map((l) => int.tryParse(l.trim()))
+          .whereType<int>()
+          .toSet();
+      final totalChunks = (sizeBytes + 2097152 - 1) ~/ 2097152;
+      return totalChunks > 0 && unique.length >= totalChunks;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Track _enrichTrack(Track t) {
+    final isFav = _favoriteTrackIds.contains(t.id);
+    final isPinned = _pinnedTrackIds.contains(t.id);
+    var avail = t.availability;
+    if (isPinned) {
+      avail = Availability.pinned;
+    } else if (_isTrackFullyCached(t.id, t.sizeBytes)) {
+      avail = Availability.cached;
+    }
+    return t.copyWith(
+      favorite: isFav,
+      availability: avail,
+    );
+  }
+
+  Album _enrichAlbum(Album a) {
+    final isPinned = _pinnedAlbumIds.contains(a.id);
+    if (isPinned && a.availability != Availability.pinned) {
+      return a.copyWith(availability: Availability.pinned);
+    }
+    return a;
+  }
+
+  List<Track> get _allCandidateTracks => [
+        ..._cloudTracks,
+        ..._realTracks.values,
+        ...MockCatalog.tracks,
+      ];
+
+  Album _favoritesAlbum() {
+    final favTracks = _allCandidateTracks
+        .where((t) => _favoriteTrackIds.contains(t.id))
+        .map(_enrichTrack)
+        .toList();
+    final unique = <String, Track>{};
+    for (final t in favTracks) {
+      unique[t.id] = t;
+    }
+    final items = unique.values.toList();
+    int duration = 0;
+    int size = 0;
+    for (final t in items) {
+      duration += t.durationMs;
+      size += t.sizeBytes;
+    }
+    return Album(
+      id: 'album-favorites',
+      title: 'Favourites',
+      artist: 'Favorite tracks',
+      artistId: 'favorites',
+      trackCount: items.length,
+      durationMs: duration,
+      sizeBytes: size,
+      format: items.isNotEmpty
+          ? items.first.format
+          : const AudioFormat(
+              codec: Codec.flac, bitDepth: 24, sampleRate: 96000),
+      availability: _pinnedAlbumIds.contains('album-favorites')
+          ? Availability.pinned
+          : Availability.cloudOnly,
+      artwork: const Artwork(seed: 777, dominantColor: 0xFFE91E63),
+      mixedFormats: true,
+      lastModified: DateTime.now(),
+    );
+  }
+
+  Future<void> _downloadTrack(String trackId) async {
+    final track = _lookupTrack(trackId);
+    final chunksDir = _chunkCacheDir;
+    if (track == null || chunksDir == null) return;
+    final dir = Directory(chunksDir);
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+
+    final isCloud = _cloud?.trackById(trackId) != null;
+    if (!isCloud) {
+      return;
+    }
+
+    try {
+      final token = await _audioHandler.accessTokenProvider?.call();
+      if (token == null) {
+        debugPrint('[download] no access token available for $trackId');
+        return;
+      }
+
+      final uri = Uri.parse(
+          'https://www.googleapis.com/drive/v3/files/$trackId?alt=media');
+      final client = HttpClient();
+      final request = await client.getUrl(uri);
+      request.headers.set('Authorization', 'Bearer $token');
+      final response = await request.close();
+      if (response.statusCode != 200 && response.statusCode != 206) {
+        debugPrint('[download] HTTP ${response.statusCode} downloading track $trackId');
+        return;
+      }
+
+      final sparseFile = File('$chunksDir/$trackId.sparse');
+      final sink = sparseFile.openWrite();
+      await response.pipe(sink);
+
+      final totalSize = track.sizeBytes;
+      const chunkSize = 2 * 1024 * 1024;
+      final chunkCount =
+          totalSize > 0 ? (totalSize + chunkSize - 1) ~/ chunkSize : 1;
+      final idxLines =
+          '${List.generate(chunkCount, (i) => '$i').join('\n')}\n';
+      final idxFile = File('$chunksDir/$trackId.idx');
+      await idxFile.writeAsString(idxLines);
+      debugPrint('[download] downloaded $trackId ($totalSize bytes, $chunkCount chunks)');
+      await refreshStorage();
+    } catch (e) {
+      debugPrint('[download] error downloading track $trackId: $e');
+    }
+  }
+
+  Future<void> _downloadAlbum(String albumId) async {
+    final tracks = albumId == 'album-favorites'
+        ? _allCandidateTracks
+            .where((t) => _favoriteTrackIds.contains(t.id))
+            .toList()
+        : _allCandidateTracks.where((t) => t.albumId == albumId).toList();
+    for (final t in tracks) {
+      _pinnedTrackIds.add(t.id);
+    }
+    await _savePinned();
+    for (final t in tracks) {
+      await _downloadTrack(t.id);
+    }
+  }
+
   @override
   Future<Paged<Album>> albums(AlbumQuery q) async {
+    final favAlbum = _favoritesAlbum();
     final items = <Album>[
-      ..._cloudAlbums,
-      if (_realAlbum != null) _realAlbum!,
+      if (q.artistId == null) favAlbum,
+      ..._cloudAlbums.map(_enrichAlbum),
+      if (_realAlbum != null) _enrichAlbum(_realAlbum!),
     ];
     return Paged(items: items, total: items.length);
   }
 
   @override
   Future<Paged<Track>> tracks(TrackQuery q) async {
-    if (q.albumId != null) {
-      final cloud =
-          _cloudTracks.where((t) => t.albumId == q.albumId).toList();
+    if (q.albumId != null || q.playlistId != null) {
+      if (q.albumId == 'album-favorites' ||
+          q.playlistId == 'album-favorites' ||
+          q.playlistId == 'pl-favorites') {
+        final favs = _allCandidateTracks
+            .where((t) => _favoriteTrackIds.contains(t.id))
+            .map(_enrichTrack)
+            .toList();
+        final unique = <String, Track>{};
+        for (final t in favs) {
+          unique[t.id] = t;
+        }
+        final list = unique.values.toList();
+        return Paged(items: list, total: list.length);
+      }
+      final cloud = _cloudTracks
+          .where((t) => t.albumId == q.albumId)
+          .map(_enrichTrack)
+          .toList();
       if (cloud.isNotEmpty) return Paged(items: cloud, total: cloud.length);
       if (q.albumId == 'real-music') {
-        return Paged(items: _realTracks.values.toList(), total: _realTracks.length);
+        return Paged(
+            items: _realTracks.values.map(_enrichTrack).toList(),
+            total: _realTracks.length);
       }
-      return const Paged(items: [], total: 0);
+      final mock = await _mockCore.tracks(q);
+      return Paged(
+          items: mock.items.map(_enrichTrack).toList(), total: mock.total);
     }
 
-    final items = <Track>[..._cloudTracks, ..._realTracks.values];
+    final items = <Track>[
+      ..._cloudTracks.map(_enrichTrack),
+      ..._realTracks.values.map(_enrichTrack),
+    ];
     return Paged(items: items, total: items.length);
   }
 
   @override
   Future<Album?> album(String id) async {
+    if (id == 'album-favorites') return _favoritesAlbum();
     for (final a in _cloudAlbums) {
-      if (a.id == id) return a;
+      if (a.id == id) return _enrichAlbum(a);
     }
-    if (id == 'real-music') return _realAlbum;
-    return _mockCore.album(id);
+    if (id == 'real-music') {
+      return _realAlbum != null ? _enrichAlbum(_realAlbum!) : null;
+    }
+    final mock = await _mockCore.album(id);
+    return mock != null ? _enrichAlbum(mock) : null;
   }
 
   @override
@@ -385,7 +638,28 @@ class LiveBitDropCore implements BitDropCore {
     return _mockCore.artist(id);
   }
   @override Future<FolderListing> folder(String? folderId) async => const FolderListing(folderId: null, breadcrumb: [], entries: []);
-  @override Future<List<Playlist>> playlists() async => const [];
+  @override
+  Future<List<Playlist>> playlists() async {
+    final favTracks = _allCandidateTracks
+        .where((t) => _favoriteTrackIds.contains(t.id))
+        .map((t) => t.id)
+        .toSet();
+    return [
+      Playlist(
+        id: 'album-favorites',
+        name: 'Favourites',
+        trackCount: favTracks.length,
+        durationMs: 0,
+        sizeBytes: 0,
+        availability: _pinnedAlbumIds.contains('album-favorites')
+            ? Availability.pinned
+            : Availability.cloudOnly,
+        artwork: const Artwork(seed: 777, dominantColor: 0xFFE91E63),
+        isSmart: true,
+        description: 'Your favourited tracks across all albums.',
+      ),
+    ];
+  }
   @override Future<List<String>> genres() async => const [];
   @override
   Future<SearchResults> search(String text, SearchFilters f) async {
@@ -408,8 +682,8 @@ class LiveBitDropCore implements BitDropCore {
 
     bool keepTrack(Track t) {
       if (f.offlineOnly &&
-          t.availability != Availability.pinned &&
-          t.availability != Availability.cached) {
+          !_pinnedTrackIds.contains(t.id) &&
+          !_isTrackFullyCached(t.id, t.sizeBytes)) {
         return false;
       }
       if (f.codecs.isNotEmpty && !f.codecs.contains(t.format.codec)) {
@@ -432,7 +706,7 @@ class LiveBitDropCore implements BitDropCore {
     }
 
     // 1. Tracks from all sources: SQLite FTS5, cloud, local disk, and fallback mock
-    final ftsTracks = _cloud != null ? await _cloud!.search(q, limit: 50) : const <Track>[];
+    final ftsTracks = _cloud != null ? await _cloud.search(q, limit: 50) : const <Track>[];
     final cloudMatching = _cloudTracks.where((t) =>
         t.title.toLowerCase().contains(lq) ||
         t.artist.toLowerCase().contains(lq) ||
@@ -468,10 +742,12 @@ class LiveBitDropCore implements BitDropCore {
     // 2. Albums from all sources:
     final seenAlbumIds = <String>{};
     final allAlbums = <Album>[];
+    final favAlbum = _favoritesAlbum();
     final candidateAlbums = [
-      ..._cloudAlbums,
-      if (_realAlbum != null) _realAlbum!,
-      if (_cloudAlbums.isEmpty && _realAlbum == null) ...MockCatalog.albums,
+      if (favAlbum.trackCount > 0) favAlbum,
+      ..._cloudAlbums.map(_enrichAlbum),
+      if (_realAlbum != null) _enrichAlbum(_realAlbum!),
+      if (_cloudAlbums.isEmpty && _realAlbum == null) ...MockCatalog.albums.map(_enrichAlbum),
     ];
     for (final a in candidateAlbums) {
       if (seenAlbumIds.add(a.id) && keepAlbum(a)) {
@@ -530,15 +806,24 @@ class LiveBitDropCore implements BitDropCore {
       orElse: () => null,
     );
 
-    final topResult = exactAlbum ?? exactArtist ?? exactTrack ??
-        (allAlbums.isNotEmpty
-            ? allAlbums.first
-            : (allTracks.isNotEmpty ? allTracks.first : allArtists.firstOrNull));
+    final enrichedTracks = allTracks.map(_enrichTrack).toList();
+    final enrichedAlbums = allAlbums.map(_enrichAlbum).toList();
+
+    final topResult = exactAlbum != null
+        ? _enrichAlbum(exactAlbum)
+        : (exactArtist ??
+            (exactTrack != null
+                ? _enrichTrack(exactTrack)
+                : (enrichedAlbums.isNotEmpty
+                    ? enrichedAlbums.first
+                    : (enrichedTracks.isNotEmpty
+                        ? enrichedTracks.first
+                        : allArtists.firstOrNull))));
 
     return SearchResults(
       topResult: topResult,
-      tracks: allTracks.take(30).toList(),
-      albums: allAlbums.take(15).toList(),
+      tracks: enrichedTracks.take(30).toList(),
+      albums: enrichedAlbums.take(15).toList(),
       artists: allArtists.take(10).toList(),
       folders: allFolders.take(8).toList(),
     );
@@ -639,7 +924,7 @@ class LiveBitDropCore implements BitDropCore {
         ? _audioHandler.currentIndex
         : items.indexOf(currentItem);
     final tracks =
-        items.map((i) => _lookupTrack(i.id)).whereType<Track>().toList();
+        items.map((i) => _lookupTrack(i.id)).whereType<Track>().map(_enrichTrack).toList();
     final queueItems =
         tracks.map((t) => QueueItem(track: t, id: t.id)).toList();
     _queue.add(QueueState(
@@ -772,6 +1057,49 @@ class LiveBitDropCore implements BitDropCore {
       await removeRecentSearch(cmd.query);
     } else if (cmd is ClearRecentSearches) {
       await clearRecentSearches();
+    } else if (cmd is SetFavorite) {
+      if (cmd.favorite) {
+        _favoriteTrackIds.add(cmd.trackId);
+      } else {
+        _favoriteTrackIds.remove(cmd.trackId);
+      }
+      await _saveFavorites();
+      final np = _nowPlaying.value;
+      if (np != null && np.track.id == cmd.trackId) {
+        _nowPlaying.add(NowPlaying(
+          track: np.track.copyWith(favorite: cmd.favorite),
+          album: np.album,
+          contextLabel: np.contextLabel,
+          contextId: np.contextId,
+        ));
+      }
+      await _mockCore.send(cmd);
+    } else if (cmd is Pin) {
+      if (cmd.kind == 'track') {
+        _pinnedTrackIds.add(cmd.id);
+        await _savePinned();
+        unawaited(_downloadTrack(cmd.id));
+      } else if (cmd.kind == 'album') {
+        _pinnedAlbumIds.add(cmd.id);
+        await _savePinned();
+        unawaited(_downloadAlbum(cmd.id));
+      }
+      await _mockCore.send(cmd);
+    } else if (cmd is Unpin) {
+      if (cmd.kind == 'track') {
+        _pinnedTrackIds.remove(cmd.id);
+        await _savePinned();
+      } else if (cmd.kind == 'album') {
+        _pinnedAlbumIds.remove(cmd.id);
+        final albumTracks = cmd.id == 'album-favorites'
+            ? _allCandidateTracks.where((t) => _favoriteTrackIds.contains(t.id))
+            : _allCandidateTracks.where((t) => t.albumId == cmd.id);
+        for (final t in albumTracks) {
+          _pinnedTrackIds.remove(t.id);
+        }
+        await _savePinned();
+      }
+      await _mockCore.send(cmd);
     } else {
       await _mockCore.send(cmd);
     }

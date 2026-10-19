@@ -203,6 +203,20 @@ class PlaylistScreen extends ConsumerWidget {
                         sendCommand(ref, PlayNext([tracks[i].id])),
                     onAddToQueue: () =>
                         sendCommand(ref, Enqueue([tracks[i].id])),
+                    onToggleFavorite: () => sendCommand(
+                      ref,
+                      SetFavorite(
+                        trackId: tracks[i].id,
+                        favorite: !tracks[i].favorite,
+                      ),
+                    ),
+                    onDownload: () => sendCommand(
+                      ref,
+                      tracks[i].availability == Availability.pinned ||
+                              tracks[i].availability == Availability.cached
+                          ? Unpin(id: tracks[i].id, kind: 'track')
+                          : Pin(id: tracks[i].id, kind: 'track'),
+                    ),
                   ),
               ],
             ),

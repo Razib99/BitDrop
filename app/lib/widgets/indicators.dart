@@ -236,7 +236,7 @@ class AvailabilityGlyph extends StatelessWidget {
     switch (availability) {
       case Availability.cloudOnly:
         if (!showCloudOnly) return const SizedBox.shrink();
-        glyph = Icon(Icons.cloud_outlined, size: size, color: c.textTertiary);
+        glyph = Icon(Icons.download_outlined, size: size, color: c.textTertiary);
       case Availability.partiallyCached:
         glyph = _PartialRing(
           percent: cachedPercent,
@@ -245,9 +245,9 @@ class AvailabilityGlyph extends StatelessWidget {
           track: c.outline,
         );
       case Availability.cached:
-        glyph = Icon(Icons.download_done, size: size, color: c.textSecondary);
+        glyph = Icon(Icons.download_done, size: size, color: c.success);
       case Availability.pinned:
-        glyph = Icon(Icons.push_pin, size: size, color: c.success);
+        glyph = Icon(Icons.download_done, size: size, color: c.success);
       case Availability.downloading:
         glyph = _DownloadRing(
           progress: downloadProgress ?? 0,

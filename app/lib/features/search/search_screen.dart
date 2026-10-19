@@ -259,6 +259,20 @@ class _Results extends ConsumerWidget {
                   sendCommand(ref, PlayNext([results.tracks[i].id])),
               onAddToQueue: () =>
                   sendCommand(ref, Enqueue([results.tracks[i].id])),
+              onToggleFavorite: () => sendCommand(
+                ref,
+                SetFavorite(
+                  trackId: results.tracks[i].id,
+                  favorite: !results.tracks[i].favorite,
+                ),
+              ),
+              onDownload: () => sendCommand(
+                ref,
+                results.tracks[i].availability == Availability.pinned ||
+                        results.tracks[i].availability == Availability.cached
+                    ? Unpin(id: results.tracks[i].id, kind: 'track')
+                    : Pin(id: results.tracks[i].id, kind: 'track'),
+              ),
             ),
         ],
         if (results.albums.isNotEmpty) ...[

@@ -917,6 +917,51 @@ class MockBitDropCore implements BitDropCore {
 
   // ---- Queries -------------------------------------------------------------
 
+  final Set<String> _favoriteTrackIds = {};
+  final Set<String> _pinnedTrackIds = {};
+  final Set<String> _pinnedAlbumIds = {};
+
+  Album _favoritesAlbum() {
+    final favTracks = MockCatalog.tracks
+        .where((t) => _favoriteTrackIds.contains(t.id))
+        .map(_enrichTrack)
+        .toList();
+    int duration = 0;
+    int size = 0;
+    for (final t in favTracks) {
+      duration += t.durationMs;
+      size += t.sizeBytes;
+    }
+    return Album(
+      id: 'album-favorites',
+      title: 'Favourites',
+      artist: 'Favorite tracks',
+      artistId: 'favorites',
+      trackCount: favTracks.length,
+      durationMs: duration,
+      sizeBytes: size,
+      format: favTracks.isNotEmpty
+          ? favTracks.first.format
+          : const AudioFormat(
+              codec: Codec.flac, bitDepth: 24, sampleRate: 96000),
+      availability: _pinnedAlbumIds.contains('album-favorites')
+          ? Availability.pinned
+          : Availability.cloudOnly,
+      artwork: const Artwork(seed: 777, dominantColor: 0xFFE91E63),
+      mixedFormats: true,
+      lastModified: DateTime.now(),
+    );
+  }
+
+  Track _enrichTrack(Track t) {
+    return t.copyWith(
+      favorite: _favoriteTrackIds.contains(t.id),
+      availability: _pinnedTrackIds.contains(t.id)
+          ? Availability.pinned
+          : t.availability,
+    );
+  }
+
   @override
   Future<Paged<Album>> albums(AlbumQuery q) async {
     await _latency();
@@ -938,7 +983,11 @@ class MockBitDropCore implements BitDropCore {
           AlbumSort.duration => a.durationMs.compareTo(b.durationMs),
         });
     if (q.descending) list = list.reversed.toList();
-    return Paged(items: list, total: list.length);
+    final items = <Album>[
+      if (q.artistId == null) _favoritesAlbum(),
+      ...list,
+    ];
+    return Paged(items: items, total: items.length);
   }
 
   /// Honours the "ignore leading The" setting, like the real index will.
@@ -951,18 +1000,29 @@ class MockBitDropCore implements BitDropCore {
   @override
   Future<Paged<Track>> tracks(TrackQuery q) async {
     await _latency();
-    var list =
-        MockCatalog.tracks.where((t) => _matchesTrack(t, q.filters)).toList();
+    if (q.albumId == 'album-favorites' || q.playlistId == 'pl-favorites') {
+      final favTracks = MockCatalog.tracks
+          .where((t) => _favoriteTrackIds.contains(t.id))
+          .map(_enrichTrack)
+          .toList();
+      return Paged(items: favTracks, total: favTracks.length);
+    }
+    var list = MockCatalog.tracks
+        .where((t) => _matchesTrack(t, q.filters))
+        .map(_enrichTrack)
+        .toList();
     if (q.albumId != null) {
-      list = MockCatalog.tracksByAlbum[q.albumId!] ?? const [];
-      list = list.toList();
+      list = (MockCatalog.tracksByAlbum[q.albumId!] ?? const [])
+          .map(_enrichTrack)
+          .toList();
     }
     if (q.playlistId != null) {
       // Deterministic slice so a playlist always shows the same tracks.
       final seed = q.playlistId!.hashCode.abs();
       list = [
         for (var i = 0; i < 12; i++)
-          MockCatalog.tracks[(seed + i * 7) % MockCatalog.tracks.length]
+          _enrichTrack(
+              MockCatalog.tracks[(seed + i * 7) % MockCatalog.tracks.length])
       ];
     }
     if (q.albumId == null && q.playlistId == null) {
@@ -991,6 +1051,9 @@ class MockBitDropCore implements BitDropCore {
   @override
   Future<Album?> album(String id) async {
     await _latency();
+    if (id == 'album-favorites') {
+      return _favoritesAlbum();
+    }
     return MockCatalog.albumById(id);
   }
 
@@ -1012,7 +1075,23 @@ class MockBitDropCore implements BitDropCore {
   @override
   Future<List<Playlist>> playlists() async {
     await _latency();
-    return MockCatalog.playlists;
+    final favCount = _favoriteTrackIds.length;
+    return [
+      Playlist(
+        id: 'pl-favorites',
+        name: 'Favourites',
+        trackCount: favCount,
+        durationMs: 0,
+        sizeBytes: 0,
+        availability: _pinnedAlbumIds.contains('album-favorites')
+            ? Availability.pinned
+            : Availability.cloudOnly,
+        artwork: const Artwork(seed: 777, dominantColor: 0xFFE91E63),
+        isSmart: true,
+        description: 'Your favourited tracks across all albums.',
+      ),
+      ...MockCatalog.playlists,
+    ];
   }
 
   @override
@@ -1559,6 +1638,11 @@ class MockBitDropCore implements BitDropCore {
         _applyPin(id, kind, pinned: false);
 
       case SetFavorite(:final trackId, :final favorite):
+        if (favorite) {
+          _favoriteTrackIds.add(trackId);
+        } else {
+          _favoriteTrackIds.remove(trackId);
+        }
         final np = _nowPlaying.value;
         if (np != null && np.track.id == trackId) {
           _nowPlaying.emit(NowPlaying(
@@ -1568,6 +1652,9 @@ class MockBitDropCore implements BitDropCore {
             contextId: np.contextId,
           ));
         }
+        _events.add(CoreEvent.snack(
+          favorite ? 'Added to Favourites' : 'Removed from Favourites',
+        ));
 
       case Rescan():
         _syncStatus.emit(const SyncStatus(
@@ -1794,8 +1881,36 @@ class MockBitDropCore implements BitDropCore {
   }
 
   void _applyPin(String id, String kind, {required bool pinned}) {
+    if (kind == 'track') {
+      if (pinned) {
+        _pinnedTrackIds.add(id);
+      } else {
+        _pinnedTrackIds.remove(id);
+      }
+    } else if (kind == 'album') {
+      if (pinned) {
+        _pinnedAlbumIds.add(id);
+        final albumTracks = id == 'album-favorites'
+            ? MockCatalog.tracks.where((t) => _favoriteTrackIds.contains(t.id))
+            : (MockCatalog.tracksByAlbum[id] ?? []);
+        for (final t in albumTracks) {
+          _pinnedTrackIds.add(t.id);
+        }
+      } else {
+        _pinnedAlbumIds.remove(id);
+        final albumTracks = id == 'album-favorites'
+            ? MockCatalog.tracks.where((t) => _favoriteTrackIds.contains(t.id))
+            : (MockCatalog.tracksByAlbum[id] ?? []);
+        for (final t in albumTracks) {
+          _pinnedTrackIds.remove(t.id);
+        }
+      }
+    }
     final label = switch (kind) {
-      'album' => MockCatalog.albumById(id)?.title ?? 'Album',
+      'album' => id == 'album-favorites'
+          ? 'Favourites'
+          : (MockCatalog.albumById(id)?.title ?? 'Album'),
+      'track' => MockCatalog.trackById(id)?.title ?? 'Track',
       'playlist' => MockCatalog.playlists
           .firstWhere((p) => p.id == id,
               orElse: () => MockCatalog.playlists.first)
@@ -1803,7 +1918,7 @@ class MockBitDropCore implements BitDropCore {
       _ => 'Item',
     };
     _events.add(CoreEvent.snack(
-        pinned ? 'Pinning "$label" for offline.' : 'Unpinned "$label".'));
+        pinned ? 'Downloaded "$label" for offline.' : 'Removed download for "$label".'));
   }
 
   /// Parses AutoEQ's `ParametricEQ.txt`:

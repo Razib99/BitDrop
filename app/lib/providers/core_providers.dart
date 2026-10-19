@@ -72,6 +72,7 @@ final coreApiProvider = Provider<BitDropCore>((ref) => ref.watch(coreProvider));
 /// Bumped whenever the scenario changes, so cached queries refetch. Streams do
 /// not need this — they re-emit on their own.
 final scenarioRevisionProvider = StateProvider<int>((ref) => 0);
+final libraryRevisionProvider = StateProvider<int>((ref) => 0);
 
 final currentScenarioProvider =
     StateProvider<Scenario>((ref) => _startScenario);
@@ -89,7 +90,11 @@ void sendCommand(WidgetRef ref, PlayerCommand cmd) {
   // intentionally does not await it — results arrive on the streams. But a
   // thrown command used to vanish into ignore(), which made a dead button
   // indistinguishable from a working one.
-  ref.read(coreProvider).send(cmd).catchError((Object e, StackTrace st) {
+  ref.read(coreProvider).send(cmd).then((_) {
+    if (cmd is SetFavorite || cmd is Pin || cmd is Unpin) {
+      ref.read(libraryRevisionProvider.notifier).state++;
+    }
+  }).catchError((Object e, StackTrace st) {
     debugPrint('[bitdrop] command ${cmd.runtimeType} failed: $e\n$st');
   });
 }
@@ -156,28 +161,33 @@ final settingsValueProvider = Provider<AppSettings>((ref) {
 final albumsProvider =
     FutureProvider.family<Paged<Album>, AlbumQuery>((ref, q) {
   ref.watch(scenarioRevisionProvider);
+  ref.watch(libraryRevisionProvider);
   return ref.watch(coreProvider).albums(q);
 });
 
 final tracksProvider =
     FutureProvider.family<Paged<Track>, TrackQuery>((ref, q) {
   ref.watch(scenarioRevisionProvider);
+  ref.watch(libraryRevisionProvider);
   return ref.watch(coreProvider).tracks(q);
 });
 
 final artistsProvider =
     FutureProvider.family<Paged<Artist>, ArtistQuery>((ref, q) {
   ref.watch(scenarioRevisionProvider);
+  ref.watch(libraryRevisionProvider);
   return ref.watch(coreProvider).artists(q);
 });
 
 final albumProvider = FutureProvider.family<Album?, String>((ref, id) {
   ref.watch(scenarioRevisionProvider);
+  ref.watch(libraryRevisionProvider);
   return ref.watch(coreProvider).album(id);
 });
 
 final artistProvider = FutureProvider.family<Artist?, String>((ref, id) {
   ref.watch(scenarioRevisionProvider);
+  ref.watch(libraryRevisionProvider);
   return ref.watch(coreProvider).artist(id);
 });
 
@@ -188,6 +198,7 @@ final folderProvider = FutureProvider.family<FolderListing, String?>((ref, id) {
 
 final playlistsProvider = FutureProvider<List<Playlist>>((ref) {
   ref.watch(scenarioRevisionProvider);
+  ref.watch(libraryRevisionProvider);
   return ref.watch(coreProvider).playlists();
 });
 

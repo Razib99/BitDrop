@@ -123,6 +123,17 @@ class AlbumScreen extends ConsumerWidget {
               ),
               onPlayNext: () => sendCommand(ref, PlayNext([t.id])),
               onAddToQueue: () => sendCommand(ref, Enqueue([t.id])),
+              onToggleFavorite: () => sendCommand(
+                ref,
+                SetFavorite(trackId: t.id, favorite: !t.favorite),
+              ),
+              onDownload: () => sendCommand(
+                ref,
+                t.availability == Availability.pinned ||
+                        t.availability == Availability.cached
+                    ? Unpin(id: t.id, kind: 'track')
+                    : Pin(id: t.id, kind: 'track'),
+              ),
             );
           },
         ),
@@ -334,7 +345,7 @@ class _Actions extends ConsumerWidget {
                     )
                   : Icon(
                       pinned
-                          ? Icons.push_pin
+                          ? Icons.download_done
                           : Icons.download_for_offline_outlined,
                       color: pinned ? c.success : null,
                     ),

@@ -32,6 +32,8 @@ class TrackRow extends StatelessWidget {
     this.badgeVisibility = BadgeVisibility.always,
     this.showAlbumLine = true,
     this.forceShowFormat = true,
+    this.onToggleFavorite,
+    this.onDownload,
   });
 
   final Track track;
@@ -40,6 +42,8 @@ class TrackRow extends StatelessWidget {
   final VoidCallback? onPlayNext;
   final VoidCallback? onAddToQueue;
   final VoidCallback? onMore;
+  final VoidCallback? onToggleFavorite;
+  final VoidCallback? onDownload;
   final bool showArt;
 
   /// Inside an album, the number replaces the artwork.
@@ -193,15 +197,49 @@ class TrackRow extends StatelessWidget {
                     visibility: badgeVisibility,
                   ),
                 ),
-              AvailabilityGlyph(
-                availability: track.availability,
-                cachedPercent: track.cachedPercent,
-                downloadProgress: track.downloadProgress,
-                showCloudOnly: true,
-              ),
+              if (onDownload != null)
+                IconButton(
+                  onPressed: onDownload,
+                  icon: AvailabilityGlyph(
+                    availability: track.availability,
+                    cachedPercent: track.cachedPercent,
+                    downloadProgress: track.downloadProgress,
+                    showCloudOnly: true,
+                  ),
+                  tooltip: track.availability == Availability.pinned ||
+                          track.availability == Availability.cached
+                      ? 'Downloaded'
+                      : 'Download for offline',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 28, minHeight: 28),
+                )
+              else
+                AvailabilityGlyph(
+                  availability: track.availability,
+                  cachedPercent: track.cachedPercent,
+                  downloadProgress: track.downloadProgress,
+                  showCloudOnly: true,
+                ),
 
-              const SizedBox(width: Spacing.xs),
-              if (track.favorite)
+              const SizedBox(width: Spacing.xxs),
+              if (onToggleFavorite != null)
+                IconButton(
+                  onPressed: onToggleFavorite,
+                  icon: Icon(
+                    track.favorite ? Icons.favorite : Icons.favorite_border,
+                    size: 16,
+                    color: track.favorite ? c.accent : c.textTertiary,
+                  ),
+                  tooltip:
+                      track.favorite ? 'Remove from favourites' : 'Favourite',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 28, minHeight: 28),
+                )
+              else if (track.favorite)
                 Padding(
                   padding: const EdgeInsets.only(right: Spacing.xxs),
                   child: Icon(Icons.favorite, size: 14, color: c.accent),
