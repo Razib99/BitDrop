@@ -55,6 +55,7 @@ class DriveAudioFile {
     required this.folderPath,
     this.mimeType,
     this.modifiedTime,
+    this.md5Checksum,
   });
 
   final String id;
@@ -65,6 +66,7 @@ class DriveAudioFile {
   final String folderPath;
   final String? mimeType;
   final DateTime? modifiedTime;
+  final String? md5Checksum;
 
   /// Lowercase extension without the dot, used as the decoder's format hint.
   String get extension {
@@ -307,7 +309,7 @@ class GoogleDriveService {
           q: "'$folderId' in parents and trashed = false",
           spaces: 'drive',
           $fields:
-              'nextPageToken, files(id, name, mimeType, size, modifiedTime)',
+              'nextPageToken, files(id, name, mimeType, size, modifiedTime, md5Checksum)',
           pageSize: 1000,
           pageToken: pageToken,
           orderBy: 'folder,name',
@@ -366,6 +368,7 @@ class GoogleDriveService {
           folderPath: folder.path,
           mimeType: child.mimeType,
           modifiedTime: child.modifiedTime,
+          md5Checksum: child.md5Checksum,
         );
 
         // Filter on extension, not mime type: Drive frequently reports

@@ -52,6 +52,22 @@ pub struct AlbumSummary {
     pub max_bit_depth: u32,
 }
 
+/// A file that was replaced due to re-upload with identical folder and name.
+#[derive(Debug, Clone)]
+pub struct ReplacedFile {
+    pub old_file_id: String,
+    pub new_file_id: String,
+}
+
+impl From<crate::cloud::db::ReplacedFile> for ReplacedFile {
+    fn from(r: crate::cloud::db::ReplacedFile) -> Self {
+        Self {
+            old_file_id: r.old_file_id,
+            new_file_id: r.new_file_id,
+        }
+    }
+}
+
 impl From<AlbumSummaryRow> for AlbumSummary {
     fn from(r: AlbumSummaryRow) -> Self {
         Self {
@@ -150,12 +166,13 @@ pub fn cloud_library_open(db_path: String, cache_dir: String) -> Result<(), Stri
 ///
 /// Taking the whole batch in one call keeps the FFI crossings proportional to
 /// folders rather than to files, which matters on a library of thousands.
+/// Returns any old file_ids that were replaced due to re-upload.
 pub fn cloud_library_add_files(
     file_ids: Vec<String>,
     names: Vec<String>,
     folder_paths: Vec<String>,
     sizes: Vec<u64>,
-) -> Result<u32, String> {
+) -> Result<Vec<ReplacedFile>, String> {
     if file_ids.len() != names.len()
         || file_ids.len() != folder_paths.len()
         || file_ids.len() != sizes.len()
@@ -173,8 +190,28 @@ pub fn cloud_library_add_files(
         .collect();
 
     with_db_mut(|db| {
-        db.batch_insert_placeholders(&items)?;
-        Ok(items.len() as u32)
+        let replaced = db.batch_insert_placeholders(&items)?;
+        Ok(replaced.into_iter().map(ReplacedFile::from).collect())
+    })
+}
+
+/// Prunes missing files under the given folder prefixes whose file_ids are not in valid_file_ids.
+/// Returns the list of deleted file_ids.
+pub fn cloud_library_prune_missing(
+    folder_prefixes: Vec<String>,
+    valid_file_ids: Vec<String>,
+) -> Result<Vec<String>, String> {
+    with_db_mut(|db| {
+        let pruned = db.prune_missing_files(&folder_prefixes, &valid_file_ids)?;
+        Ok(pruned)
+    })
+}
+
+/// Rebuilds albums_summary to stay synchronized with current tracks.
+pub fn cloud_library_rebuild_albums() -> Result<(), String> {
+    with_db_mut(|db| {
+        db.rebuild_albums_summary()?;
+        Ok(())
     })
 }
 
@@ -727,16 +764,17 @@ pub fn cache_usage(chunk_dirs: Vec<String>, artwork_dir: String) -> CacheUsage {
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if !name.ends_with(".dat") {
+            if !name.ends_with(".dat") && !name.ends_with(".sparse") && !name.ends_with(".idx") {
                 continue;
             }
             if let Ok(meta) = entry.metadata() {
                 audio_bytes += meta.len();
             }
-            // "<fileId>_chunk_<n>.dat" — everything before the last
-            // "_chunk_" is the track it belongs to.
+            // "<fileId>_chunk_<n>.dat" or "<fileId>.sparse"
             if let Some(idx) = name.rfind("_chunk_") {
                 tracks.insert(name[..idx].to_string());
+            } else if let Some(id) = name.strip_suffix(".sparse") {
+                tracks.insert(id.to_string());
             }
         }
     }
@@ -772,7 +810,11 @@ pub fn clear_audio_cache(chunk_dirs: Vec<String>) -> u64 {
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if !name.ends_with(".dat") && !name.ends_with(".tmp") {
+            if !name.ends_with(".dat")
+                && !name.ends_with(".tmp")
+                && !name.ends_with(".sparse")
+                && !name.ends_with(".idx")
+            {
                 continue;
             }
             let len = entry.metadata().map(|m| m.len()).unwrap_or(0);

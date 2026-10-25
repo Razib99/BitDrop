@@ -76,6 +76,11 @@ class LiveBitDropCore implements BitDropCore {
   static const _bufferTargetMs = 500;
   Album? _realAlbum;
 
+  StreamSubscription<SyncStatus>? _cloudStatusSub;
+  StreamSubscription<void>? _outputProbeSub;
+  StreamSubscription<EqState>? _eqSub;
+  StreamSubscription<audio_svc.PlaybackState>? _playbackSub;
+
   LiveBitDropCore(
     this._audioHandler, {
     CloudLibrary? cloudLibrary,
@@ -85,20 +90,65 @@ class LiveBitDropCore implements BitDropCore {
         _chunkCacheDir = chunkCacheDir,
         _artworkCacheDir = artworkCacheDir,
         _mockCore = MockBitDropCore() {
-    rust.initEngine();
+    try {
+      rust.initEngine();
+    } catch (e) {
+      debugPrint('[core] rust engine init skipped: $e');
+    }
 
     // The cloud library drives the scan banner on Home and Sources.
-    _cloud?.status.listen(_syncStatus.add);
+    _cloudStatusSub = _cloud?.status.listen(_syncStatus.add);
     _cloud?.open();
+
+    _cloud?.onFileReplaced = (oldId, newId) async {
+      var changed = false;
+      if (_favoriteTrackIds.remove(oldId)) {
+        _favoriteTrackIds.add(newId);
+        changed = true;
+      }
+      if (_pinnedTrackIds.remove(oldId)) {
+        _pinnedTrackIds.add(newId);
+        changed = true;
+      }
+      if (changed) {
+        await _saveFavorites();
+        await _savePinned();
+      }
+      final np = _nowPlaying.value;
+      if (np != null && np.track.id == oldId) {
+        final newTrack = _lookupTrack(newId);
+        if (newTrack != null) {
+          _nowPlaying.add(NowPlaying(
+            track: _enrichTrack(newTrack),
+            album: np.album,
+            contextLabel: np.contextLabel,
+            contextId: np.contextId,
+          ));
+        }
+      }
+    };
+
+    _cloud?.onFilesPruned = (prunedIds) async {
+      var changed = false;
+      for (final id in prunedIds) {
+        if (_favoriteTrackIds.remove(id)) changed = true;
+        if (_pinnedTrackIds.remove(id)) changed = true;
+      }
+      if (changed) {
+        await _saveFavorites();
+        await _savePinned();
+      }
+    };
 
     refreshStorage();
     _loadFavoritesAndPinned();
 
     _outputProbe.start();
-    _outputProbe.stream.listen((_) => _recomputeSignalPath());
-    _mockCore.eq.listen((_) => _recomputeSignalPath());
+    _outputProbeSub =
+        _outputProbe.stream.listen((_) => _recomputeSignalPath());
+    _eqSub = _mockCore.eq.listen((_) => _recomputeSignalPath());
 
-    _audioHandler.playbackState.listen((state) {
+    _playbackSub = _audioHandler.playbackState.listen((state) {
       _recomputeSignalPath();
       final isPlaying = state.playing;
       final buffering =
@@ -111,7 +161,10 @@ class LiveBitDropCore implements BitDropCore {
       // Buffering is not pausing: the user did not stop this, the network
       // did. The wording escalates with the length of the stall so a brief
       // hiccup and a failing connection do not read the same.
-      final opens = rust.engineBufferState().streamOpens;
+      int opens = _streamOpens;
+      try {
+        opens = rust.engineBufferState().streamOpens;
+      } catch (_) {}
       if (opens != _streamOpens) {
         if (_streamOpens != 0) {
           debugPrint('[audio] output stream rebuilt (open #$opens)');
@@ -191,8 +244,10 @@ class LiveBitDropCore implements BitDropCore {
       // Pass the preamp as the 11th element of the gains list!
       finalGains.add(eqState.preampDb);
       
-      rust.engineSetEq(gains: finalGains);
-      rust.engineSetEqEnabled(enabled: !eqState.bypass);
+      try {
+        rust.engineSetEq(gains: finalGains);
+        rust.engineSetEqEnabled(enabled: !eqState.bypass);
+      } catch (_) {}
       _recomputeSignalPath();
     });
 
@@ -1100,6 +1155,11 @@ class LiveBitDropCore implements BitDropCore {
         await _savePinned();
       }
       await _mockCore.send(cmd);
+    } else if (cmd is Rescan) {
+      if (_cloud != null) {
+        unawaited(_cloud.scan());
+      }
+      await _mockCore.send(cmd);
     } else {
       await _mockCore.send(cmd);
     }
@@ -1111,9 +1171,16 @@ class LiveBitDropCore implements BitDropCore {
   /// stream the device actually granted, and the device from AudioManager.
   /// Nothing here is inferred from a file name or assumed from a scenario.
   void _recomputeSignalPath() {
-    final out = rust.engineOutputState();
+    if (_signalPath.isClosed) return;
+    final rust.EngineOutputState out;
+    try {
+      out = rust.engineOutputState();
+    } catch (_) {
+      if (!_signalPath.isClosed) _signalPath.add(_unknownPath);
+      return;
+    }
     if (!out.hasTrack || out.sourceSampleRate == 0) {
-      _signalPath.add(_unknownPath);
+      if (!_signalPath.isClosed) _signalPath.add(_unknownPath);
       return;
     }
 
@@ -1232,6 +1299,10 @@ class LiveBitDropCore implements BitDropCore {
 
   @override
   void dispose() {
+    _cloudStatusSub?.cancel();
+    _outputProbeSub?.cancel();
+    _eqSub?.cancel();
+    _playbackSub?.cancel();
     _playback.close();
     _position.close();
     _nowPlaying.close();

@@ -81,6 +81,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<ReplacedFile> dco_decode_list_replaced_file(dynamic raw);
+
+  @protected
   List<TrackMetadata> dco_decode_list_track_metadata(dynamic raw);
 
   @protected
@@ -91,6 +94,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  ReplacedFile dco_decode_replaced_file(dynamic raw);
 
   @protected
   ScanCounts dco_decode_scan_counts(dynamic raw);
@@ -175,6 +181,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<ReplacedFile> sse_decode_list_replaced_file(
+      SseDeserializer deserializer);
+
+  @protected
   List<TrackMetadata> sse_decode_list_track_metadata(
       SseDeserializer deserializer);
 
@@ -186,6 +196,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  ReplacedFile sse_decode_replaced_file(SseDeserializer deserializer);
 
   @protected
   ScanCounts sse_decode_scan_counts(SseDeserializer deserializer);
@@ -278,6 +291,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       Uint8List self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_replaced_file(
+      List<ReplacedFile> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_track_metadata(
       List<TrackMetadata> self, SseSerializer serializer);
 
@@ -290,6 +307,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_list_prim_u_8_strict(
       Uint8List? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_replaced_file(ReplacedFile self, SseSerializer serializer);
 
   @protected
   void sse_encode_scan_counts(ScanCounts self, SseSerializer serializer);

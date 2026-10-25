@@ -8,7 +8,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `parse_index_number`, `parse_year`, `sanitize_filename`, `with_db_mut`, `with_db`
 // These types are ignored because they are not used by any `pub` functions: `CACHE_DIR`, `DB`, `HTTP_CLIENT`, `RATE_LIMITER`, `RT`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Opens (or creates) the library database. Safe to call repeatedly.
 Future<void> cloudLibraryOpen(
@@ -20,13 +20,26 @@ Future<void> cloudLibraryOpen(
 ///
 /// Taking the whole batch in one call keeps the FFI crossings proportional to
 /// folders rather than to files, which matters on a library of thousands.
-Future<int> cloudLibraryAddFiles(
+/// Returns any old file_ids that were replaced due to re-upload.
+Future<List<ReplacedFile>> cloudLibraryAddFiles(
         {required List<String> fileIds,
         required List<String> names,
         required List<String> folderPaths,
         required Uint64List sizes}) =>
     RustLib.instance.api.crateApiCloudLibraryCloudLibraryAddFiles(
         fileIds: fileIds, names: names, folderPaths: folderPaths, sizes: sizes);
+
+/// Prunes missing files under the given folder prefixes whose file_ids are not in valid_file_ids.
+/// Returns the list of deleted file_ids.
+Future<List<String>> cloudLibraryPruneMissing(
+        {required List<String> folderPrefixes,
+        required List<String> validFileIds}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryPruneMissing(
+        folderPrefixes: folderPrefixes, validFileIds: validFileIds);
+
+/// Rebuilds albums_summary to stay synchronized with current tracks.
+Future<void> cloudLibraryRebuildAlbums() =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryRebuildAlbums();
 
 /// Reads one track's tags over HTTP byte ranges and stores them.
 ///
@@ -266,6 +279,28 @@ class CloudTrack {
           sizeBytes == other.sizeBytes &&
           tagsRead == other.tagsRead &&
           artworkPath == other.artworkPath;
+}
+
+/// A file that was replaced due to re-upload with identical folder and name.
+class ReplacedFile {
+  final String oldFileId;
+  final String newFileId;
+
+  const ReplacedFile({
+    required this.oldFileId,
+    required this.newFileId,
+  });
+
+  @override
+  int get hashCode => oldFileId.hashCode ^ newFileId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReplacedFile &&
+          runtimeType == other.runtimeType &&
+          oldFileId == other.oldFileId &&
+          newFileId == other.newFileId;
 }
 
 /// How far the tag pass has got.

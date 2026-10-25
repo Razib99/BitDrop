@@ -48,6 +48,9 @@ class CloudLibrary {
   final _tracks = BehaviorSubject<List<Track>>.seeded(const []);
   final _albums = BehaviorSubject<List<Album>>.seeded(const []);
 
+  void Function(String oldId, String newId)? onFileReplaced;
+  void Function(List<String> prunedIds)? onFilesPruned;
+
   Stream<List<DriveFolder>> get folders => _folders.stream;
   List<DriveFolder> get currentFolders => _folders.value;
 
@@ -58,6 +61,17 @@ class CloudLibrary {
   List<Track> get currentTracks => _tracks.value;
   List<Album> get currentAlbums => _albums.value;
   bool get isScanning => _scanning;
+
+  void _deleteDiskCacheFor(String fileId) {
+    try {
+      final sparse = File('$_cacheDir/$fileId.sparse');
+      if (sparse.existsSync()) sparse.deleteSync();
+      final idx = File('$_cacheDir/$fileId.idx');
+      if (idx.existsSync()) idx.deleteSync();
+    } catch (e) {
+      debugPrint('[cloud] failed to delete chunk cache for $fileId: $e');
+    }
+  }
 
   /// The Drive connection as the UI's own source model, combining who is
   /// signed in with what the scan is doing. Emits an empty list when signed
@@ -184,7 +198,7 @@ class CloudLibrary {
     if (!(_cancel?.isCompleted ?? true)) _cancel?.complete();
   }
 
-  /// Pass one: record every audio file by name.
+  /// Pass one: record every audio file by name and synchronize changes.
   Future<void> _listPass(List<DriveFolder> targets) async {
     _status.add(const SyncStatus(phase: SyncPhase.listing));
 
@@ -195,15 +209,20 @@ class CloudLibrary {
     final paths = <String>[];
     final sizes = <int>[];
     var found = 0;
+    final seenFileIds = <String>{};
 
     Future<void> flush() async {
       if (ids.isEmpty) return;
-      await rust.cloudLibraryAddFiles(
+      final replaced = await rust.cloudLibraryAddFiles(
         fileIds: List.of(ids),
         names: List.of(names),
         folderPaths: List.of(paths),
         sizes: Uint64List.fromList(sizes),
       );
+      for (final r in replaced) {
+        _deleteDiskCacheFor(r.oldFileId);
+        onFileReplaced?.call(r.oldFileId, r.newFileId);
+      }
       ids.clear();
       names.clear();
       paths.clear();
@@ -220,6 +239,7 @@ class CloudLibrary {
       )) {
         if (_cancel?.isCompleted ?? false) break;
 
+        seenFileIds.add(file.id);
         ids.add(file.id);
         names.add(file.name);
         paths.add(file.folderPath);
@@ -237,6 +257,23 @@ class CloudLibrary {
       _status.add(SyncStatus(phase: SyncPhase.listing, processed: found));
     }
     await flush();
+
+    // Prune missing files that were removed from Google Drive
+    if (!(_cancel?.isCompleted ?? false)) {
+      final targetPrefixes = targets.map((f) => f.name).toList();
+      final prunedIds = await rust.cloudLibraryPruneMissing(
+        folderPrefixes: targetPrefixes,
+        validFileIds: seenFileIds.toList(),
+      );
+      for (final id in prunedIds) {
+        _deleteDiskCacheFor(id);
+      }
+      if (prunedIds.isNotEmpty) {
+        onFilesPruned?.call(prunedIds);
+        await _reload();
+      }
+    }
+
     _status.add(SyncStatus(phase: SyncPhase.listing, processed: found, total: found));
   }
 

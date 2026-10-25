@@ -40,6 +40,13 @@ pub struct AlbumSummaryRow {
     pub max_bit_depth: u32,
 }
 
+/// Record of an old file_id replaced by a newly uploaded file with the same path and name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplacedFile {
+    pub old_file_id: String,
+    pub new_file_id: String,
+}
+
 /// A placeholder record for a newly discovered audio file.
 pub struct TrackPlaceholder {
     pub file_id: String,
@@ -153,6 +160,11 @@ impl MetadataDb {
              ON tracks(tags_read, file_id) WHERE tags_read = 0",
             [],
         )?;
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tracks_folder_name
+             ON tracks(folder_path, name)",
+            [],
+        )?;
 
         // 3. Materialized albums summary table (renders 10,000-album grid in <1ms without GROUP BY)
         self.conn.execute(
@@ -246,40 +258,64 @@ impl MetadataDb {
 
     /// Single placeholder insertion (backward compatible wrapper).
     pub fn insert_placeholder(
-        &self,
+        &mut self,
         file_id: &str,
         name: &str,
         folder_path: &str,
         size_bytes: u64,
-    ) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO tracks (file_id, name, folder_path, size_bytes, tags_read)
-             VALUES (?1, ?2, ?3, ?4, 0)
-             ON CONFLICT(file_id) DO UPDATE SET
-                name = excluded.name,
-                folder_path = excluded.folder_path,
-                size_bytes = excluded.size_bytes,
-                tags_read = 0",
-            params![file_id, name, folder_path, size_bytes as i64],
-        )?;
-        Ok(())
+    ) -> Result<Vec<ReplacedFile>> {
+        self.batch_insert_placeholders(&[TrackPlaceholder {
+            file_id: file_id.to_string(),
+            name: name.to_string(),
+            folder_path: folder_path.to_string(),
+            size_bytes,
+        }])
     }
 
     /// Batched placeholder insertion within a single atomic transaction.
-    pub fn batch_insert_placeholders(&mut self, items: &[TrackPlaceholder]) -> Result<()> {
+    ///
+    /// If a track with the same (folder_path, name) already exists with a different
+    /// file_id (e.g. re-uploaded or replaced on Google Drive), the old row is pruned
+    /// and its ReplacedFile mapping is returned so the caller can migrate favorites, pinned state,
+    /// and clean up cached sparse files.
+    pub fn batch_insert_placeholders(
+        &mut self,
+        items: &[TrackPlaceholder],
+    ) -> Result<Vec<ReplacedFile>> {
+        let mut replaced_files = Vec::new();
         let tx = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare_cached(
+            let mut find_stmt = tx.prepare_cached(
+                "SELECT file_id FROM tracks WHERE folder_path = ?1 AND name = ?2 AND file_id != ?3",
+            )?;
+            let mut del_stmt = tx.prepare_cached("DELETE FROM tracks WHERE file_id = ?1")?;
+            let mut insert_stmt = tx.prepare_cached(
                 "INSERT INTO tracks (file_id, name, folder_path, size_bytes, tags_read)
                  VALUES (?1, ?2, ?3, ?4, 0)
                  ON CONFLICT(file_id) DO UPDATE SET
                     name = excluded.name,
                     folder_path = excluded.folder_path,
                     size_bytes = excluded.size_bytes,
-                    tags_read = 0",
+                    tags_read = CASE WHEN tracks.size_bytes != excluded.size_bytes THEN 0 ELSE tracks.tags_read END",
             )?;
+
             for item in items {
-                stmt.execute(params![
+                let old_ids: Vec<String> = find_stmt
+                    .query_map(params![&item.folder_path, &item.name, &item.file_id], |r| {
+                        r.get(0)
+                    })?
+                    .filter_map(|r| r.ok())
+                    .collect();
+
+                for old_id in old_ids {
+                    del_stmt.execute(params![&old_id])?;
+                    replaced_files.push(ReplacedFile {
+                        old_file_id: old_id,
+                        new_file_id: item.file_id.clone(),
+                    });
+                }
+
+                insert_stmt.execute(params![
                     item.file_id,
                     item.name,
                     item.folder_path,
@@ -288,7 +324,12 @@ impl MetadataDb {
             }
         }
         tx.commit()?;
-        Ok(())
+
+        if !replaced_files.is_empty() {
+            self.rebuild_albums_summary()?;
+        }
+
+        Ok(replaced_files)
     }
 
     /// Batched tag update within a single transaction, updating both `tracks`
@@ -493,6 +534,107 @@ impl MetadataDb {
         Ok(())
     }
 
+    /// Prunes tracks under `folder_prefixes` whose file_id is NOT in `valid_file_ids`.
+    /// If `folder_prefixes` is empty, prunes any track in the entire library whose file_id
+    /// is NOT in `valid_file_ids`.
+    ///
+    /// Returns the list of deleted file_ids.
+    pub fn prune_missing_files(
+        &mut self,
+        folder_prefixes: &[String],
+        valid_file_ids: &[String],
+    ) -> Result<Vec<String>> {
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS temp_valid_ids (file_id TEXT PRIMARY KEY)",
+            [],
+        )?;
+        tx.execute("DELETE FROM temp_valid_ids", [])?;
+
+        {
+            let mut insert_temp =
+                tx.prepare_cached("INSERT OR IGNORE INTO temp_valid_ids (file_id) VALUES (?1)")?;
+            for id in valid_file_ids {
+                insert_temp.execute(params![id])?;
+            }
+        }
+
+        let mut to_delete = Vec::new();
+        if folder_prefixes.is_empty() {
+            let mut stmt = tx.prepare(
+                "SELECT file_id FROM tracks WHERE file_id NOT IN (SELECT file_id FROM temp_valid_ids)",
+            )?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            for r in rows {
+                if let Ok(id) = r {
+                    to_delete.push(id);
+                }
+            }
+        } else {
+            for prefix in folder_prefixes {
+                let mut stmt = tx.prepare(
+                    "SELECT file_id FROM tracks
+                     WHERE (folder_path = ?1 OR folder_path LIKE ?2)
+                       AND file_id NOT IN (SELECT file_id FROM temp_valid_ids)",
+                )?;
+                let like_pattern = format!("{} / %", prefix);
+                let rows =
+                    stmt.query_map(params![prefix, like_pattern], |r| r.get::<_, String>(0))?;
+                for r in rows {
+                    if let Ok(id) = r {
+                        to_delete.push(id);
+                    }
+                }
+            }
+        }
+
+        to_delete.sort();
+        to_delete.dedup();
+
+        {
+            let mut del_stmt = tx.prepare_cached("DELETE FROM tracks WHERE file_id = ?1")?;
+            for id in &to_delete {
+                del_stmt.execute(params![id])?;
+            }
+        }
+
+        tx.execute("DELETE FROM temp_valid_ids", [])?;
+        tx.commit()?;
+
+        if !to_delete.is_empty() {
+            self.rebuild_albums_summary()?;
+        }
+
+        Ok(to_delete)
+    }
+
+    /// Recomputes `albums_summary` from scratch based on current `tracks` rows with `tags_read = 1`.
+    pub fn rebuild_albums_summary(&mut self) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM albums_summary", [])?;
+        tx.execute(
+            "INSERT INTO albums_summary (
+                album_key, album, album_artist, year, artwork_path,
+                track_count, max_sample_rate, max_bit_depth
+            )
+            SELECT
+                LOWER(COALESCE(NULLIF(album_artist, ''), NULLIF(artist, ''), 'Unknown Artist')) || '::' || LOWER(COALESCE(NULLIF(album, ''), 'Unknown Album')) AS album_key,
+                COALESCE(NULLIF(album, ''), 'Unknown Album') AS album,
+                COALESCE(NULLIF(album_artist, ''), NULLIF(artist, ''), 'Unknown Artist') AS album_artist,
+                MAX(COALESCE(year, 0)) AS year,
+                MAX(COALESCE(artwork_path, '')) AS artwork_path,
+                COUNT(*) AS track_count,
+                MAX(COALESCE(sample_rate, 0)) AS max_sample_rate,
+                MAX(COALESCE(bits_per_sample, 0)) AS max_bit_depth
+            FROM tracks
+            WHERE tags_read = 1
+            GROUP BY album_key",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn clear(&self) -> Result<()> {
         self.conn.execute("DELETE FROM tracks", [])?;
         self.conn.execute("DELETE FROM albums_summary", [])?;
@@ -597,5 +739,68 @@ mod tests {
         // Unmatched query returns empty vector without error
         let empty_results = db.search_tracks_fts("beethoven", 10).unwrap();
         assert_eq!(empty_results.len(), 0);
+    }
+
+    #[test]
+    fn test_overwrite_replacement_and_pruning() {
+        let mut db = MetadataDb::new_in_memory().expect("in-memory db failed");
+
+        let p1 = vec![
+            TrackPlaceholder {
+                file_id: "drive_old_1".to_string(),
+                name: "01 - Kid A.flac".to_string(),
+                folder_path: "Music / Radiohead / Kid A".to_string(),
+                size_bytes: 30_000_000,
+            },
+            TrackPlaceholder {
+                file_id: "drive_file_2".to_string(),
+                name: "02 - The National Anthem.flac".to_string(),
+                folder_path: "Music / Radiohead / Kid A".to_string(),
+                size_bytes: 45_000_000,
+            },
+        ];
+        let replaced = db.batch_insert_placeholders(&p1).unwrap();
+        assert!(replaced.is_empty());
+
+        let (total, _) = db.count().unwrap();
+        assert_eq!(total, 2);
+
+        // Simulate re-upload: user replaced "01 - Kid A.flac" on Google Drive,
+        // which assigned it a new file_id "drive_new_1".
+        let p_reupload = vec![TrackPlaceholder {
+            file_id: "drive_new_1".to_string(),
+            name: "01 - Kid A.flac".to_string(),
+            folder_path: "Music / Radiohead / Kid A".to_string(),
+            size_bytes: 31_000_000,
+        }];
+        let replaced2 = db.batch_insert_placeholders(&p_reupload).unwrap();
+        assert_eq!(
+            replaced2,
+            vec![ReplacedFile {
+                old_file_id: "drive_old_1".to_string(),
+                new_file_id: "drive_new_1".to_string(),
+            }]
+        );
+
+        // Total count should still be 2, not 3!
+        let (total2, _) = db.count().unwrap();
+        assert_eq!(total2, 2);
+
+        let tracks = db.list_tracks().unwrap();
+        let file_ids: Vec<String> = tracks.into_iter().map(|t| t.file_id).collect();
+        assert!(file_ids.contains(&"drive_new_1".to_string()));
+        assert!(!file_ids.contains(&"drive_old_1".to_string()));
+
+        // Simulate deletion on Drive: only "drive_new_1" exists now on Drive
+        let pruned = db
+            .prune_missing_files(
+                &["Music / Radiohead / Kid A".to_string()],
+                &["drive_new_1".to_string()],
+            )
+            .unwrap();
+        assert_eq!(pruned, vec!["drive_file_2"]);
+
+        let (total3, _) = db.count().unwrap();
+        assert_eq!(total3, 1);
     }
 }

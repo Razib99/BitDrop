@@ -37,7 +37,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
                     default_rust_auto_opaque = RustAutoOpaqueMoi,
                 );
                 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.0.0";
-                pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1651779338;
+                pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -669229980;
             
 
 // Section: executor
@@ -260,6 +260,16 @@ let api_cache_dir = <String>::sse_decode(&mut deserializer);deserializer.end(); 
                          let output_ok = crate::api::cloud_library::cloud_library_pending(api_limit)?;  Ok(output_ok)
                     })())
                 } })
+            }fn wire__crate__api__cloud_library__cloud_library_prune_missing_impl(port_: flutter_rust_bridge::for_generated::MessagePort,ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32)  {
+                FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec,_,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "cloud_library_prune_missing", port: Some(port_), mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal }, move || { 
+            let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
+            let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_folder_prefixes = <Vec<String>>::sse_decode(&mut deserializer);
+let api_valid_file_ids = <Vec<String>>::sse_decode(&mut deserializer);deserializer.end(); move |context|  {
+                    transform_result_sse::<_, String>((move ||  {
+                         let output_ok = crate::api::cloud_library::cloud_library_prune_missing(api_folder_prefixes, api_valid_file_ids)?;  Ok(output_ok)
+                    })())
+                } })
             }fn wire__crate__api__cloud_library__cloud_library_read_tags_impl(port_: flutter_rust_bridge::for_generated::MessagePort,ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32)  {
                 FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec,_,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "cloud_library_read_tags", port: Some(port_), mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal }, move || { 
             let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
@@ -269,6 +279,15 @@ let api_url = <String>::sse_decode(&mut deserializer);
 let api_auth_token = <Option<String>>::sse_decode(&mut deserializer);deserializer.end(); move |context|  {
                     transform_result_sse::<_, String>((move ||  {
                          let output_ok = crate::api::cloud_library::cloud_library_read_tags(api_file_id, api_url, api_auth_token)?;  Ok(output_ok)
+                    })())
+                } })
+            }fn wire__crate__api__cloud_library__cloud_library_rebuild_albums_impl(port_: flutter_rust_bridge::for_generated::MessagePort,ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32)  {
+                FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec,_,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "cloud_library_rebuild_albums", port: Some(port_), mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal }, move || { 
+            let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
+            let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end(); move |context|  {
+                    transform_result_sse::<_, String>((move ||  {
+                         let output_ok = crate::api::cloud_library::cloud_library_rebuild_albums()?;  Ok(output_ok)
                     })())
                 } })
             }fn wire__crate__api__cloud_library__cloud_library_scan_tags_batch_impl(port_: flutter_rust_bridge::for_generated::MessagePort,ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32)  {
@@ -517,6 +536,14 @@ return crate::api::audio_engine::EngineOutputState{source_codec: var_sourceCodec
         return ans_;}
                 }
                 
+                impl SseDecode for Vec<crate::api::cloud_library::ReplacedFile> {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ { ans_.push(<crate::api::cloud_library::ReplacedFile>::sse_decode(deserializer)); }
+        return ans_;}
+                }
+                
                 impl SseDecode for Vec<crate::api::simple::TrackMetadata> {
                     // Codec=Sse (Serialization based), see doc to use other codecs
                     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {let mut len_ = <i32>::sse_decode(deserializer);
@@ -550,6 +577,13 @@ return crate::api::audio_engine::EngineOutputState{source_codec: var_sourceCodec
             } else {
                 return None;
             }}
+                }
+                
+                impl SseDecode for crate::api::cloud_library::ReplacedFile {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {let mut var_oldFileId = <String>::sse_decode(deserializer);
+let mut var_newFileId = <String>::sse_decode(deserializer);
+return crate::api::cloud_library::ReplacedFile{old_file_id: var_oldFileId, new_file_id: var_newFileId};}
                 }
                 
                 impl SseDecode for crate::api::cloud_library::ScanCounts {
@@ -616,11 +650,13 @@ return crate::api::simple::TrackMetadata{path: var_path, title: var_title, artis
 22 => wire__crate__api__cloud_library__cloud_library_counts_impl(port, ptr, rust_vec_len, data_len),
 23 => wire__crate__api__cloud_library__cloud_library_open_impl(port, ptr, rust_vec_len, data_len),
 24 => wire__crate__api__cloud_library__cloud_library_pending_impl(port, ptr, rust_vec_len, data_len),
-25 => wire__crate__api__cloud_library__cloud_library_read_tags_impl(port, ptr, rust_vec_len, data_len),
-26 => wire__crate__api__cloud_library__cloud_library_scan_tags_batch_impl(port, ptr, rust_vec_len, data_len),
-27 => wire__crate__api__cloud_library__cloud_library_search_impl(port, ptr, rust_vec_len, data_len),
-28 => wire__crate__api__cloud_library__cloud_library_tracks_impl(port, ptr, rust_vec_len, data_len),
-32 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+25 => wire__crate__api__cloud_library__cloud_library_prune_missing_impl(port, ptr, rust_vec_len, data_len),
+26 => wire__crate__api__cloud_library__cloud_library_read_tags_impl(port, ptr, rust_vec_len, data_len),
+27 => wire__crate__api__cloud_library__cloud_library_rebuild_albums_impl(port, ptr, rust_vec_len, data_len),
+28 => wire__crate__api__cloud_library__cloud_library_scan_tags_batch_impl(port, ptr, rust_vec_len, data_len),
+29 => wire__crate__api__cloud_library__cloud_library_search_impl(port, ptr, rust_vec_len, data_len),
+30 => wire__crate__api__cloud_library__cloud_library_tracks_impl(port, ptr, rust_vec_len, data_len),
+34 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
                         _ => unreachable!(),
                     }
                 }
@@ -645,12 +681,12 @@ return crate::api::simple::TrackMetadata{path: var_path, title: var_title, artis
 11 => wire__crate__api__audio_engine__engine_seek_impl(ptr, rust_vec_len, data_len),
 12 => wire__crate__api__audio_engine__engine_set_eq_impl(ptr, rust_vec_len, data_len),
 13 => wire__crate__api__audio_engine__engine_set_eq_enabled_impl(ptr, rust_vec_len, data_len),
-29 => wire__crate__api__simple__decode_flac_full_impl(ptr, rust_vec_len, data_len),
-30 => wire__crate__api__simple__get_cover_art_impl(ptr, rust_vec_len, data_len),
-31 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-33 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
-34 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
-35 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
+31 => wire__crate__api__simple__decode_flac_full_impl(ptr, rust_vec_len, data_len),
+32 => wire__crate__api__simple__get_cover_art_impl(ptr, rust_vec_len, data_len),
+33 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+35 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
+36 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
+37 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
                         _ => unreachable!(),
                     }
                 }
@@ -793,6 +829,21 @@ self.has_track.into_into_dart().into_dart()
             impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::audio_engine::EngineOutputState {}
 impl flutter_rust_bridge::IntoIntoDart<crate::api::audio_engine::EngineOutputState> for crate::api::audio_engine::EngineOutputState {
             fn into_into_dart(self) -> crate::api::audio_engine::EngineOutputState {
+                self
+            }
+        }
+// Codec=Dco (DartCObject based), see doc to use other codecs
+            impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::ReplacedFile {
+                fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+                    [
+                    self.old_file_id.into_into_dart().into_dart(),
+self.new_file_id.into_into_dart().into_dart()
+                ].into_dart()
+                }
+            }
+            impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::cloud_library::ReplacedFile {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::ReplacedFile> for crate::api::cloud_library::ReplacedFile {
+            fn into_into_dart(self) -> crate::api::cloud_library::ReplacedFile {
                 self
             }
         }
@@ -964,6 +1015,12 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::TrackMetadata> for cr
         for item in self { <u8>::sse_encode(item, serializer); }}
                 }
                 
+                impl SseEncode for Vec<crate::api::cloud_library::ReplacedFile> {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<i32>::sse_encode(self.len() as _, serializer);
+        for item in self { <crate::api::cloud_library::ReplacedFile>::sse_encode(item, serializer); }}
+                }
+                
                 impl SseEncode for Vec<crate::api::simple::TrackMetadata> {
                     // Codec=Sse (Serialization based), see doc to use other codecs
                     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<i32>::sse_encode(self.len() as _, serializer);
@@ -992,6 +1049,12 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::simple::TrackMetadata> for cr
                 if let Some(value) = self {
                     <Vec<u8>>::sse_encode(value, serializer);
                 }}
+                }
+                
+                impl SseEncode for crate::api::cloud_library::ReplacedFile {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<String>::sse_encode(self.old_file_id, serializer);
+<String>::sse_encode(self.new_file_id, serializer);}
                 }
                 
                 impl SseEncode for crate::api::cloud_library::ScanCounts {
