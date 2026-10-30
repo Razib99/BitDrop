@@ -208,47 +208,15 @@ pub(crate) struct StereoBiquad {
 impl StereoBiquad {
     #[inline(always)]
     pub(crate) fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
-        #[cfg(target_arch = "aarch64")]
-        unsafe {
-            use std::arch::aarch64::*;
-            let x = vld1_f32([l, r].as_ptr());
-            let s1 = vld1_f32(self.s1.as_ptr());
-            let s2 = vld1_f32(self.s2.as_ptr());
+        let y_l = self.b0 * l + self.s1[0];
+        self.s1[0] = self.b1 * l - self.a1 * y_l + self.s2[0];
+        self.s2[0] = self.b2 * l - self.a2 * y_l;
 
-            let vb0 = vdup_n_f32(self.b0);
-            let vb1 = vdup_n_f32(self.b1);
-            let vb2 = vdup_n_f32(self.b2);
-            let vneg_a1 = vdup_n_f32(-self.a1);
-            let vneg_a2 = vdup_n_f32(-self.a2);
+        let y_r = self.b0 * r + self.s1[1];
+        self.s1[1] = self.b1 * r - self.a1 * y_r + self.s2[1];
+        self.s2[1] = self.b2 * r - self.a2 * y_r;
 
-            // y = b0 * x + s1
-            let y = vfma_f32(s1, vb0, x);
-
-            // s1' = s2 + b1 * x + (-a1) * y
-            let s1_next = vfma_f32(vfma_f32(s2, vb1, x), vneg_a1, y);
-
-            // s2' = b2 * x + (-a2) * y
-            let s2_next = vfma_f32(vmul_f32(vb2, x), vneg_a2, y);
-
-            let mut out = [0.0f32; 2];
-            vst1_f32(out.as_mut_ptr(), y);
-            vst1_f32(self.s1.as_mut_ptr(), s1_next);
-            vst1_f32(self.s2.as_mut_ptr(), s2_next);
-
-            (out[0], out[1])
-        }
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            let y_l = self.b0 * l + self.s1[0];
-            self.s1[0] = self.b1 * l - self.a1 * y_l + self.s2[0];
-            self.s2[0] = self.b2 * l - self.a2 * y_l;
-
-            let y_r = self.b0 * r + self.s1[1];
-            self.s1[1] = self.b1 * r - self.a1 * y_r + self.s2[1];
-            self.s2[1] = self.b2 * r - self.a2 * y_r;
-
-            (y_l, y_r)
-        }
+        (y_l, y_r)
     }
 
     /// RBJ Audio EQ Cookbook coefficients for any supported filter shape.
@@ -377,11 +345,18 @@ impl GraphicEq {
         }
     }
 
-    /// Legacy 10-band graphic entry point: peaking filters at ISO centres.
+    /// 10-band graphic entry point: low/high shelves at extremes, peaking filters inside.
     pub(crate) fn update_gains(&mut self, gains: &[f32; 10], preamp_db: f32) {
         let mut specs = [EqBandSpec::default(); 10];
         for i in 0..10 {
-            specs[i] = EqBandSpec { kind: EQ_PEAK, freq: ISO_10_BAND[i], gain_db: gains[i], q: 1.41 };
+            let kind = if i == 0 {
+                EQ_LOW_SHELF
+            } else if i == 9 {
+                EQ_HIGH_SHELF
+            } else {
+                EQ_PEAK
+            };
+            specs[i] = EqBandSpec { kind, freq: ISO_10_BAND[i], gain_db: gains[i], q: 1.0 };
         }
         self.set_bands(&specs, preamp_db);
     }
@@ -596,7 +571,7 @@ impl AudioOutputCallback for PlayerCallback {
             )
         };
 
-        if eq_updated || (rate > 0 && (self.eq.sample_rate - rate as f32).abs() > 1.0) {
+        if eq_updated || self.eq.active_bands() == 0 || (rate > 0 && (self.eq.sample_rate - rate as f32).abs() > 1.0) {
             if rate > 0 {
                 self.eq.sample_rate = rate as f32;
             }
@@ -748,7 +723,7 @@ pub fn init_engine() {
                              state.gate_output, flush)
                         };
 
-                        if eq_updated {
+                        if eq_updated || eq.active_bands() == 0 {
                             eq.update_gains(&gains, preamp);
                         }
 
@@ -1356,6 +1331,7 @@ fn open_output_stream() {
         {
             let mut state = PLAYER_STATE.lock().unwrap();
             state.target_sample_rate = rate;
+            state.eq_updated = true;
             set_ramp(&mut state, 1.0, FADE_MS);
         }
         let _ = stream.start();

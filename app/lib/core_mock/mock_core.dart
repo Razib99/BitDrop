@@ -310,7 +310,7 @@ class MockBitDropCore implements BitDropCore {
       );
     }
     return EqState(
-      mode: EqMode.parametric,
+      mode: EqMode.simple,
       bands: _defaultBands,
       preampDb: 0,
       bypass: true,
@@ -1563,7 +1563,7 @@ class MockBitDropCore implements BitDropCore {
         _eq.emit(_eq.value.copyWith(mode: mode));
 
       case SetGraphicGains(:final gains):
-        _eq.emit(_eq.value.copyWith(graphicGains: gains));
+        _eq.emit(_eq.value.copyWith(graphicGains: gains, bypass: false));
         _recomputeSignalPath();
 
       case SetBypass(:final bypass):
@@ -1582,6 +1582,7 @@ class MockBitDropCore implements BitDropCore {
           trebleDb: trebleDb,
           balance: balance,
           mono: mono,
+          bypass: false,
         ));
         _recomputeSignalPath();
 
