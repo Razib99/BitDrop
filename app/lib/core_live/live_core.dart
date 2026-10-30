@@ -1015,6 +1015,72 @@ class LiveBitDropCore implements BitDropCore {
     ));
   }
 
+  Album? _lookupAlbum(String id) {
+    if (id == 'album-favorites') return _favoritesAlbum();
+    for (final a in _cloudAlbums) {
+      if (a.id == id) return a;
+    }
+    if (id == 'real-music') return _realAlbum;
+    return null;
+  }
+
+  Uri? _resolveArtUri(Track t) {
+    var artPath = t.artwork.uri;
+    if (artPath == null || artPath.isEmpty) {
+      artPath = _lookupAlbum(t.albumId)?.artwork.uri;
+    }
+    if (artPath == null || artPath.isEmpty) {
+      return null;
+    }
+
+    if (artPath.startsWith('http://') || artPath.startsWith('https://')) {
+      return Uri.parse(artPath);
+    }
+
+    if (artPath.startsWith('file://')) {
+      final f = File(Uri.parse(artPath).toFilePath());
+      if (f.existsSync()) return Uri.file(f.path);
+      return null;
+    }
+
+    final lower = artPath.toLowerCase();
+    if (lower.endsWith('.img') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') ||
+        lower.endsWith('.webp')) {
+      final f = File(artPath);
+      if (f.existsSync()) {
+        return Uri.file(artPath);
+      }
+      return null;
+    }
+
+    // Local audio file with embedded artwork: extract and cache image
+    try {
+      final cacheParent = _artworkCacheDir != null
+          ? Directory('$_artworkCacheDir/local_art')
+          : Directory('${Directory.systemTemp.path}/local_art');
+      if (!cacheParent.existsSync()) {
+        cacheParent.createSync(recursive: true);
+      }
+      final targetFile =
+          File('${cacheParent.path}/${artPath.hashCode.abs()}.jpg');
+      if (targetFile.existsSync() && targetFile.lengthSync() > 0) {
+        return Uri.file(targetFile.path);
+      }
+      final bytes = rust_simple.getCoverArt(path: artPath);
+      if (bytes != null && bytes.isNotEmpty) {
+        targetFile.writeAsBytesSync(bytes);
+        return Uri.file(targetFile.path);
+      }
+    } catch (e) {
+      debugPrint('[art] failed to extract cover for $artPath: $e');
+    }
+
+    return null;
+  }
+
   List<audio_svc.MediaItem> _resolveMediaItems(List<String> trackIds) {
     final tracks = trackIds.map(_lookupTrack).whereType<Track>().toList();
     return tracks.map((t) {
@@ -1025,6 +1091,7 @@ class LiveBitDropCore implements BitDropCore {
         album: t.albumTitle,
         artist: t.artist,
         duration: Duration(milliseconds: t.durationMs),
+        artUri: _resolveArtUri(t),
         extras: isCloud
             ? cloudTrackExtras(
                 fileId: t.id,
@@ -1057,26 +1124,7 @@ class LiveBitDropCore implements BitDropCore {
             '${cmd.trackIds.isEmpty ? '(none)' : cmd.trackIds.first}');
       }
       if (tracks.isNotEmpty) {
-        final items = tracks.map((t) {
-          // A cloud track is identified by its Drive file id, so the engine is
-          // told where to stream it from; a local track's id is its path.
-          final isCloud = _cloud?.trackById(t.id) != null;
-          return audio_svc.MediaItem(
-            id: t.id,
-            title: t.title,
-            album: t.albumTitle,
-            artist: t.artist,
-            duration: Duration(milliseconds: t.durationMs),
-            extras: isCloud
-                ? cloudTrackExtras(
-                    fileId: t.id,
-                    url: 'https://www.googleapis.com/drive/v3/files/${t.id}?alt=media',
-                    sizeBytes: t.sizeBytes,
-                    ext: t.format.codec.label.toLowerCase(),
-                  )
-                : null,
-          );
-        }).toList();
+        final items = _resolveMediaItems(cmd.trackIds);
         
         await _audioHandler.setQueueAndPlay(
           items,

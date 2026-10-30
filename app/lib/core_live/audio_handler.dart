@@ -96,13 +96,19 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
         MediaAction.seekBackward,
         MediaAction.setRepeatMode,
         MediaAction.setShuffleMode,
+        MediaAction.play,
+        MediaAction.pause,
+        MediaAction.playPause,
+        MediaAction.stop,
+        MediaAction.skipToNext,
+        MediaAction.skipToPrevious,
       },
       androidCompactActionIndices: const [0, 1, 3],
       // Buffering is a distinct state from paused: the user did not stop
       // this, the network did, and the UI should say which.
       processingState: buffer.buffering
           ? AudioProcessingState.buffering
-          : (isPlaying ? AudioProcessingState.ready : AudioProcessingState.idle),
+          : (mediaItem.value != null ? AudioProcessingState.ready : AudioProcessingState.idle),
       playing: isPlaying,
       repeatMode: switch (_repeatMode) {
         RepeatMode.off => AudioServiceRepeatMode.none,
@@ -317,7 +323,10 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
     final items = queue.value;
     if (items.isEmpty) return;
 
-    final pos = rust.engineGetPosition();
+    int pos = 0;
+    try {
+      pos = rust.engineGetPosition();
+    } catch (_) {}
     if (pos > 3000) {
       await seek(Duration.zero);
     } else if (_currentIndex > 0) {
@@ -422,6 +431,7 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
     try {
       rust.engineResume();
     } catch (_) {}
+    _syncState();
   }
 
   @override
@@ -429,6 +439,7 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
     try {
       rust.enginePause();
     } catch (_) {}
+    _syncState();
   }
 
   @override
@@ -436,6 +447,7 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
     try {
       rust.engineSeek(positionMs: position.inMilliseconds);
     } catch (_) {}
+    _syncState();
   }
 
   @override
@@ -444,6 +456,7 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
       rust.enginePause();
     } catch (_) {}
     _positionTimer?.cancel();
+    _syncState();
     await super.stop();
   }
 }
