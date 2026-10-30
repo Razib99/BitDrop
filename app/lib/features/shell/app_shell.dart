@@ -65,7 +65,12 @@ class _AppShellState extends ConsumerState<AppShell> {
                   _Rail(
                     destinations: destinations,
                     index: index,
-                    onSelect: (i) => context.go(destinations[i].path),
+                    onSelect: (i) {
+                      if (destinations[i].path == Routes.library) {
+                        ref.read(libraryTabProvider.notifier).state = LibraryTab.tracks;
+                      }
+                      context.go(destinations[i].path);
+                    },
                   ),
                   VerticalDivider(width: 1, color: context.c.outline),
                   Expanded(child: body),
@@ -80,7 +85,12 @@ class _AppShellState extends ConsumerState<AppShell> {
           if (!useRail)
             NavigationBar(
               selectedIndex: index,
-              onDestinationSelected: (i) => context.go(destinations[i].path),
+              onDestinationSelected: (i) {
+                if (destinations[i].path == Routes.library) {
+                  ref.read(libraryTabProvider.notifier).state = LibraryTab.tracks;
+                }
+                context.go(destinations[i].path);
+              },
               destinations: [
                 for (final d in destinations)
                   NavigationDestination(

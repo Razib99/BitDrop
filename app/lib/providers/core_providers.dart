@@ -56,7 +56,13 @@ final coreProvider = Provider<BitDropCore>((ref) {
     chunkCacheDir: globalChunkCacheDir,
     artworkCacheDir: globalArtworkCacheDir,
   );
-  ref.onDispose(core.dispose);
+  final sub = globalCloudLibrary.albums.listen((_) {
+    ref.read(libraryRevisionProvider.notifier).state++;
+  });
+  ref.onDispose(() {
+    sub.cancel();
+    core.dispose();
+  });
   return core;
 });
 
@@ -255,7 +261,7 @@ final searchResultsProvider = FutureProvider<SearchResults>((ref) async {
 enum LibraryTab { albums, artists, tracks, folders, genres, playlists }
 
 final libraryTabProvider =
-    StateProvider<LibraryTab>((ref) => LibraryTab.albums);
+    StateProvider<LibraryTab>((ref) => LibraryTab.tracks);
 final libraryFiltersProvider =
     StateProvider<LibraryFilters>((ref) => const LibraryFilters());
 final albumSortProvider = StateProvider<AlbumSort>((ref) => AlbumSort.title);

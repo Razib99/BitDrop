@@ -29,8 +29,6 @@ class HomeScreen extends ConsumerWidget {
     final sync = ref.watch(syncStatusProvider).valueOrNull ?? SyncStatus.idle;
     final albumsAsync = ref.watch(albumsProvider(const AlbumQuery()));
 
-    // Emptiness is about content, not about connections: local files are a
-    // perfectly good library, and on desktop they are the only one available.
     final hasContent = (albumsAsync.valueOrNull?.items.isNotEmpty) ?? false;
     if (sources.isEmpty && !hasContent && !albumsAsync.isLoading) {
       return const _NoSourceHome();

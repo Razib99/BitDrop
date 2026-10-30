@@ -66,6 +66,11 @@ Future<void> main() async {
     dbPath: '${supportDir.path}/library.db',
     cacheDir: '${cacheRoot.path}/tag_cache',
   );
+  try {
+    await globalCloudLibrary.open();
+  } catch (e) {
+    debugPrint('[library] open failed: $e');
+  }
 
   // Edge-to-edge with transparent system bars; the themes paint their own.
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);

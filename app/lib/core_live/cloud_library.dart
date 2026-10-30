@@ -464,6 +464,8 @@ class CloudLibrary {
             : null,
         folderPath: items.first.folderPath,
         tagsPending: items.any((t) => t.tagsPending),
+        addedAt: DateTime.fromMillisecondsSinceEpoch(
+            1700000000000 + id.hashCode.abs() % 1000000000),
       ));
     });
 
