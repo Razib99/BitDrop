@@ -7,11 +7,14 @@ import 'package:bitdrop/core_live/audio_handler.dart';
 import 'package:bitdrop/core_live/cloud_library.dart';
 import 'package:bitdrop/core_live/live_core.dart';
 import 'package:bitdrop/core_mock/mock_core.dart';
+import 'package:bitdrop/features/library/library_screen.dart';
 import 'package:bitdrop/features/storage/google_drive_service.dart';
 import 'package:bitdrop/l10n/app_localizations.dart';
+import 'package:bitdrop/providers/core_providers.dart';
 import 'package:bitdrop/theme/app_theme.dart';
 import 'package:bitdrop/widgets/indicators.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeDriveService extends Fake implements GoogleDriveService {
@@ -204,6 +207,66 @@ void main() {
       expect(idx1.existsSync(), isFalse);
       expect(sparse2.existsSync(), isFalse);
       expect(idx2.existsSync(), isFalse);
+    });
+  });
+
+  group('Scroll Retention Widget Tests', () {
+    testWidgets('Toggling favorite preserves scroll position in tracks list',
+        (tester) async {
+      final mock = MockBitDropCore();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            coreProvider.overrideWithValue(mock),
+            libraryTabProvider.overrideWith((ref) => LibraryTab.tracks),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.dark(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            home: const Scaffold(body: LibraryScreen()),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 150));
+
+      // Find the track list ListView
+      final listFinder =
+          find.byKey(const PageStorageKey('library_tracks_list'));
+      expect(listFinder, findsOneWidget);
+
+      // Scroll down by 300 pixels
+      await tester.drag(listFinder, const Offset(0, -300));
+      await tester.pump(const Duration(milliseconds: 150));
+
+      final scrollableFinder =
+          find.descendant(of: listFinder, matching: find.byType(Scrollable));
+      final scrollPositionBefore =
+          tester.state<ScrollableState>(scrollableFinder).position.pixels;
+      expect(scrollPositionBefore, greaterThan(200));
+
+      // Tap favorite button on a visible track
+      final favButton = find.byTooltip('Favourite').first;
+      await tester.tap(favButton);
+      await tester.pump(const Duration(milliseconds: 150));
+
+      // Verify scroll position was NOT reset to 0!
+      var scrollPositionAfter =
+          tester.state<ScrollableState>(scrollableFinder).position.pixels;
+      expect(scrollPositionAfter, equals(scrollPositionBefore));
+
+      // Tap download button on a visible track
+      final downloadButton = find.byTooltip('Download for offline').first;
+      await tester.tap(downloadButton);
+      await tester.pump(const Duration(milliseconds: 150));
+
+      // Verify scroll position is STILL preserved!
+      scrollPositionAfter =
+          tester.state<ScrollableState>(scrollableFinder).position.pixels;
+      expect(scrollPositionAfter, equals(scrollPositionBefore));
+
+      mock.dispose();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 100));
     });
   });
 }
