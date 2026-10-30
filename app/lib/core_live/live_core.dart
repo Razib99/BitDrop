@@ -143,6 +143,9 @@ class LiveBitDropCore implements BitDropCore {
 
     refreshStorage();
     _loadFavoritesAndPinned();
+    if (!kIsWeb && Directory('/home/razib/Desktop/BitDrop/Music').existsSync()) {
+      _scanRealMusic();
+    }
 
     _outputProbe.start();
     _outputProbeSub =
@@ -226,27 +229,6 @@ class LiveBitDropCore implements BitDropCore {
 
   void _pushEqToEngine([EqState? state]) {
     final eqState = state ?? _mockCore.eqValue;
-    List<double> finalGains;
-    const centers = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
-    if (eqState.mode == EqMode.simple) {
-      final toneBands = Biquad.fromTone(eqState.bassDb, eqState.trebleDb);
-      finalGains = centers
-          .map((c) => Biquad.combinedDb(toneBands, c.toDouble(), preampDb: 0.0))
-          .toList();
-    } else if (eqState.mode == EqMode.graphic) {
-      finalGains = eqState.graphicGains.isNotEmpty
-          ? eqState.graphicGains.take(10).toList()
-          : List.filled(10, 0.0);
-    } else if (eqState.mode == EqMode.parametric) {
-      finalGains = centers
-          .map((c) => Biquad.combinedDb(eqState.bands, c.toDouble(), preampDb: 0.0))
-          .toList();
-    } else {
-      finalGains = List.filled(10, 0.0);
-    }
-    while (finalGains.length < 10) {
-      finalGains.add(0.0);
-    }
 
     // Element 11 (index 10): effective preamp including ReplayGain
     double effectivePreamp = eqState.preampDb;
@@ -258,19 +240,63 @@ class LiveBitDropCore implements BitDropCore {
         effectivePreamp += eqState.replayGainPreampDb;
       }
     }
-    finalGains.add(effectivePreamp);
-    // Element 12 (index 11): balance (-1.0 to 1.0)
-    finalGains.add(eqState.balance);
-    // Element 13 (index 12): mono (1.0 = mono, 0.0 = stereo)
-    finalGains.add(eqState.mono ? 1.0 : 0.0);
+
+    final balance = eqState.balance;
+    final mono = eqState.mono ? 1.0 : 0.0;
+
+    final List<double> enginePayload;
+
+    if (eqState.mode == EqMode.simple) {
+      final toneBands = Biquad.fromTone(eqState.bassDb, eqState.trebleDb);
+      enginePayload = [
+        -999.0,
+        toneBands.length.toDouble(),
+        for (final b in toneBands) ...[
+          b.type.index.toDouble(),
+          b.frequencyHz,
+          b.gainDb,
+          b.q,
+        ],
+        effectivePreamp,
+        balance,
+        mono,
+      ];
+    } else if (eqState.mode == EqMode.parametric) {
+      final activeBands = eqState.bands.where((b) => b.enabled).toList();
+      enginePayload = [
+        -999.0,
+        activeBands.length.toDouble(),
+        for (final b in activeBands) ...[
+          b.type.index.toDouble(),
+          b.frequencyHz,
+          b.gainDb,
+          b.q,
+        ],
+        effectivePreamp,
+        balance,
+        mono,
+      ];
+    } else {
+      // EqMode.graphic
+      final gains = eqState.graphicGains.isNotEmpty
+          ? List<double>.from(eqState.graphicGains.take(10))
+          : List.filled(10, 0.0);
+      while (gains.length < 10) {
+        gains.add(0.0);
+      }
+      enginePayload = [
+        ...gains,
+        effectivePreamp,
+        balance,
+        mono,
+      ];
+    }
 
     try {
-      rust.engineSetEq(gains: finalGains);
+      rust.engineSetEq(gains: enginePayload);
       rust.engineSetEqEnabled(enabled: !eqState.bypass);
     } catch (_) {}
     _recomputeSignalPath();
-
-    _scanRealMusic();
   }
   
   Future<void> _scanRealMusic() async {
@@ -1049,7 +1075,7 @@ class LiveBitDropCore implements BitDropCore {
       artPath = _lookupAlbum(t.albumId)?.artwork.uri;
     }
     if (artPath == null || artPath.isEmpty) {
-      if (_artworkCacheDir != null && _artworkCacheDir!.isNotEmpty) {
+      if (_artworkCacheDir != null && _artworkCacheDir.isNotEmpty) {
         final album = _lookupAlbum(t.albumId);
         final candidates = <String>[];
         if (album != null) {
@@ -1359,6 +1385,8 @@ class LiveBitDropCore implements BitDropCore {
       tier = OutputTier.nativeRate;
     } else if (ceiling == OutputTier.resampled) {
       tier = OutputTier.resampled;
+    } else if (device?.type == DeviceType.usb) {
+      tier = OutputTier.bitPerfect;
     } else {
       tier = ceiling;
     }
@@ -1420,24 +1448,39 @@ class LiveBitDropCore implements BitDropCore {
     bool dsp,
     OutputDevice? device,
   ) {
+    if (tier == OutputTier.bitPerfect) {
+      return 'Bit-perfect direct stream active. The audio engine has exclusive '
+          'access to your ${device?.name ?? "USB DAC"} at its native '
+          '${source.sampleRate ~/ 1000} kHz / ${source.bitDepth}-bit format with zero resampling or DSP.';
+    }
+    if (device?.type == DeviceType.phoneSpeaker) {
+      if (actual.sampleRate != source.sampleRate) {
+        return 'Phone speakers route through the Android mixer at '
+            '${actual.sampleRate ~/ 1000} kHz, so your '
+            '${source.sampleRate ~/ 1000} kHz audio is resampled. Connect a USB DAC '
+            'for bit-perfect playback.';
+      } else {
+        return 'Phone speaker output is routed through the Android shared audio mixer. '
+            'Connect a USB DAC for direct exclusive bit-perfect playback.';
+      }
+    }
     if (tier == OutputTier.resampled && actual.sampleRate != source.sampleRate) {
       return 'This phone mixes all audio at '
           '${actual.sampleRate ~/ 1000} kHz, so your '
           '${source.sampleRate ~/ 1000} kHz file is resampled before it '
-          'reaches the output. Bit-perfect needs Android 14 or later and a '
-          'DAC that supports it.';
+          'reaches the output. Connect a USB DAC for bit-perfect output.';
     }
     if (device?.type == DeviceType.bluetooth) {
-      return 'Bluetooth re-encodes audio with its own codec, so lossless '
-          'playback is not possible over it on any phone.';
+      return 'Bluetooth re-encodes audio with its own codec (lossy compression), '
+          'so lossless bit-perfect playback is not possible over Bluetooth.';
     }
     if (dsp) {
-      return 'The equaliser is changing the samples, so this is no longer an '
-          'untouched signal. Turn it off to get the closest path available.';
+      return 'The equaliser or DSP is active, altering the audio samples. '
+          'Bypass the equaliser to restore bit-perfect output.';
     }
     if (tier == OutputTier.nativeRate) {
-      return 'No resampling is happening: the output runs at the file\'s own '
-          'rate. Android may still apply system volume and mix other sounds.';
+      return 'No resampling is happening: the stream runs at the file\'s native rate '
+          '(${source.sampleRate ~/ 1000} kHz).';
     }
     return 'The output path could not be determined.';
   }

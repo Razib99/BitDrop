@@ -12,7 +12,6 @@ import 'package:bitdrop/features/storage/google_drive_service.dart';
 import 'package:bitdrop/l10n/app_localizations.dart';
 import 'package:bitdrop/providers/core_providers.dart';
 import 'package:bitdrop/theme/app_theme.dart';
-import 'package:bitdrop/widgets/indicators.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

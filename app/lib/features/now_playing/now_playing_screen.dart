@@ -606,6 +606,7 @@ class _TitleBlock extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: Spacing.xl),
       child: Row(
         children: [
+          if (!alignStart) const SizedBox(width: 48),
           Expanded(
             child: Column(
               crossAxisAlignment: alignStart
@@ -669,6 +670,12 @@ class _SignalChip extends StatelessWidget {
         ? 'BIT-PERFECT'
         : (isNative ? 'NATIVE RATE' : 'STANDARD (RESAMPLED)');
 
+    final String subText = detail.isNotEmpty
+        ? (device == null ? ' · $detail' : ' · $detail → $device')
+        : (device == null ? '' : ' · $device');
+
+    final screenWidth = MediaQuery.sizeOf(context).width;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
       child: Wrap(
@@ -677,72 +684,78 @@ class _SignalChip extends StatelessWidget {
         spacing: Spacing.xs,
         runSpacing: Spacing.xxs,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: statusColor.withOpacity(isBitPerfect ? 0.14 : 0.08),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: statusColor.withOpacity(isBitPerfect ? 0.7 : 0.35),
-                width: isBitPerfect ? 1.4 : 1.0,
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: screenWidth - Spacing.md * 2),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: statusColor.withOpacity(isBitPerfect ? 0.14 : 0.08),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: statusColor.withOpacity(isBitPerfect ? 0.7 : 0.35),
+                  width: isBitPerfect ? 1.4 : 1.0,
+                ),
               ),
-            ),
-            child: InkWell(
-              onTap: () => showSignalPathSheet(context),
-              borderRadius: BorderRadius.circular(14),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    isBitPerfect
-                        ? Icons.check_circle_outline
-                        : Icons.info_outline,
-                    size: 13,
-                    color: statusColor,
-                  ),
-                  const SizedBox(width: 5),
-                  Text(
-                    statusLabel,
-                    style: TextStyle(
-                      fontFamily: 'Inter',
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.6,
+              child: InkWell(
+                onTap: () => showSignalPathSheet(context),
+                borderRadius: BorderRadius.circular(14),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isBitPerfect
+                          ? Icons.check_circle_outline
+                          : Icons.info_outline,
+                      size: 13,
                       color: statusColor,
                     ),
-                  ),
-                  if (detail.isNotEmpty) ...[
+                    const SizedBox(width: 5),
                     Text(
-                      device == null ? ' · $detail' : ' · $detail → $device',
+                      statusLabel,
                       style: TextStyle(
                         fontFamily: 'Inter',
                         fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: statusColor.withOpacity(0.9),
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.6,
+                        color: statusColor,
+                      ),
+                    ),
+                    if (subText.isNotEmpty)
+                      Flexible(
+                        child: Text(
+                          subText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: 'Inter',
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: statusColor.withOpacity(0.9),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(width: 6),
+                    Tooltip(
+                      message: 'Inspect signal path & DAC status',
+                      child: InkWell(
+                        onTap: () => showSignalPathSheet(context),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: statusColor.withOpacity(0.18),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.visibility_outlined,
+                            size: 13,
+                            color: statusColor,
+                          ),
+                        ),
                       ),
                     ),
                   ],
-                  const SizedBox(width: 6),
-                  Tooltip(
-                    message: 'Inspect signal path & DAC status',
-                    child: InkWell(
-                      onTap: () => showSignalPathSheet(context),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: statusColor.withOpacity(0.18),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.visibility_outlined,
-                          size: 13,
-                          color: statusColor,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),

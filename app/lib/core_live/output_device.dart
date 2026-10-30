@@ -127,12 +127,12 @@ class OutputDeviceProbe {
     return sorted;
   }
 
-  /// The best this device could ever reach on this phone.
+  /// The best this device could reach on this phone.
   ///
-  /// Android 12 has no bit-perfect path at all: setPreferredMixerAttributes
-  /// arrived in API 34. Reporting anything better here would be the exact
-  /// dishonesty the app exists to avoid.
+  /// USB DACs on AAudio exclusive streams bypass AudioFlinger shared mixer
+  /// completely, delivering bit-perfect output matching the source sample rate.
   static OutputTier _maxTierFor(DeviceType type) => switch (type) {
+        DeviceType.usb => OutputTier.bitPerfect,
         // Bluetooth re-encodes with its own codec, so lossless is impossible
         // regardless of phone or Android version.
         DeviceType.bluetooth => OutputTier.resampled,

@@ -125,6 +125,7 @@ pub struct PlayerState {
     pub eq_enabled: bool,
     pub eq_gains: [f32; 10],
     pub eq_preamp: f32,
+    pub eq_specs: Option<Vec<EqBandSpec>>,
     pub auto_gain: f32,
     pub balance: f32,
     pub mono: bool,
@@ -316,11 +317,11 @@ const ISO_10_BAND: [f32; 10] =
     [31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0];
 
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
-pub(crate) struct EqBandSpec {
-    pub(crate) kind: u8,
-    pub(crate) freq: f32,
-    pub(crate) gain_db: f32,
-    pub(crate) q: f32,
+pub struct EqBandSpec {
+    pub kind: u8,
+    pub freq: f32,
+    pub gain_db: f32,
+    pub q: f32,
 }
 
 /// A cascade of up to [`MAX_EQ_BANDS`] stereo biquads plus preamp.
@@ -358,7 +359,7 @@ impl GraphicEq {
             } else {
                 EQ_PEAK
             };
-            specs[i] = EqBandSpec { kind, freq: ISO_10_BAND[i], gain_db: gains[i], q: 1.0 };
+            specs[i] = EqBandSpec { kind, freq: ISO_10_BAND[i], gain_db: gains[i], q: 1.414 };
         }
         self.set_bands(&specs, preamp_db);
     }
@@ -552,7 +553,7 @@ impl AudioOutputCallback for PlayerCallback {
 
         // One short lock, then nothing else blocking: this runs on the
         // real-time audio thread and must not allocate or wait.
-        let (is_playing, eq_enabled, eq_updated, gains, preamp, fade_target, fade_step, gated,
+        let (is_playing, eq_enabled, eq_updated, gains, preamp, eq_specs, fade_target, fade_step, gated,
              flush, rate, balance, mono) = {
             let mut state = PLAYER_STATE.lock().unwrap();
             let up = state.eq_updated;
@@ -565,6 +566,7 @@ impl AudioOutputCallback for PlayerCallback {
                 up,
                 state.eq_gains,
                 state.eq_preamp,
+                state.eq_specs.clone(),
                 state.fade_target,
                 state.fade_step,
                 state.gate_output,
@@ -579,7 +581,11 @@ impl AudioOutputCallback for PlayerCallback {
             if rate > 0 {
                 self.eq.sample_rate = rate as f32;
             }
-            self.eq.update_gains(&gains, preamp);
+            if let Some(specs) = eq_specs {
+                self.eq.set_bands(&specs, preamp);
+            } else {
+                self.eq.update_gains(&gains, preamp);
+            }
         }
 
         let mut consumer = self.consumer.lock();
@@ -725,7 +731,7 @@ pub fn init_engine() {
                     &config,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         enable_hardware_flush_to_zero();
-                        let (is_playing, eq_enabled, eq_updated, gains, preamp,
+                        let (is_playing, eq_enabled, eq_updated, gains, preamp, eq_specs,
                              fade_target, fade_step, gated, flush, balance, mono) = {
                             let mut state = PLAYER_STATE.lock().unwrap();
                             let up = state.eq_updated;
@@ -733,12 +739,16 @@ pub fn init_engine() {
                             let flush = state.flush_requested;
                             state.flush_requested = false;
                             (state.is_playing, state.eq_enabled, up, state.eq_gains,
-                             state.eq_preamp, state.fade_target, state.fade_step,
+                             state.eq_preamp, state.eq_specs.clone(), state.fade_target, state.fade_step,
                              state.gate_output, flush, state.balance, state.mono)
                         };
 
                         if eq_updated || eq.active_bands() == 0 {
-                            eq.update_gains(&gains, preamp);
+                            if let Some(specs) = eq_specs {
+                                eq.set_bands(&specs, preamp);
+                            } else {
+                                eq.update_gains(&gains, preamp);
+                            }
                         }
 
                         let mut consumer = cpal_consumer.lock();
@@ -845,7 +855,7 @@ pub fn init_engine() {
     #[cfg(target_os = "android")]
     {
         *AUDIO_CONSUMER.lock().unwrap() = Some(audio_consumer.clone());
-        open_output_stream();
+        open_output_stream(None);
         start_stream_watchdog();
     }
 
@@ -1065,6 +1075,19 @@ pub fn init_engine() {
                     state.source_bits = opened.bits_per_sample;
                     state.source_channels = opened.channels;
                     state.gate_output = true;
+                    #[cfg(target_os = "android")]
+                    let track_sr = opened.sample_rate;
+                    #[cfg(target_os = "android")]
+                    let cur_target = state.target_sample_rate;
+                    drop(state);
+
+                    #[cfg(target_os = "android")]
+                    if track_sr > 0 && track_sr != cur_target {
+                        eprintln!("[bitdrop] track rate {track_sr} != stream rate {cur_target}; rebuilding exclusive stream");
+                        open_output_stream(Some(track_sr));
+                    }
+
+                    let mut state = PLAYER_STATE.lock().unwrap();
                     set_ramp(&mut state, 1.0, FADE_MS);
                 }
             }
@@ -1303,7 +1326,7 @@ pub fn init_engine() {
 
 /// Builds and starts the output stream, replacing any existing one.
 #[cfg(target_os = "android")]
-fn open_output_stream() {
+fn open_output_stream(sample_rate: Option<u32>) {
     let consumer = match AUDIO_CONSUMER.lock().unwrap().clone() {
         Some(c) => c,
         None => return,
@@ -1321,28 +1344,46 @@ fn open_output_stream() {
 
     *ACTIVE_STREAM.lock().unwrap() = None;
 
-    let opened = AudioStreamBuilder::default()
+    let mut builder = AudioStreamBuilder::default()
         .set_performance_mode(PerformanceMode::LowLatency)
         .set_sharing_mode(SharingMode::Exclusive)
         .set_audio_api(AudioApi::AAudio)
         .set_output()
         .set_stereo()
-        .set_f32()
+        .set_f32();
+
+    if let Some(sr) = sample_rate {
+        if sr > 0 {
+            builder = builder.set_sample_rate(sr as i32);
+        }
+    }
+
+    let opened = builder
         .set_callback(make_callback(consumer.clone()))
         .open_stream();
 
     let opened = match opened {
-        Ok(stream) => Some(stream),
+        Ok(stream) => {
+            eprintln!("[bitdrop] opened exclusive stream: rate={}", stream.get_sample_rate());
+            Some(stream)
+        }
         Err(e) => {
             eprintln!(
-                "[bitdrop] exclusive stream unavailable ({e:?}); falling back to shared"
+                "[bitdrop] exclusive stream at {:?} unavailable ({e:?}); falling back to shared",
+                sample_rate
             );
-            AudioStreamBuilder::default()
+            let mut shared_builder = AudioStreamBuilder::default()
                 .set_performance_mode(PerformanceMode::None)
                 .set_sharing_mode(SharingMode::Shared)
                 .set_output()
                 .set_stereo()
-                .set_f32()
+                .set_f32();
+            if let Some(sr) = sample_rate {
+                if sr > 0 {
+                    shared_builder = shared_builder.set_sample_rate(sr as i32);
+                }
+            }
+            shared_builder
                 .set_callback(make_callback(consumer))
                 .open_stream()
                 .map_err(|e| eprintln!("[bitdrop] no audio output: {e:?}"))
@@ -1382,9 +1423,18 @@ fn start_stream_watchdog() {
         loop {
             thread::sleep(Duration::from_millis(500));
 
+            let current_sr = {
+                let state = PLAYER_STATE.lock().unwrap();
+                if state.source_sample_rate > 0 {
+                    Some(state.source_sample_rate)
+                } else {
+                    None
+                }
+            };
+
             if STREAM_LOST.load(Ordering::SeqCst) {
-                eprintln!("[bitdrop] reopening output stream after loss");
-                open_output_stream();
+                eprintln!("[bitdrop] reopening output stream after loss (rate={:?})", current_sr);
+                open_output_stream(current_sr);
                 last_frames = CONSUMED_FRAMES.load(Ordering::Relaxed);
                 stalled_ticks = 0;
                 continue;
@@ -1398,8 +1448,8 @@ fn start_stream_watchdog() {
                 // Two ticks, so a single scheduling hiccup does not tear down
                 // a working stream.
                 if stalled_ticks >= 2 {
-                    eprintln!("[bitdrop] output stalled; reopening stream");
-                    open_output_stream();
+                    eprintln!("[bitdrop] output stalled; reopening stream (rate={:?})", current_sr);
+                    open_output_stream(current_sr);
                     stalled_ticks = 0;
                 }
             } else {
@@ -1569,15 +1619,20 @@ pub fn engine_cached_ranges() -> Vec<CachedRangeMs> {
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_output_state() -> EngineOutputState {
     let state = PLAYER_STATE.lock().unwrap();
+    let has_custom_specs = state.eq_specs.as_ref().map_or(false, |specs| {
+        specs.iter().any(|s| s.gain_db.abs() > 0.01)
+    });
+    let has_graphic_gains = state.eq_gains.iter().any(|g| g.abs() > 0.01);
+    let dsp_active = state.eq_enabled
+        && (has_custom_specs || has_graphic_gains || state.eq_preamp.abs() > 0.01);
+
     EngineOutputState {
         source_codec: state.source_codec.clone(),
         source_sample_rate: state.source_sample_rate,
         source_bits: state.source_bits,
         source_channels: state.source_channels,
         output_sample_rate: state.target_sample_rate,
-        // Preamp counts: it is a gain change like any other.
-        dsp_active: state.eq_enabled
-            && (state.eq_gains.iter().any(|g| *g != 0.0) || state.eq_preamp != 0.0),
+        dsp_active,
         has_track: !state.current_track_id.is_empty(),
     }
 }
@@ -1586,10 +1641,6 @@ pub fn engine_output_state() -> EngineOutputState {
 pub fn engine_buffer_state() -> EngineBufferState {
     let state = PLAYER_STATE.lock().unwrap();
     EngineBufferState {
-        // All three mean the same thing to a listener: nothing is coming out
-        // and the engine is working on it. Opening a source, refilling after
-        // a swap or a seek, and stalling on the network are different causes
-        // of one state.
         buffering: state.loading || state.gate_output || state.buffering,
         buffered_ms: state.buffered_ms,
         fetches_in_flight: crate::cloud::media_source::fetches_in_flight() as u32,
@@ -1629,23 +1680,45 @@ pub fn play_audio_file_android(path: String) -> Result<String, String> { Ok("".t
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_set_eq(gains: Vec<f32>) {
     let mut state = PLAYER_STATE.lock().unwrap();
-    for i in 0..10.min(gains.len()) {
-        state.eq_gains[i] = gains[i];
-    }
-    if gains.len() > 10 {
-        state.eq_preamp = gains[10];
+    if !gains.is_empty() && (gains[0] - (-999.0)).abs() < 0.01 {
+        let count = (gains.get(1).copied().unwrap_or(0.0) as usize).min(MAX_EQ_BANDS);
+        let mut specs = Vec::with_capacity(count);
+        for i in 0..count {
+            let idx = 2 + i * 4;
+            if idx + 3 < gains.len() {
+                specs.push(EqBandSpec {
+                    kind: gains[idx] as u8,
+                    freq: gains[idx + 1],
+                    gain_db: gains[idx + 2],
+                    q: gains[idx + 3],
+                });
+            }
+        }
+        let end_idx = 2 + count * 4;
+        state.eq_preamp = gains.get(end_idx).copied().unwrap_or(0.0);
+        state.balance = gains.get(end_idx + 1).copied().unwrap_or(0.0);
+        state.mono = gains.get(end_idx + 2).copied().unwrap_or(0.0) > 0.5;
+        state.eq_specs = Some(specs);
     } else {
-        state.eq_preamp = 0.0;
-    }
-    if gains.len() > 11 {
-        state.balance = gains[11];
-    } else {
-        state.balance = 0.0;
-    }
-    if gains.len() > 12 {
-        state.mono = gains[12] > 0.5;
-    } else {
-        state.mono = false;
+        state.eq_specs = None;
+        for i in 0..10.min(gains.len()) {
+            state.eq_gains[i] = gains[i];
+        }
+        if gains.len() > 10 {
+            state.eq_preamp = gains[10];
+        } else {
+            state.eq_preamp = 0.0;
+        }
+        if gains.len() > 11 {
+            state.balance = gains[11];
+        } else {
+            state.balance = 0.0;
+        }
+        if gains.len() > 12 {
+            state.mono = gains[12] > 0.5;
+        } else {
+            state.mono = false;
+        }
     }
     state.eq_updated = true;
 }

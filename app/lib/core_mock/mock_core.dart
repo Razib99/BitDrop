@@ -315,7 +315,7 @@ class MockBitDropCore implements BitDropCore {
       preampDb: 0,
       bypass: true,
       graphicGains: List.filled(10, 0),
-      autoPreampDb: -3.4,
+      autoPreampDb: 0.0,
     );
   }
 
@@ -396,9 +396,7 @@ class MockBitDropCore implements BitDropCore {
         DeviceProfile(
           deviceId: 'dev-titanx',
           deviceName: 'DUNU Titan X',
-          eqPresetName: 'DUNU Titan X AutoEQ',
-          replayGain: ReplayGainMode.album,
-          preferredVolumeDb: -14,
+          replayGain: ReplayGainMode.off,
         ),
         DeviceProfile(
           deviceId: 'dev-ka17',
@@ -1563,14 +1561,15 @@ class MockBitDropCore implements BitDropCore {
       case SetEqBands(:final bands):
         // Editing a band does not touch the master bypass — that switch
         // stays the user's.
-        _eq.emit(_eq.value.copyWith(bands: bands));
+        _eq.emit(_eq.value.copyWith(bands: bands, mode: EqMode.parametric, bypass: false));
         _recomputeSignalPath();
 
       case SetEqMode(:final mode):
         _eq.emit(_eq.value.copyWith(mode: mode));
+        _recomputeSignalPath();
 
       case SetGraphicGains(:final gains):
-        _eq.emit(_eq.value.copyWith(graphicGains: gains, bypass: false));
+        _eq.emit(_eq.value.copyWith(graphicGains: gains, mode: EqMode.graphic, bypass: false));
         _recomputeSignalPath();
 
       case SetBypass(:final bypass):
@@ -1585,6 +1584,7 @@ class MockBitDropCore implements BitDropCore {
 
       case SetTone(:final bassDb, :final trebleDb, :final balance, :final mono):
         _eq.emit(_eq.value.copyWith(
+          mode: EqMode.simple,
           bassDb: bassDb,
           trebleDb: trebleDb,
           balance: balance,

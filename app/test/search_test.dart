@@ -1,5 +1,4 @@
 import 'package:bitdrop/core_api/enums.dart';
-import 'package:bitdrop/core_api/models.dart';
 import 'package:bitdrop/core_api/queries.dart';
 import 'package:bitdrop/core_mock/mock_core.dart';
 import 'package:flutter_test/flutter_test.dart';
