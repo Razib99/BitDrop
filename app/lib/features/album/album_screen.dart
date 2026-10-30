@@ -30,6 +30,8 @@ class AlbumScreen extends ConsumerWidget {
 
     return Scaffold(
       body: albumAsync.when(
+        skipLoadingOnReload: true,
+        skipLoadingOnRefresh: true,
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => EmptyState(
           icon: Icons.error_outline,
@@ -46,6 +48,7 @@ class AlbumScreen extends ConsumerWidget {
           }
           final tracks = tracksAsync.valueOrNull?.items ?? const <Track>[];
           return CustomScrollView(
+            key: PageStorageKey('album_scroll_$albumId'),
             slivers: [
               _Header(album: album),
               SliverToBoxAdapter(child: _Summary(album: album)),
@@ -58,7 +61,7 @@ class AlbumScreen extends ConsumerWidget {
                     message: album.formatVarianceNote!,
                   ),
                 ),
-              if (tracksAsync.isLoading)
+              if (tracksAsync.isLoading && !tracksAsync.hasValue)
                 const SliverToBoxAdapter(
                   child: Padding(
                     padding: EdgeInsets.all(Spacing.xl),
@@ -130,7 +133,8 @@ class AlbumScreen extends ConsumerWidget {
               onDownload: () => sendCommand(
                 ref,
                 t.availability == Availability.pinned ||
-                        t.availability == Availability.cached
+                        t.availability == Availability.cached ||
+                        t.availability == Availability.downloading
                     ? Unpin(id: t.id, kind: 'track')
                     : Pin(id: t.id, kind: 'track'),
               ),
@@ -277,7 +281,8 @@ class _Actions extends ConsumerWidget {
     final l = context.l10n;
     final playable =
         tracks.where((t) => t.isPlayable).map((t) => t.id).toList();
-    final pinned = album.availability == Availability.pinned;
+    final isDownloaded = album.availability == Availability.pinned ||
+        album.availability == Availability.cached;
     final downloading = album.availability == Availability.downloading;
 
     return Padding(
@@ -322,13 +327,13 @@ class _Actions extends ConsumerWidget {
           const SizedBox(width: Spacing.xs),
           // Download-for-offline shows its progress in place.
           Tooltip(
-            message: pinned
+            message: isDownloaded
                 ? l.actionUnpin
                 : 'Download for offline (${Fmt.bytes(album.sizeBytes)})',
             child: IconButton(
               onPressed: () => sendCommand(
                 ref,
-                pinned
+                isDownloaded || downloading
                     ? Unpin(id: album.id, kind: 'album')
                     : Pin(id: album.id, kind: 'album'),
               ),
@@ -344,10 +349,10 @@ class _Actions extends ConsumerWidget {
                       ),
                     )
                   : Icon(
-                      pinned
+                      isDownloaded
                           ? Icons.download_done
                           : Icons.download_for_offline_outlined,
-                      color: pinned ? c.success : null,
+                      color: isDownloaded ? c.success : null,
                     ),
             ),
           ),

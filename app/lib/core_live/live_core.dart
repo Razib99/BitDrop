@@ -469,6 +469,19 @@ class LiveBitDropCore implements BitDropCore {
     }
   }
 
+  void _deleteDiskCacheFor(String fileId) {
+    final chunks = _chunkCacheDir;
+    if (chunks == null) return;
+    try {
+      final sparse = File('$chunks/$fileId.sparse');
+      if (sparse.existsSync()) sparse.deleteSync();
+      final idx = File('$chunks/$fileId.idx');
+      if (idx.existsSync()) idx.deleteSync();
+    } catch (e) {
+      debugPrint('[download] failed to delete chunk cache for $fileId: $e');
+    }
+  }
+
   Track _enrichTrack(Track t) {
     final isFav = _favoriteTrackIds.contains(t.id);
     final isPinned = _pinnedTrackIds.contains(t.id);
@@ -477,6 +490,8 @@ class LiveBitDropCore implements BitDropCore {
       avail = Availability.pinned;
     } else if (_isTrackFullyCached(t.id, t.sizeBytes)) {
       avail = Availability.cached;
+    } else if (!_realTracks.containsKey(t.id)) {
+      avail = Availability.cloudOnly;
     }
     return t.copyWith(
       favorite: isFav,
@@ -485,11 +500,11 @@ class LiveBitDropCore implements BitDropCore {
   }
 
   Album _enrichAlbum(Album a) {
+    if (_realAlbum != null && a.id == _realAlbum!.id) return a;
     final isPinned = _pinnedAlbumIds.contains(a.id);
-    if (isPinned && a.availability != Availability.pinned) {
-      return a.copyWith(availability: Availability.pinned);
-    }
-    return a;
+    return a.copyWith(
+      availability: isPinned ? Availability.pinned : Availability.cloudOnly,
+    );
   }
 
   List<Track> get _allCandidateTracks => [
@@ -570,6 +585,15 @@ class LiveBitDropCore implements BitDropCore {
       final sparseFile = File('$chunksDir/$trackId.sparse');
       final sink = sparseFile.openWrite();
       await response.pipe(sink);
+
+      if (!_pinnedTrackIds.contains(trackId)) {
+        if (sparseFile.existsSync()) {
+          try {
+            sparseFile.deleteSync();
+          } catch (_) {}
+        }
+        return;
+      }
 
       final totalSize = track.sizeBytes;
       const chunkSize = 2 * 1024 * 1024;
@@ -1134,25 +1158,49 @@ class LiveBitDropCore implements BitDropCore {
         _pinnedTrackIds.add(cmd.id);
         await _savePinned();
         unawaited(_downloadTrack(cmd.id));
-      } else if (cmd.kind == 'album') {
+      } else if (cmd.kind == 'album' || cmd.kind == 'playlist') {
         _pinnedAlbumIds.add(cmd.id);
         await _savePinned();
         unawaited(_downloadAlbum(cmd.id));
+      }
+      final np = _nowPlaying.value;
+      if (np != null && (np.track.id == cmd.id || np.album?.id == cmd.id)) {
+        _nowPlaying.add(NowPlaying(
+          track: _enrichTrack(np.track),
+          album: np.album != null ? _enrichAlbum(np.album!) : null,
+          contextLabel: np.contextLabel,
+          contextId: np.contextId,
+        ));
       }
       await _mockCore.send(cmd);
     } else if (cmd is Unpin) {
       if (cmd.kind == 'track') {
         _pinnedTrackIds.remove(cmd.id);
+        _deleteDiskCacheFor(cmd.id);
         await _savePinned();
-      } else if (cmd.kind == 'album') {
+        await refreshStorage();
+      } else if (cmd.kind == 'album' || cmd.kind == 'playlist') {
         _pinnedAlbumIds.remove(cmd.id);
         final albumTracks = cmd.id == 'album-favorites'
-            ? _allCandidateTracks.where((t) => _favoriteTrackIds.contains(t.id))
-            : _allCandidateTracks.where((t) => t.albumId == cmd.id);
+            ? _allCandidateTracks
+                .where((t) => _favoriteTrackIds.contains(t.id))
+                .toList()
+            : _allCandidateTracks.where((t) => t.albumId == cmd.id).toList();
         for (final t in albumTracks) {
           _pinnedTrackIds.remove(t.id);
+          _deleteDiskCacheFor(t.id);
         }
         await _savePinned();
+        await refreshStorage();
+      }
+      final np = _nowPlaying.value;
+      if (np != null && (np.track.id == cmd.id || np.album?.id == cmd.id)) {
+        _nowPlaying.add(NowPlaying(
+          track: _enrichTrack(np.track),
+          album: np.album != null ? _enrichAlbum(np.album!) : null,
+          contextLabel: np.contextLabel,
+          contextId: np.contextId,
+        ));
       }
       await _mockCore.send(cmd);
     } else if (cmd is Rescan) {

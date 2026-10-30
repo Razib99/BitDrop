@@ -201,6 +201,8 @@ class _AlbumsTab extends ConsumerWidget {
     final selection = ref.watch(selectionProvider);
 
     return async.when(
+      skipLoadingOnReload: true,
+      skipLoadingOnRefresh: true,
       loading: () => const _GridSkeleton(),
       error: (e, _) => _ErrorState(
         error: e,
@@ -210,6 +212,7 @@ class _AlbumsTab extends ConsumerWidget {
         if (paged.items.isEmpty) return const _NoMatches();
         if (!grid) {
           return ListView.builder(
+            key: const PageStorageKey('library_albums_list'),
             padding: const EdgeInsets.only(bottom: Spacing.xxl),
             itemCount: paged.items.length,
             itemBuilder: (context, i) => AlbumRow(
@@ -232,6 +235,7 @@ class _AlbumsTab extends ConsumerWidget {
             (width - margin * 2 - Spacing.sm * (columns - 1)) / columns;
 
         return GridView.builder(
+          key: const PageStorageKey('library_albums_grid'),
           padding: EdgeInsets.fromLTRB(margin, Spacing.xs, margin, Spacing.xxl),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
@@ -272,12 +276,15 @@ class _ArtistsTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(artistsProvider(const ArtistQuery()));
     return async.when(
+      skipLoadingOnReload: true,
+      skipLoadingOnRefresh: true,
       loading: () => const _ListSkeleton(),
       error: (e, _) => _ErrorState(
         error: e,
         onRetry: () => ref.invalidate(artistsProvider(const ArtistQuery())),
       ),
       data: (paged) => ListView.builder(
+        key: const PageStorageKey('library_artists_list'),
         padding: const EdgeInsets.only(bottom: Spacing.xxl),
         itemCount: paged.items.length,
         itemBuilder: (context, i) => ArtistTile(
@@ -317,6 +324,8 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
     final selection = ref.watch(selectionProvider);
 
     return async.when(
+      skipLoadingOnReload: true,
+      skipLoadingOnRefresh: true,
       loading: () => const _ListSkeleton(),
       error: (e, _) => _ErrorState(
         error: e,
@@ -327,6 +336,7 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
         return Stack(
           children: [
             ListView.builder(
+              key: const PageStorageKey('library_tracks_list'),
               controller: _controller,
               padding:
                   const EdgeInsets.only(right: Spacing.lg, bottom: Spacing.xxl),
@@ -360,7 +370,8 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
                   onDownload: () => sendCommand(
                     ref,
                     t.availability == Availability.pinned ||
-                            t.availability == Availability.cached
+                            t.availability == Availability.cached ||
+                            t.availability == Availability.downloading
                         ? Unpin(id: t.id, kind: 'track')
                         : Pin(id: t.id, kind: 'track'),
                   ),
@@ -449,10 +460,13 @@ class _GenresTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(genresProvider);
     return async.when(
+      skipLoadingOnReload: true,
+      skipLoadingOnRefresh: true,
       loading: () => const _ListSkeleton(),
       error: (e, _) =>
           _ErrorState(error: e, onRetry: () => ref.invalidate(genresProvider)),
       data: (genres) => ListView.builder(
+        key: const PageStorageKey('library_genres_list'),
         padding: const EdgeInsets.only(bottom: Spacing.xxl),
         itemCount: genres.length,
         itemBuilder: (context, i) => ListTile(
@@ -479,6 +493,8 @@ class _PlaylistsTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(playlistsProvider);
     return async.when(
+      skipLoadingOnReload: true,
+      skipLoadingOnRefresh: true,
       loading: () => const _ListSkeleton(),
       error: (e, _) => _ErrorState(
           error: e, onRetry: () => ref.invalidate(playlistsProvider)),
@@ -493,6 +509,7 @@ class _PlaylistsTab extends ConsumerWidget {
         final smart = playlists.where((p) => p.isSmart).toList();
         final mine = playlists.where((p) => !p.isSmart).toList();
         return ListView(
+          key: const PageStorageKey('library_playlists_list'),
           padding: const EdgeInsets.only(bottom: Spacing.xxl),
           children: [
             if (mine.isNotEmpty) ...[

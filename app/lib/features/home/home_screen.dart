@@ -77,6 +77,8 @@ class HomeScreen extends ConsumerWidget {
           ),
         ),
         ...albumsAsync.when(
+          skipLoadingOnReload: true,
+          skipLoadingOnRefresh: true,
           loading: () => [const SliverToBoxAdapter(child: _RowSkeleton())],
           error: (e, _) => [
             SliverToBoxAdapter(

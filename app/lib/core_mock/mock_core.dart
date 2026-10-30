@@ -958,7 +958,9 @@ class MockBitDropCore implements BitDropCore {
       favorite: _favoriteTrackIds.contains(t.id),
       availability: _pinnedTrackIds.contains(t.id)
           ? Availability.pinned
-          : t.availability,
+          : (t.availability == Availability.pinned
+              ? Availability.cloudOnly
+              : t.availability),
     );
   }
 

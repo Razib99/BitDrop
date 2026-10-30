@@ -128,6 +128,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           child: query.trim().isEmpty
               ? const _RecentAndTips()
               : results.when(
+                  skipLoadingOnReload: true,
+                  skipLoadingOnRefresh: true,
                   loading: () =>
                       const Center(child: CircularProgressIndicator()),
                   error: (e, _) => EmptyState(
@@ -269,7 +271,8 @@ class _Results extends ConsumerWidget {
               onDownload: () => sendCommand(
                 ref,
                 results.tracks[i].availability == Availability.pinned ||
-                        results.tracks[i].availability == Availability.cached
+                        results.tracks[i].availability == Availability.cached ||
+                        results.tracks[i].availability == Availability.downloading
                     ? Unpin(id: results.tracks[i].id, kind: 'track')
                     : Pin(id: results.tracks[i].id, kind: 'track'),
               ),

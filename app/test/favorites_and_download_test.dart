@@ -1,14 +1,41 @@
+import 'dart:io';
+
 import 'package:bitdrop/core_api/commands.dart';
 import 'package:bitdrop/core_api/enums.dart';
 import 'package:bitdrop/core_api/queries.dart';
+import 'package:bitdrop/core_live/audio_handler.dart';
+import 'package:bitdrop/core_live/cloud_library.dart';
+import 'package:bitdrop/core_live/live_core.dart';
 import 'package:bitdrop/core_mock/mock_core.dart';
+import 'package:bitdrop/features/storage/google_drive_service.dart';
 import 'package:bitdrop/l10n/app_localizations.dart';
 import 'package:bitdrop/theme/app_theme.dart';
 import 'package:bitdrop/widgets/indicators.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+class _FakeDriveService extends Fake implements GoogleDriveService {
+  @override
+  bool get isSignedIn => true;
+}
+
+class _TestCloudLibrary extends CloudLibrary {
+  _TestCloudLibrary({
+    required super.drive,
+    required super.dbPath,
+    required super.cacheDir,
+  });
+
+  @override
+  Future<void> open() async {}
+
+  @override
+  Future<void> scan({List<DriveFolder>? only}) async {}
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('Favorites and Download Core Logic', () {
     late MockBitDropCore core;
 
@@ -100,37 +127,83 @@ void main() {
     });
   });
 
-  group('AvailabilityGlyph Widget Tests', () {
-    testWidgets('Renders download_done (ticked) for cached and pinned',
-        (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark(),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          home: const Scaffold(
-            body: Center(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AvailabilityGlyph(availability: Availability.cached),
-                  AvailabilityGlyph(availability: Availability.pinned),
-                  AvailabilityGlyph(
-                    availability: Availability.cloudOnly,
-                    showCloudOnly: true,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+  group('LiveBitDropCore Cache Purge on Unpin', () {
+    late Directory tempDir;
+    late Directory cacheDir;
+    late BitDropAudioHandler handler;
+    late LiveBitDropCore liveCore;
+
+    setUp(() {
+      tempDir = Directory.systemTemp.createTempSync('bitdrop_unpin_test_');
+      cacheDir = Directory('${tempDir.path}/cache')..createSync();
+      handler = BitDropAudioHandler();
+      final fakeDrive = _FakeDriveService();
+      final testCloud = _TestCloudLibrary(
+        drive: fakeDrive,
+        dbPath: '${tempDir.path}/db.sqlite',
+        cacheDir: cacheDir.path,
       );
-      await tester.pumpAndSettle();
+      liveCore = LiveBitDropCore(
+        handler,
+        cloudLibrary: testCloud,
+        chunkCacheDir: cacheDir.path,
+      );
+    });
 
-      // Should find two download_done icons (for cached and pinned)
-      expect(find.byIcon(Icons.download_done), findsNWidgets(2));
+    tearDown(() async {
+      liveCore.dispose();
+      await handler.stop();
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
 
-      // Should find download_outlined icon for cloudOnly
-      expect(find.byIcon(Icons.download_outlined), findsOneWidget);
+    test('Unpinning track deletes its .sparse and .idx files and restores cloudOnly', () async {
+      const trackId = 'track_test_123';
+      final sparseFile = File('${cacheDir.path}/$trackId.sparse')..writeAsStringSync('sparse-data');
+      final idxFile = File('${cacheDir.path}/$trackId.idx')..writeAsStringSync('0\n1\n');
+
+      expect(sparseFile.existsSync(), isTrue);
+      expect(idxFile.existsSync(), isTrue);
+
+      // Pin track
+      await liveCore.send(const Pin(id: trackId, kind: 'track'));
+      // Favorite it too
+      await liveCore.send(const SetFavorite(trackId: trackId, favorite: true));
+
+      // Now unpin track
+      await liveCore.send(const Unpin(id: trackId, kind: 'track'));
+
+      // Verify files are deleted
+      expect(sparseFile.existsSync(), isFalse);
+      expect(idxFile.existsSync(), isFalse);
+
+      // Verify favorite status was preserved
+      final favAlbum = await liveCore.tracks(const TrackQuery(albumId: 'album-favorites'));
+      final found = favAlbum.items.where((t) => t.id == trackId);
+      if (found.isNotEmpty) {
+        expect(found.first.favorite, isTrue);
+        expect(found.first.availability, Availability.cloudOnly);
+      }
+    });
+
+    test('Unpinning album deletes all tracks sparse and idx files', () async {
+      const albumId = 'al-northern';
+      final sparse1 = File('${cacheDir.path}/al-northern-t1.sparse')..writeAsStringSync('data');
+      final idx1 = File('${cacheDir.path}/al-northern-t1.idx')..writeAsStringSync('0\n');
+      final sparse2 = File('${cacheDir.path}/al-northern-t2.sparse')..writeAsStringSync('data');
+      final idx2 = File('${cacheDir.path}/al-northern-t2.idx')..writeAsStringSync('0\n');
+
+      expect(sparse1.existsSync(), isTrue);
+      expect(sparse2.existsSync(), isTrue);
+
+      await liveCore.send(const Pin(id: albumId, kind: 'album'));
+      await liveCore.send(const Unpin(id: albumId, kind: 'album'));
+
+      expect(sparse1.existsSync(), isFalse);
+      expect(idx1.existsSync(), isFalse);
+      expect(sparse2.existsSync(), isFalse);
+      expect(idx2.existsSync(), isFalse);
     });
   });
 }

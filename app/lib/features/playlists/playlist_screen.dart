@@ -71,6 +71,7 @@ class PlaylistScreen extends ConsumerWidget {
       body: tracks.isEmpty && tracksAsync.isLoading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
+              key: PageStorageKey('playlist_scroll_$playlistId'),
               padding: const EdgeInsets.only(bottom: Spacing.xxl),
               children: [
                 Padding(
@@ -213,7 +214,8 @@ class PlaylistScreen extends ConsumerWidget {
                     onDownload: () => sendCommand(
                       ref,
                       tracks[i].availability == Availability.pinned ||
-                              tracks[i].availability == Availability.cached
+                              tracks[i].availability == Availability.cached ||
+                              tracks[i].availability == Availability.downloading
                           ? Unpin(id: tracks[i].id, kind: 'track')
                           : Pin(id: tracks[i].id, kind: 'track'),
                     ),
