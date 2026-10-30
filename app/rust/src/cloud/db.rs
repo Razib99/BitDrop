@@ -225,6 +225,22 @@ impl MetadataDb {
             [],
         )?;
 
+        // Propagate album artwork to any tracks that lack it
+        let _ = self.conn.execute(
+            "UPDATE tracks SET artwork_path = (
+                SELECT a.artwork_path FROM albums_summary a
+                WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
+                  AND a.artwork_path IS NOT NULL AND a.artwork_path != ''
+            )
+            WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '')
+              AND EXISTS (
+                SELECT 1 FROM albums_summary a
+                WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
+                  AND a.artwork_path IS NOT NULL AND a.artwork_path != ''
+              )",
+            [],
+        );
+
         Ok(())
     }
 
@@ -399,6 +415,22 @@ impl MetadataDb {
                     u.bits_per_sample,
                 ])?;
             }
+
+            // Propagate album artwork to any tracks that lack it
+            let _ = tx.execute(
+                "UPDATE tracks SET artwork_path = (
+                    SELECT a.artwork_path FROM albums_summary a
+                    WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != ''
+                )
+                WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '')
+                  AND EXISTS (
+                    SELECT 1 FROM albums_summary a
+                    WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != ''
+                  )",
+                [],
+            );
         }
         tx.commit()?;
         Ok(())
@@ -505,11 +537,11 @@ impl MetadataDb {
         rows.collect()
     }
 
-    /// Pending unscanned files using partial covering index `idx_tracks_unscanned`.
+    /// Pending unscanned files or tracks lacking artwork.
     pub fn pending_tag_reads(&self, limit: u32) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT file_id FROM tracks WHERE tags_read = 0 LIMIT ?1")?;
+            .prepare("SELECT file_id FROM tracks WHERE tags_read = 0 OR (artwork_path IS NULL OR artwork_path = '') LIMIT ?1")?;
         let rows = stmt.query_map(params![limit], |r| r.get::<_, String>(0))?;
         rows.collect()
     }
@@ -520,7 +552,7 @@ impl MetadataDb {
             .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))?;
         let tagged: u32 = self
             .conn
-            .query_row("SELECT COUNT(*) FROM tracks WHERE tags_read = 1", [], |r| {
+            .query_row("SELECT COUNT(*) FROM tracks WHERE tags_read = 1 AND artwork_path IS NOT NULL AND artwork_path != ''", [], |r| {
                 r.get(0)
             })?;
         Ok((total, tagged))

@@ -440,6 +440,19 @@ class CloudLibrary {
               ? a
               : b);
 
+      final albumArt = items
+          .firstWhere((t) => t.artwork.uri != null,
+              orElse: () => items.first)
+          .artwork;
+
+      if (albumArt.uri != null) {
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].artwork.uri == null) {
+            items[i] = items[i].copyWith(artwork: albumArt);
+          }
+        }
+      }
+
       out.add(Album(
         id: id,
         title: items.first.albumTitle,
@@ -450,10 +463,7 @@ class CloudLibrary {
         sizeBytes: items.fold(0, (s, t) => s + t.sizeBytes),
         format: best.format,
         availability: Availability.cloudOnly,
-        artwork: items
-            .firstWhere((t) => t.artwork.uri != null,
-                orElse: () => items.first)
-            .artwork,
+        artwork: albumArt,
         year: items.first.year,
         genre: items.first.genre,
         discCount: items.map((t) => t.discNumber).toSet().length,
@@ -468,6 +478,19 @@ class CloudLibrary {
             1700000000000 + id.hashCode.abs() % 1000000000),
       ));
     });
+
+    // Propagate enriched tracks back into the passed list so tracks tab has artwork
+    final trackMap = <String, Track>{};
+    for (final items in byId.values) {
+      for (final t in items) {
+        trackMap[t.id] = t;
+      }
+    }
+    for (var i = 0; i < tracks.length; i++) {
+      if (trackMap.containsKey(tracks[i].id)) {
+        tracks[i] = trackMap[tracks[i].id]!;
+      }
+    }
 
     out.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
     return out;

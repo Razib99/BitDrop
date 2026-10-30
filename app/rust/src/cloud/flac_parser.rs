@@ -48,7 +48,14 @@ impl FlacProgressiveParser {
                 return Ok(ParseProgress::NeedMoreBytes {
                     offset: offset as u64,
                     length: 16 * 1024,
-                    partial: None,
+                    partial: stream_info.map(|si| FlacMetadata {
+                        stream_info: si,
+                        tags: tags.clone(),
+                        vendor_string: vendor_string.clone(),
+                        pictures: pictures.clone(),
+                        audio_data_start_offset: offset as u64,
+                        bytes_inspected: offset,
+                    }),
                 });
             }
 

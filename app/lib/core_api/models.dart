@@ -248,6 +248,7 @@ class Track {
     double? downloadProgress,
     bool? favorite,
     bool? tagsPending,
+    Artwork? artwork,
   }) =>
       Track(
         id: id,
@@ -259,7 +260,7 @@ class Track {
         format: format,
         availability: availability ?? this.availability,
         sizeBytes: sizeBytes,
-        artwork: artwork,
+        artwork: artwork ?? this.artwork,
         trackNumber: trackNumber,
         discNumber: discNumber,
         year: year,

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../src/rust/api/simple.dart' as rust;
 
 import '../core_api/models.dart';
+import '../providers/core_providers.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import '../l10n/l10n.dart';
@@ -40,30 +41,57 @@ class AlbumArtwork extends StatelessWidget {
     
     Widget content;
     
-    // Check if uri is an absolute local path (indicating a local file)
-    if (artwork.uri != null && artwork.uri!.startsWith('/')) {
-      if (_imageCache.containsKey(artwork.uri!)) {
-        content = Image.memory(
-          _imageCache[artwork.uri!]!,
+    String? uri = artwork.uri;
+    if ((uri == null || uri.isEmpty) && title != null && title!.isNotEmpty) {
+      try {
+        final cacheDir = globalArtworkCacheDir;
+        if (cacheDir.isNotEmpty) {
+          final clean = title!.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+          final f = File('$cacheDir/$clean.img');
+          if (f.existsSync()) {
+            uri = f.path;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (uri != null && uri.isNotEmpty) {
+      if (uri.startsWith('http://') || uri.startsWith('https://')) {
+        content = Image.network(
+          uri,
           width: size,
           height: size,
           fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildPlaceholder(context),
         );
       } else {
-        content = FutureBuilder<Uint8List?>(
-          future: _loadArt(artwork.uri!),
-          builder: (context, snapshot) {
-          if (snapshot.hasData && snapshot.data != null) {
-            return Image.memory(
-              snapshot.data!,
-              width: size,
-              height: size,
-              fit: BoxFit.cover,
-            );
-          }
-          return _buildPlaceholder(context);
-        },
-      );
+        String path = uri;
+        if (path.startsWith('file://')) {
+          path = Uri.parse(path).toFilePath();
+        }
+        if (_imageCache.containsKey(path)) {
+          content = Image.memory(
+            _imageCache[path]!,
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+          );
+        } else {
+          content = FutureBuilder<Uint8List?>(
+            future: _loadArt(path),
+            builder: (context, snapshot) {
+              if (snapshot.hasData && snapshot.data != null) {
+                return Image.memory(
+                  snapshot.data!,
+                  width: size,
+                  height: size,
+                  fit: BoxFit.cover,
+                );
+              }
+              return _buildPlaceholder(context);
+            },
+          );
+        }
       }
     } else {
       content = _buildPlaceholder(context);
@@ -90,10 +118,13 @@ class AlbumArtwork extends StatelessWidget {
   Future<Uint8List?> _loadArt(String path) async {
     if (_imageCache.containsKey(path)) return _imageCache[path];
     try {
-      // Cloud artwork was already extracted to its own image file during the
-      // scan, so read it directly; a local track still needs the cover
-      // pulling out of the music file itself.
-      final Uint8List? data = path.endsWith('.img')
+      final lower = path.toLowerCase();
+      final isImage = lower.endsWith('.img') ||
+          lower.endsWith('.jpg') ||
+          lower.endsWith('.jpeg') ||
+          lower.endsWith('.png') ||
+          lower.endsWith('.webp');
+      final Uint8List? data = isImage
           ? await File(path).readAsBytes()
           : rust.getCoverArt(path: path);
       if (data != null && data.isNotEmpty) _imageCache[path] = data;

@@ -1919,6 +1919,7 @@ dependencies = [
  "rtrb",
  "rubato",
  "rusqlite",
+ "serde_json",
  "symphonia",
  "tokio",
 ]

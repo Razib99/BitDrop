@@ -1042,6 +1042,36 @@ class LiveBitDropCore implements BitDropCore {
       artPath = _lookupAlbum(t.albumId)?.artwork.uri;
     }
     if (artPath == null || artPath.isEmpty) {
+      if (_artworkCacheDir != null && _artworkCacheDir!.isNotEmpty) {
+        final album = _lookupAlbum(t.albumId);
+        final candidates = <String>[];
+        if (album != null) {
+          final artist = album.artist.trim();
+          final title = album.title.trim();
+          if (artist.isNotEmpty && title.isNotEmpty) {
+            candidates.add('$artist - $title');
+          }
+          if (title.isNotEmpty) {
+            candidates.add(title);
+          }
+        }
+        if (t.albumTitle.isNotEmpty) {
+          if (t.artist.isNotEmpty) {
+            candidates.add('${t.artist} - ${t.albumTitle}');
+          }
+          candidates.add(t.albumTitle);
+        }
+        for (final c in candidates) {
+          final clean = c.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+          final f = File('$_artworkCacheDir/$clean.img');
+          if (f.existsSync()) {
+            artPath = f.path;
+            break;
+          }
+        }
+      }
+    }
+    if (artPath == null || artPath.isEmpty) {
       return null;
     }
 

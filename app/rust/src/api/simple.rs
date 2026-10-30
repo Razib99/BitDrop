@@ -201,26 +201,53 @@ pub fn get_cover_art(path: String) -> Option<Vec<u8>> {
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::probe::Hint;
 
+    let p = std::path::Path::new(&path);
+
+    // 1. If it's already an image file, read it directly
+    if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+        let lower = ext.to_lowercase();
+        if lower == "img" || lower == "jpg" || lower == "jpeg" || lower == "png" || lower == "webp" {
+            return std::fs::read(&path).ok();
+        }
+    }
+
     let file = File::open(&path).ok()?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     
     let mut hint = Hint::new();
-    let ext = std::path::Path::new(&path).extension().and_then(|e| e.to_str()).unwrap_or("");
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
     hint.with_extension(ext);
     
-    let mut probed = symphonia::default::get_probe()
+    if let Ok(mut probed) = symphonia::default::get_probe()
         .format(&hint, mss, &Default::default(), &Default::default())
-        .ok()?;
+    {
+        if let Some(metadata) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
+            if let Some(visual) = metadata.visuals().first() {
+                return Some(visual.data.to_vec());
+            }
+        }
         
-    if let Some(metadata) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
-        if let Some(visual) = metadata.visuals().first() {
-            return Some(visual.data.to_vec());
+        if let Some(metadata) = probed.format.metadata().current() {
+            if let Some(visual) = metadata.visuals().first() {
+                return Some(visual.data.to_vec());
+            }
         }
     }
-    
-    if let Some(metadata) = probed.format.metadata().current() {
-        if let Some(visual) = metadata.visuals().first() {
-            return Some(visual.data.to_vec());
+
+    // 2. Check parent directory for folder cover images (Poweramp style)
+    if let Some(parent) = p.parent() {
+        for name in &[
+            "cover.jpg", "folder.jpg", "front.jpg", "albumart.jpg",
+            "cover.png", "folder.png", "front.png", "cover.jpeg",
+        ] {
+            let candidate = parent.join(name);
+            if candidate.exists() {
+                if let Ok(bytes) = std::fs::read(&candidate) {
+                    if !bytes.is_empty() {
+                        return Some(bytes);
+                    }
+                }
+            }
         }
     }
     
