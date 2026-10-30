@@ -33,6 +33,15 @@ class EqualizerScreen extends ConsumerStatefulWidget {
 class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
   int? _selectedBand;
   bool _abHeld = false;
+  bool _abBypassedAudio = false;
+
+  @override
+  void dispose() {
+    if (_abBypassedAudio) {
+      sendCommand(ref, const SetBypass(false));
+    }
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -112,7 +121,20 @@ class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
           ),
           const SizedBox(height: Spacing.sm),
           _AbCompare(
-            onChanged: (held) => setState(() => _abHeld = held),
+            onChanged: (held) {
+              setState(() => _abHeld = held);
+              if (held) {
+                if (!eq.bypass) {
+                  _abBypassedAudio = true;
+                  sendCommand(ref, const SetBypass(true));
+                }
+              } else {
+                if (_abBypassedAudio) {
+                  _abBypassedAudio = false;
+                  sendCommand(ref, const SetBypass(false));
+                }
+              }
+            },
           ),
           switch (eq.mode) {
             EqMode.parametric => _ParametricControls(

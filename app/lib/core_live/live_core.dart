@@ -211,39 +211,57 @@ class LiveBitDropCore implements BitDropCore {
         }
       }
       _emitQueue();
+      _pushEqToEngine();
     });
 
-    _eqSub = _mockCore.eq.listen((eqState) {
-      List<double> finalGains;
-      const centers = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
-      if (eqState.mode == EqMode.simple) {
-        final toneBands = Biquad.fromTone(eqState.bassDb, eqState.trebleDb);
-        finalGains = centers
-            .map((c) => Biquad.combinedDb(toneBands, c.toDouble(), preampDb: 0.0))
-            .toList();
-      } else if (eqState.mode == EqMode.graphic) {
-        finalGains = eqState.graphicGains.isNotEmpty
-            ? eqState.graphicGains.take(10).toList()
-            : List.filled(10, 0.0);
-      } else if (eqState.mode == EqMode.parametric) {
-        finalGains = centers
-            .map((c) => Biquad.combinedDb(eqState.bands, c.toDouble(), preampDb: 0.0))
-            .toList();
+    _eqSub = _mockCore.eq.listen(_pushEqToEngine);
+  }
+
+  void _pushEqToEngine([EqState? state]) {
+    final eqState = state ?? _mockCore.eqValue;
+    List<double> finalGains;
+    const centers = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+    if (eqState.mode == EqMode.simple) {
+      final toneBands = Biquad.fromTone(eqState.bassDb, eqState.trebleDb);
+      finalGains = centers
+          .map((c) => Biquad.combinedDb(toneBands, c.toDouble(), preampDb: 0.0))
+          .toList();
+    } else if (eqState.mode == EqMode.graphic) {
+      finalGains = eqState.graphicGains.isNotEmpty
+          ? eqState.graphicGains.take(10).toList()
+          : List.filled(10, 0.0);
+    } else if (eqState.mode == EqMode.parametric) {
+      finalGains = centers
+          .map((c) => Biquad.combinedDb(eqState.bands, c.toDouble(), preampDb: 0.0))
+          .toList();
+    } else {
+      finalGains = List.filled(10, 0.0);
+    }
+    while (finalGains.length < 10) {
+      finalGains.add(0.0);
+    }
+
+    // Element 11 (index 10): effective preamp including ReplayGain
+    double effectivePreamp = eqState.preampDb;
+    if (eqState.replayGain != ReplayGainMode.off) {
+      final currentTrack = _nowPlaying.value?.track;
+      if (currentTrack?.replayGainDb != null) {
+        effectivePreamp += currentTrack!.replayGainDb!;
       } else {
-        finalGains = List.filled(10, 0.0);
+        effectivePreamp += eqState.replayGainPreampDb;
       }
-      while (finalGains.length < 10) {
-        finalGains.add(0.0);
-      }
-      // Pass the preamp as the 11th element of the gains list!
-      finalGains.add(eqState.preampDb);
-      
-      try {
-        rust.engineSetEq(gains: finalGains);
-        rust.engineSetEqEnabled(enabled: !eqState.bypass);
-      } catch (_) {}
-      _recomputeSignalPath();
-    });
+    }
+    finalGains.add(effectivePreamp);
+    // Element 12 (index 11): balance (-1.0 to 1.0)
+    finalGains.add(eqState.balance);
+    // Element 13 (index 12): mono (1.0 = mono, 0.0 = stereo)
+    finalGains.add(eqState.mono ? 1.0 : 0.0);
+
+    try {
+      rust.engineSetEq(gains: finalGains);
+      rust.engineSetEqEnabled(enabled: !eqState.bypass);
+    } catch (_) {}
+    _recomputeSignalPath();
 
     _scanRealMusic();
   }

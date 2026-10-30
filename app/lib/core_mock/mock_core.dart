@@ -532,6 +532,13 @@ class MockBitDropCore implements BitDropCore {
       if (eq.preampDb != 0) {
         dspStages.add('Preamp ${_db(eq.preampDb)}');
       }
+      if (eq.mono) {
+        dspStages.add('Mono');
+      }
+      if (eq.balance != 0) {
+        final pct = (eq.balance.abs() * 100).round();
+        dspStages.add('Balance ${eq.balance < 0 ? 'L' : 'R'} $pct%');
+      }
       if (eq.replayGain != ReplayGainMode.off) {
         dspStages.add('ReplayGain (${eq.replayGain.name})');
       }
@@ -1625,12 +1632,15 @@ class MockBitDropCore implements BitDropCore {
         _events.add(CoreEvent.snack('Imported ${parsed.length} bands.'));
 
       case AssignEqToDevice(:final deviceId, :final assign):
+        final currentDev = _outputDevice.value;
         _eq.emit(_eq.value.copyWith(
           assignedDeviceName: assign
-              ? MockCatalog.knownDevices
-                  .firstWhere((d) => d.id == deviceId,
-                      orElse: () => MockCatalog.titanX)
-                  .name
+              ? (currentDev?.id == deviceId
+                  ? currentDev?.name
+                  : MockCatalog.knownDevices
+                      .firstWhere((d) => d.id == deviceId,
+                          orElse: () => MockCatalog.titanX)
+                      .name)
               : null,
         ));
 

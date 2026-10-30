@@ -126,6 +126,8 @@ pub struct PlayerState {
     pub eq_gains: [f32; 10],
     pub eq_preamp: f32,
     pub auto_gain: f32,
+    pub balance: f32,
+    pub mono: bool,
     pub eq_updated: bool,
 
     /// Where the output gain is heading, 0.0 or 1.0.
@@ -551,7 +553,7 @@ impl AudioOutputCallback for PlayerCallback {
         // One short lock, then nothing else blocking: this runs on the
         // real-time audio thread and must not allocate or wait.
         let (is_playing, eq_enabled, eq_updated, gains, preamp, fade_target, fade_step, gated,
-             flush, rate) = {
+             flush, rate, balance, mono) = {
             let mut state = PLAYER_STATE.lock().unwrap();
             let up = state.eq_updated;
             state.eq_updated = false;
@@ -568,6 +570,8 @@ impl AudioOutputCallback for PlayerCallback {
                 state.gate_output,
                 flush,
                 state.target_sample_rate,
+                state.balance,
+                state.mono,
             )
         };
 
@@ -635,7 +639,17 @@ impl AudioOutputCallback for PlayerCallback {
                     read_idx += 2;
 
                     if eq_enabled {
-                        let (pl, pr) = self.eq.process_stereo(l, r);
+                        let (mut pl, mut pr) = self.eq.process_stereo(l, r);
+                        if mono {
+                            let m = (pl + pr) * 0.5;
+                            pl = m;
+                            pr = m;
+                        }
+                        if balance < 0.0 {
+                            pr *= (1.0 + balance).max(0.0);
+                        } else if balance > 0.0 {
+                            pl *= (1.0 - balance).max(0.0);
+                        }
                         l = pl;
                         r = pr;
                     }
@@ -712,7 +726,7 @@ pub fn init_engine() {
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         enable_hardware_flush_to_zero();
                         let (is_playing, eq_enabled, eq_updated, gains, preamp,
-                             fade_target, fade_step, gated, flush) = {
+                             fade_target, fade_step, gated, flush, balance, mono) = {
                             let mut state = PLAYER_STATE.lock().unwrap();
                             let up = state.eq_updated;
                             state.eq_updated = false;
@@ -720,7 +734,7 @@ pub fn init_engine() {
                             state.flush_requested = false;
                             (state.is_playing, state.eq_enabled, up, state.eq_gains,
                              state.eq_preamp, state.fade_target, state.fade_step,
-                             state.gate_output, flush)
+                             state.gate_output, flush, state.balance, state.mono)
                         };
 
                         if eq_updated || eq.active_bands() == 0 {
@@ -774,7 +788,17 @@ pub fn init_engine() {
                                     read_idx += 2;
 
                                     if eq_enabled {
-                                        let (fl, fr) = eq.process_stereo(l, r);
+                                        let (mut fl, mut fr) = eq.process_stereo(l, r);
+                                        if mono {
+                                            let m = (fl + fr) * 0.5;
+                                            fl = m;
+                                            fr = m;
+                                        }
+                                        if balance < 0.0 {
+                                            fr *= (1.0 + balance).max(0.0);
+                                        } else if balance > 0.0 {
+                                            fl *= (1.0 - balance).max(0.0);
+                                        }
                                         l = fl;
                                         r = fr;
                                     }
@@ -1604,6 +1628,16 @@ pub fn engine_set_eq(gains: Vec<f32>) {
         state.eq_preamp = gains[10];
     } else {
         state.eq_preamp = 0.0;
+    }
+    if gains.len() > 11 {
+        state.balance = gains[11];
+    } else {
+        state.balance = 0.0;
+    }
+    if gains.len() > 12 {
+        state.mono = gains[12] > 0.5;
+    } else {
+        state.mono = false;
     }
     state.eq_updated = true;
 }
