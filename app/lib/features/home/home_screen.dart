@@ -283,6 +283,8 @@ class _ContinueListening extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.c;
     final info = ref.watch(positionProvider).valueOrNull;
+    final playback = ref.watch(playbackProvider).valueOrNull ?? const IdleState();
+    final isPlaying = playback is PlayingState;
     final progress = info == null || info.durationMs == 0
         ? 0.0
         : info.positionMs / info.durationMs;
@@ -342,9 +344,14 @@ class _ContinueListening extends ConsumerWidget {
                     ),
                     const SizedBox(width: Spacing.xs),
                     IconButton.filled(
-                      onPressed: () => sendCommand(ref, const Resume()),
-                      icon: const Icon(Icons.play_arrow),
-                      tooltip: context.l10n.actionPlay,
+                      onPressed: () => sendCommand(
+                        ref,
+                        isPlaying ? const Pause() : const Resume(),
+                      ),
+                      icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
+                      tooltip: isPlaying
+                          ? context.l10n.actionPause
+                          : context.l10n.actionPlay,
                       style: IconButton.styleFrom(
                         backgroundColor: c.accent,
                         foregroundColor: c.onAccent,

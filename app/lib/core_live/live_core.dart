@@ -80,6 +80,7 @@ class LiveBitDropCore implements BitDropCore {
   StreamSubscription<void>? _outputProbeSub;
   StreamSubscription<EqState>? _eqSub;
   StreamSubscription<audio_svc.PlaybackState>? _playbackSub;
+  Timer? _uiPositionTimer;
 
   LiveBitDropCore(
     this._audioHandler, {
@@ -182,6 +183,12 @@ class LiveBitDropCore implements BitDropCore {
       } else {
         _bufferingSince = null;
         _playback.add(isPlaying ? const PlayingState() : const PausedState());
+      }
+
+      if (isPlaying) {
+        _startUiPositionTimer();
+      } else {
+        _stopUiPositionTimer();
       }
 
       _position.add(PositionInfo(
@@ -1435,8 +1442,32 @@ class LiveBitDropCore implements BitDropCore {
     return 'The output path could not be determined.';
   }
 
+  void _startUiPositionTimer() {
+    _uiPositionTimer?.cancel();
+    _uiPositionTimer = Timer.periodic(const Duration(milliseconds: 60), (_) {
+      try {
+        final posMs = rust.engineGetPosition();
+        final durationMs =
+            _audioHandler.mediaItem.value?.duration?.inMilliseconds ?? 0;
+        final aheadMs = _position.value.bufferAheadMs;
+        _position.add(PositionInfo(
+          positionMs: posMs,
+          durationMs: durationMs,
+          bufferAheadMs: aheadMs,
+          cachedRanges: _cachedRanges(),
+        ));
+      } catch (_) {}
+    });
+  }
+
+  void _stopUiPositionTimer() {
+    _uiPositionTimer?.cancel();
+    _uiPositionTimer = null;
+  }
+
   @override
   void dispose() {
+    _uiPositionTimer?.cancel();
     _cloudStatusSub?.cancel();
     _outputProbeSub?.cancel();
     _eqSub?.cancel();

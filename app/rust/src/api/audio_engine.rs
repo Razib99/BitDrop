@@ -1456,6 +1456,10 @@ pub fn engine_play_cloud(
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_pause() {
+    {
+        let mut state = PLAYER_STATE.lock().unwrap();
+        state.is_playing = false;
+    }
     if let Some(sender) = CMD_SENDER.lock().unwrap().as_ref() {
         let _ = sender.send(DecoderCmd::Pause);
     }
@@ -1463,6 +1467,10 @@ pub fn engine_pause() {
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_resume() {
+    {
+        let mut state = PLAYER_STATE.lock().unwrap();
+        state.is_playing = true;
+    }
     if let Some(sender) = CMD_SENDER.lock().unwrap().as_ref() {
         let _ = sender.send(DecoderCmd::Resume);
     }

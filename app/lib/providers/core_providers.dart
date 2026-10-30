@@ -258,7 +258,7 @@ final searchResultsProvider = FutureProvider<SearchResults>((ref) async {
 
 // ---- Library view state ---------------------------------------------------
 
-enum LibraryTab { albums, artists, tracks, folders, genres, playlists }
+enum LibraryTab { tracks, albums, artists, favorites, folders, genres, playlists }
 
 final libraryTabProvider =
     StateProvider<LibraryTab>((ref) => LibraryTab.tracks);

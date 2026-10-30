@@ -42,7 +42,9 @@ class _ViewSheet extends ConsumerWidget {
     final notifier = ref.read(libraryFiltersProvider.notifier);
 
     final showsLayout = tab == LibraryTab.albums;
-    final showsSort = tab == LibraryTab.albums || tab == LibraryTab.tracks;
+    final showsSort = tab == LibraryTab.albums ||
+        tab == LibraryTab.tracks ||
+        tab == LibraryTab.favorites;
 
     return BottomSheetScaffold(
       title: 'View',

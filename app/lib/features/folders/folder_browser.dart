@@ -50,24 +50,51 @@ class _FolderBrowserState extends ConsumerState<FolderBrowser> {
                     title: 'This folder is empty',
                     message: 'No audio files here.',
                   )
-                : ListView.builder(
-                    padding: const EdgeInsets.only(bottom: Spacing.xxl),
-                    itemCount: listing.entries.length,
-                    itemBuilder: (context, i) {
-                      final e = listing.entries[i];
-                      return FolderRow(
-                        entry: e,
-                        badgeVisibility: settings.formatBadges,
-                        onTap: e.isDirectory
-                            ? () => setState(() => _folderId = e.id)
-                            : () => _playFile(listing, i),
-                        onPlay: e.isDirectory
-                            ? () => _playFolder(listing, e)
-                            : null,
-                        onPin: e.isDirectory
-                            ? () =>
-                                sendCommand(ref, Pin(id: e.id, kind: 'folder'))
-                            : null,
+                : Builder(
+                    builder: (context) {
+                      final isRoot = _folderId == null;
+                      final totalCount = listing.entries.length + (isRoot ? 1 : 0);
+                      return ListView.builder(
+                        padding: const EdgeInsets.only(bottom: Spacing.xxl),
+                        itemCount: totalCount,
+                        itemBuilder: (context, i) {
+                          if (isRoot && i == 0) {
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: Spacing.sm, vertical: 2),
+                              child: ListTile(
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                leading: Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    color: context.c.accent.withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Icon(Icons.favorite, color: context.c.accent, size: 22),
+                                ),
+                                title: const Text('Favourites', style: TextStyle(fontWeight: FontWeight.w600)),
+                                subtitle: const Text('Your favourited tracks across all folders'),
+                                trailing: const Icon(Icons.chevron_right, size: 20),
+                                onTap: () => ref.read(libraryTabProvider.notifier).state = LibraryTab.favorites,
+                              ),
+                            );
+                          }
+                          final e = listing.entries[isRoot ? i - 1 : i];
+                          return FolderRow(
+                            entry: e,
+                            badgeVisibility: settings.formatBadges,
+                            onTap: e.isDirectory
+                                ? () => setState(() => _folderId = e.id)
+                                : () => _playFile(listing, isRoot ? i - 1 : i),
+                            onPlay: e.isDirectory
+                                ? () => _playFolder(listing, e)
+                                : null,
+                            onPin: e.isDirectory
+                                ? () =>
+                                    sendCommand(ref, Pin(id: e.id, kind: 'folder'))
+                                : null,
+                          );
+                        },
                       );
                     },
                   ),

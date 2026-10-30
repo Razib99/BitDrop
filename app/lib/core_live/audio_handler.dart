@@ -46,7 +46,7 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
   AccessTokenProvider? accessTokenProvider;
 
   BitDropAudioHandler() {
-    _positionTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
+    _positionTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       _syncState();
     });
   }
@@ -87,7 +87,6 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
       controls: [
         MediaControl.skipToPrevious,
         isPlaying ? MediaControl.pause : MediaControl.play,
-        MediaControl.stop,
         MediaControl.skipToNext,
       ],
       systemActions: const {
@@ -103,7 +102,7 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
         MediaAction.skipToNext,
         MediaAction.skipToPrevious,
       },
-      androidCompactActionIndices: const [0, 1, 3],
+      androidCompactActionIndices: const [0, 1, 2],
       // Buffering is a distinct state from paused: the user did not stop
       // this, the network did, and the UI should say which.
       processingState: buffer.buffering
@@ -458,5 +457,25 @@ class BitDropAudioHandler extends BaseAudioHandler with SeekHandler, QueueHandle
     _positionTimer?.cancel();
     _syncState();
     await super.stop();
+  }
+
+  @override
+  Future<void> click([MediaButton button = MediaButton.media]) async {
+    switch (button) {
+      case MediaButton.media:
+        bool playing = false;
+        try {
+          playing = rust.engineIsPlaying();
+        } catch (_) {}
+        if (playing) {
+          await pause();
+        } else {
+          await play();
+        }
+      case MediaButton.next:
+        await skipToNext();
+      case MediaButton.previous:
+        await skipToPrevious();
+    }
   }
 }

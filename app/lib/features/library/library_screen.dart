@@ -39,9 +39,10 @@ class LibraryScreen extends ConsumerWidget {
         SegmentedTabs<LibraryTab>(
           values: LibraryTab.values,
           labels: (t) => switch (t) {
+            LibraryTab.tracks => 'Tracks',
             LibraryTab.albums => 'Albums',
             LibraryTab.artists => 'Artists',
-            LibraryTab.tracks => 'Tracks',
+            LibraryTab.favorites => 'Favourites',
             LibraryTab.folders => 'Folders',
             LibraryTab.genres => 'Genres',
             LibraryTab.playlists => l.navLibrary == '' ? '' : 'Playlists',
@@ -56,9 +57,10 @@ class LibraryScreen extends ConsumerWidget {
         if (filters.isActive) _ActiveFilterSummary(filters: filters),
         Expanded(
           child: switch (tab) {
+            LibraryTab.tracks => const _TracksTab(),
             LibraryTab.albums => const _AlbumsTab(),
             LibraryTab.artists => const _ArtistsTab(),
-            LibraryTab.tracks => const _TracksTab(),
+            LibraryTab.favorites => const _FavoritesTab(),
             LibraryTab.folders => const FolderBrowser(),
             LibraryTab.genres => const _GenresTab(),
             LibraryTab.playlists => const _PlaylistsTab(),
@@ -632,6 +634,133 @@ class _GridSkeleton extends StatelessWidget {
           const SkeletonLoader(width: 60, height: 10),
         ],
       ),
+    );
+  }
+}
+
+class _FavoritesTab extends ConsumerWidget {
+  const _FavoritesTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    const query = TrackQuery(albumId: 'album-favorites');
+    final async = ref.watch(tracksProvider(query));
+    final settings = ref.watch(settingsValueProvider);
+    final selection = ref.watch(selectionProvider);
+    final c = context.c;
+
+    return async.when(
+      skipLoadingOnReload: true,
+      skipLoadingOnRefresh: true,
+      loading: () => const _ListSkeleton(),
+      error: (e, _) => _ErrorState(
+        error: e,
+        onRetry: () => ref.invalidate(tracksProvider(query)),
+      ),
+      data: (paged) {
+        if (paged.items.isEmpty) {
+          return const EmptyState(
+            icon: Icons.favorite_border,
+            title: 'No favourites yet',
+            message: 'Tap the heart icon on any song to add it to your favourites.',
+          );
+        }
+        return ListView.builder(
+          key: const PageStorageKey('library_favorites_list'),
+          padding: const EdgeInsets.only(bottom: Spacing.xxl),
+          itemCount: paged.items.length + 1,
+          itemBuilder: (context, i) {
+            if (i == 0) {
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    Spacing.md, Spacing.sm, Spacing.md, Spacing.xs),
+                child: Row(
+                  children: [
+                    Text(
+                      '${paged.items.length} favourite track${paged.items.length == 1 ? '' : 's'}',
+                      style: context.t.bodySmall.copyWith(color: c.textSecondary),
+                    ),
+                    const Spacer(),
+                    FilledButton.tonalIcon(
+                      onPressed: () => sendCommand(
+                        ref,
+                        PlayContext(
+                          contextId: 'favorites',
+                          trackIds: paged.items.map((x) => x.id).toList(),
+                          startIndex: 0,
+                          contextLabel: 'Favourites',
+                        ),
+                      ),
+                      icon: const Icon(Icons.play_arrow, size: 18),
+                      label: const Text('Play all'),
+                    ),
+                    const SizedBox(width: Spacing.xs),
+                    IconButton.filledTonal(
+                      tooltip: 'Shuffle favourites',
+                      onPressed: () => sendCommand(
+                        ref,
+                        PlayContext(
+                          contextId: 'favorites',
+                          trackIds: paged.items.map((x) => x.id).toList(),
+                          startIndex: 0,
+                          shuffle: true,
+                          contextLabel: 'Favourites',
+                        ),
+                      ),
+                      icon: const Icon(Icons.shuffle, size: 18),
+                    ),
+                  ],
+                ),
+              );
+            }
+            final t = paged.items[i - 1];
+            return TrackRow(
+              track: t,
+              badgeVisibility: settings.formatBadges,
+              selectionMode: selection.isNotEmpty,
+              selected: selection.contains(t.id),
+              onTap: selection.isEmpty
+                  ? () => sendCommand(
+                        ref,
+                        PlayContext(
+                          contextId: 'favorites',
+                          trackIds: paged.items.map((x) => x.id).toList(),
+                          startIndex: i - 1,
+                          contextLabel: 'Favourites',
+                        ),
+                      )
+                  : () {
+                      final current = {...ref.read(selectionProvider)};
+                      current.contains(t.id)
+                          ? current.remove(t.id)
+                          : current.add(t.id);
+                      ref.read(selectionProvider.notifier).state = current;
+                    },
+              onLongPress: () {
+                final current = {...ref.read(selectionProvider)};
+                current.contains(t.id)
+                    ? current.remove(t.id)
+                    : current.add(t.id);
+                ref.read(selectionProvider.notifier).state = current;
+              },
+              onPlayNext: () => sendCommand(ref, PlayNext([t.id])),
+              onAddToQueue: () => sendCommand(ref, Enqueue([t.id])),
+              onToggleFavorite: () => sendCommand(
+                ref,
+                SetFavorite(trackId: t.id, favorite: !t.favorite),
+              ),
+              onDownload: () => sendCommand(
+                ref,
+                t.availability == Availability.pinned ||
+                        t.availability == Availability.cached ||
+                        t.availability == Availability.downloading
+                    ? Unpin(id: t.id, kind: 'track')
+                    : Pin(id: t.id, kind: 'track'),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

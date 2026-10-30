@@ -537,11 +537,11 @@ impl MetadataDb {
         rows.collect()
     }
 
-    /// Pending unscanned files or tracks lacking artwork.
+    /// Pending unscanned files.
     pub fn pending_tag_reads(&self, limit: u32) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT file_id FROM tracks WHERE tags_read = 0 OR (artwork_path IS NULL OR artwork_path = '') LIMIT ?1")?;
+            .prepare("SELECT file_id FROM tracks WHERE tags_read = 0 LIMIT ?1")?;
         let rows = stmt.query_map(params![limit], |r| r.get::<_, String>(0))?;
         rows.collect()
     }
@@ -552,7 +552,7 @@ impl MetadataDb {
             .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))?;
         let tagged: u32 = self
             .conn
-            .query_row("SELECT COUNT(*) FROM tracks WHERE tags_read = 1 AND artwork_path IS NOT NULL AND artwork_path != ''", [], |r| {
+            .query_row("SELECT COUNT(*) FROM tracks WHERE tags_read = 1", [], |r| {
                 r.get(0)
             })?;
         Ok((total, tagged))

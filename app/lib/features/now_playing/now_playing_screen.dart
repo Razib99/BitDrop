@@ -653,11 +653,21 @@ class _SignalChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final detail = signal.tier == OutputTier.resampled
-        ? '${Fmt.kHzBare(signal.source.sampleRate)} → '
-            '${Fmt.kHz(signal.actual.sampleRate)}'
+    final isBitPerfect = signal.tier == OutputTier.bitPerfect;
+    final isNative = signal.tier == OutputTier.nativeRate;
+    final isResampled = signal.tier == OutputTier.resampled;
+
+    final detail = isResampled
+        ? '${Fmt.kHzBare(signal.source.sampleRate)} → ${Fmt.kHz(signal.actual.sampleRate)}'
         : signal.actual.shortLabel;
     final device = signal.device?.name;
+
+    final Color statusColor = isBitPerfect
+        ? const Color(0xFF00E676)
+        : (isNative ? context.c.tierNativeRate : const Color(0xFF9E9E9E));
+    final String statusLabel = isBitPerfect
+        ? 'BIT-PERFECT'
+        : (isNative ? 'NATIVE RATE' : 'STANDARD (RESAMPLED)');
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
@@ -667,10 +677,74 @@ class _SignalChip extends StatelessWidget {
         spacing: Spacing.xs,
         runSpacing: Spacing.xxs,
         children: [
-          TierChip(
-            tier: signal.tier,
-            detail: device == null ? detail : '$detail → $device',
-            onTap: () => showSignalPathSheet(context),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(isBitPerfect ? 0.14 : 0.08),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: statusColor.withOpacity(isBitPerfect ? 0.7 : 0.35),
+                width: isBitPerfect ? 1.4 : 1.0,
+              ),
+            ),
+            child: InkWell(
+              onTap: () => showSignalPathSheet(context),
+              borderRadius: BorderRadius.circular(14),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isBitPerfect
+                        ? Icons.check_circle_outline
+                        : Icons.info_outline,
+                    size: 13,
+                    color: statusColor,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    statusLabel,
+                    style: TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.6,
+                      color: statusColor,
+                    ),
+                  ),
+                  if (detail.isNotEmpty) ...[
+                    Text(
+                      device == null ? ' · $detail' : ' · $detail → $device',
+                      style: TextStyle(
+                        fontFamily: 'Inter',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: statusColor.withOpacity(0.9),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message: 'Inspect signal path & DAC status',
+                    child: InkWell(
+                      onTap: () => showSignalPathSheet(context),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: statusColor.withOpacity(0.18),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.visibility_outlined,
+                          size: 13,
+                          color: statusColor,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
           if (signal.dspActive) const DspBadge(),
         ],
