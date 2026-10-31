@@ -37,6 +37,21 @@ android {
             signingConfig = signingConfigs.debug
         }
     }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            outputFileName = "BitDrop-v${variant.versionName}.apk"
+        }
+        variant.assembleProvider.configure {
+            doLast {
+                copy {
+                    from layout.buildDirectory.dir("outputs/apk/${variant.name}")
+                    into layout.buildDirectory.dir("outputs/flutter-apk")
+                    include "BitDrop-v*.apk"
+                }
+            }
+        }
+    }
 }
 
 flutter {
