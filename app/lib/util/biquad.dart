@@ -152,7 +152,7 @@ abstract final class Biquad {
         type: BiquadType.peak,
         frequencyHz: centers[i].toDouble(),
         gainDb: gains[i],
-        q: 1.41,
+        q: 1.4142135623730951,
       ));
     }
     return out;
@@ -163,16 +163,16 @@ abstract final class Biquad {
         EqBand(
           id: 1,
           type: BiquadType.lowShelf,
-          frequencyHz: 120,
+          frequencyHz: 100,
           gainDb: bassDb,
-          q: 0.7,
+          q: 0.7071067811865476,
         ),
         EqBand(
           id: 2,
           type: BiquadType.highShelf,
-          frequencyHz: 4000,
+          frequencyHz: 10000,
           gainDb: trebleDb,
-          q: 0.7,
+          q: 0.7071067811865476,
         ),
       ];
 }

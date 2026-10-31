@@ -17,6 +17,10 @@ use std::thread;
 
 use crate::cloud::media_source::CloudMediaSource;
 use rubato::Resampler;
+pub use crate::dsp::{
+    DspPipelineV2, EqBandSpec, EQ_HIGH_PASS, EQ_HIGH_SHELF, EQ_LOW_PASS, EQ_LOW_SHELF,
+    EQ_PEAK, ISO_10_BAND, MAX_EQ_BANDS,
+};
 
 /// Capacity for the lock-free audio ring buffer: 768,000 floats (~3MB memory),
 /// equivalent to 2 seconds of 192kHz stereo audio or 8 seconds of 48kHz stereo audio.
@@ -200,220 +204,6 @@ fn set_ramp(state: &mut PlayerState, target: f32, ms: u32) {
     state.fade_target = target;
 }
 
-#[derive(Clone, Copy, Default)]
-pub(crate) struct StereoBiquad {
-    b0: f32, b1: f32, b2: f32,
-    a1: f32, a2: f32,
-    s1: [f32; 2],
-    s2: [f32; 2],
-}
-
-impl StereoBiquad {
-    #[inline(always)]
-    pub(crate) fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
-        let y_l = self.b0 * l + self.s1[0];
-        self.s1[0] = self.b1 * l - self.a1 * y_l + self.s2[0];
-        self.s2[0] = self.b2 * l - self.a2 * y_l;
-
-        let y_r = self.b0 * r + self.s1[1];
-        self.s1[1] = self.b1 * r - self.a1 * y_r + self.s2[1];
-        self.s2[1] = self.b2 * r - self.a2 * y_r;
-
-        (y_l, y_r)
-    }
-
-    /// RBJ Audio EQ Cookbook coefficients for any supported filter shape.
-    ///
-    /// Mirrors `lib/util/biquad.dart` exactly, so what the curve on screen
-    /// shows is what the engine does. Only coefficients change; the filter
-    /// state is kept so live edits do not click.
-    pub(crate) fn set_coeffs(&mut self, kind: u8, f0: f32, fs: f32, q: f32, db_gain: f32) {
-        let fs = if fs > 0.0 { fs as f64 } else { 48000.0 };
-        let f0 = (f0 as f64).clamp(10.0, fs / 2.0 - 10.0);
-        let q = if q > 0.0 { q as f64 } else { 0.707 };
-        let a = 10f64.powf(db_gain as f64 / 40.0);
-        let w0 = 2.0 * std::f64::consts::PI * f0 / fs;
-        let (sin_w0, cos_w0) = w0.sin_cos();
-        let alpha = sin_w0 / (2.0 * q);
-        let sqrt_a = a.sqrt();
-
-        let (b0, b1, b2, a0, a1, a2) = match kind {
-            EQ_LOW_SHELF => (
-                a * ((a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha),
-                2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0),
-                a * ((a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha),
-                (a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha,
-                -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0),
-                (a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha,
-            ),
-            EQ_HIGH_SHELF => (
-                a * ((a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha),
-                -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0),
-                a * ((a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha),
-                (a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha,
-                2.0 * ((a - 1.0) - (a + 1.0) * cos_w0),
-                (a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha,
-            ),
-            EQ_LOW_PASS => (
-                (1.0 - cos_w0) / 2.0,
-                1.0 - cos_w0,
-                (1.0 - cos_w0) / 2.0,
-                1.0 + alpha,
-                -2.0 * cos_w0,
-                1.0 - alpha,
-            ),
-            EQ_HIGH_PASS => (
-                (1.0 + cos_w0) / 2.0,
-                -(1.0 + cos_w0),
-                (1.0 + cos_w0) / 2.0,
-                1.0 + alpha,
-                -2.0 * cos_w0,
-                1.0 - alpha,
-            ),
-            // EQ_PEAK and anything unknown.
-            _ => (
-                1.0 + alpha * a,
-                -2.0 * cos_w0,
-                1.0 - alpha * a,
-                1.0 + alpha / a,
-                -2.0 * cos_w0,
-                1.0 - alpha / a,
-            ),
-        };
-
-        if a0.abs() < 1e-12 || !a0.is_finite() {
-            return;
-        }
-        self.b0 = (b0 / a0) as f32;
-        self.b1 = (b1 / a0) as f32;
-        self.b2 = (b2 / a0) as f32;
-        self.a1 = (a1 / a0) as f32;
-        self.a2 = (a2 / a0) as f32;
-    }
-
-    pub(crate) fn set_peaking(&mut self, f0: f32, fs: f32, q: f32, db_gain: f32) {
-        self.set_coeffs(EQ_PEAK, f0, fs, q, db_gain);
-    }
-
-    fn reset_state(&mut self) {
-        self.s1 = [0.0; 2];
-        self.s2 = [0.0; 2];
-    }
-}
-
-/// Filter shapes, as sent over FFI. Kept as plain codes so the Dart side maps
-/// its own enum explicitly instead of relying on declaration order.
-pub const EQ_PEAK: u8 = 0;
-pub const EQ_LOW_SHELF: u8 = 1;
-pub const EQ_HIGH_SHELF: u8 = 2;
-pub const EQ_LOW_PASS: u8 = 3;
-pub const EQ_HIGH_PASS: u8 = 4;
-
-/// Enough for any AutoEQ ParametricEQ.txt (10) plus tone/graphic modes.
-pub const MAX_EQ_BANDS: usize = 16;
-
-/// ISO centres used by the legacy 10-gain `engine_set_eq` entry point.
-const ISO_10_BAND: [f32; 10] =
-    [31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0];
-
-#[derive(Clone, Copy, Default, PartialEq, Debug)]
-pub struct EqBandSpec {
-    pub kind: u8,
-    pub freq: f32,
-    pub gain_db: f32,
-    pub q: f32,
-}
-
-/// A cascade of up to [`MAX_EQ_BANDS`] stereo biquads plus preamp.
-///
-/// The name is historical; it is a full parametric EQ. Graphic and tone modes
-/// are expressed as bands on the Dart side, so every mode runs through the
-/// same filters the curve is drawn from.
-pub(crate) struct GraphicEq {
-    preamp_linear: f32,
-    bands: [StereoBiquad; MAX_EQ_BANDS],
-    specs: [EqBandSpec; MAX_EQ_BANDS],
-    active: usize,
-    pub(crate) sample_rate: f32,
-}
-
-impl GraphicEq {
-    pub(crate) fn new(sample_rate: f32) -> Self {
-        GraphicEq {
-            bands: [StereoBiquad::default(); MAX_EQ_BANDS],
-            specs: [EqBandSpec::default(); MAX_EQ_BANDS],
-            active: 0,
-            sample_rate: if sample_rate > 0.0 { sample_rate } else { 48000.0 },
-            preamp_linear: 1.0,
-        }
-    }
-
-    /// 10-band graphic entry point: low/high shelves at extremes, peaking filters inside.
-    pub(crate) fn update_gains(&mut self, gains: &[f32; 10], preamp_db: f32) {
-        let mut specs = [EqBandSpec::default(); 10];
-        for i in 0..10 {
-            let kind = if i == 0 {
-                EQ_LOW_SHELF
-            } else if i == 9 {
-                EQ_HIGH_SHELF
-            } else {
-                EQ_PEAK
-            };
-            specs[i] = EqBandSpec { kind, freq: ISO_10_BAND[i], gain_db: gains[i], q: 1.414 };
-        }
-        self.set_bands(&specs, preamp_db);
-    }
-
-    /// Installs a new band set. Allocation-free, so safe on the audio thread.
-    pub(crate) fn set_bands(&mut self, specs: &[EqBandSpec], preamp_db: f32) {
-        self.preamp_linear = 10f32.powf(preamp_db / 20.0);
-        let n = specs.len().min(MAX_EQ_BANDS);
-        for i in 0..n {
-            // A band that changes shape starts from rest; one that only moves
-            // keeps its state so dragging a handle stays click-free.
-            if i >= self.active || self.specs[i].kind != specs[i].kind {
-                self.bands[i].reset_state();
-            }
-            self.specs[i] = specs[i];
-        }
-        self.active = n;
-        self.recompute();
-    }
-
-    pub(crate) fn set_sample_rate(&mut self, sample_rate: f32) {
-        if sample_rate > 0.0 && (self.sample_rate - sample_rate).abs() > 0.5 {
-            self.sample_rate = sample_rate;
-            for b in self.bands.iter_mut() {
-                b.reset_state();
-            }
-            self.recompute();
-        }
-    }
-
-    fn recompute(&mut self) {
-        let fs = self.sample_rate;
-        for i in 0..self.active {
-            let s = self.specs[i];
-            self.bands[i].set_coeffs(s.kind, s.freq, fs, s.q, s.gain_db);
-        }
-    }
-
-    pub(crate) fn active_bands(&self) -> usize {
-        self.active
-    }
-
-    #[inline(always)]
-    pub(crate) fn process_stereo(&mut self, mut left: f32, mut right: f32) -> (f32, f32) {
-        left *= self.preamp_linear;
-        right *= self.preamp_linear;
-        for i in 0..self.active {
-            let (l, r) = self.bands[i].process(left, right);
-            left = l;
-            right = r;
-        }
-        (left, right)
-    }
-}
 
 pub enum DecoderCmd {
     Play(String), // local file path
@@ -511,7 +301,7 @@ fn open_media_source(source: Box<dyn MediaSource>, ext: &str) -> Option<OpenedTr
 #[cfg(target_os = "android")]
 struct PlayerCallback {
     consumer: Arc<parking_lot::Mutex<rtrb::Consumer<f32>>>,
-    eq: GraphicEq,
+    dsp: DspPipelineV2,
     /// Survives across callbacks: a ramp spans several buffers.
     fade_gain: f32,
     /// Underrun concealment, multiplied with `fade_gain`. Kept separate so a
@@ -577,14 +367,15 @@ impl AudioOutputCallback for PlayerCallback {
             )
         };
 
-        if eq_updated || self.eq.active_bands() == 0 || (rate > 0 && (self.eq.sample_rate - rate as f32).abs() > 1.0) {
-            if rate > 0 {
-                self.eq.sample_rate = rate as f32;
-            }
+        self.dsp.eq_enabled = eq_enabled;
+        if rate > 0 && (self.dsp.sample_rate - rate as f64).abs() > 0.5 {
+            self.dsp.set_sample_rate(rate as f64);
+        }
+        if eq_updated || self.dsp.active_bank.active == 0 {
             if let Some(specs) = eq_specs {
-                self.eq.set_bands(&specs, preamp);
+                self.dsp.install_parameters(&specs, preamp as f64, 0.0, 1.0, balance as f64, mono);
             } else {
-                self.eq.update_gains(&gains, preamp);
+                self.dsp.update_graphic_gains(&gains, preamp as f64, 0.0, 1.0, balance as f64, mono);
             }
         }
 
@@ -644,21 +435,9 @@ impl AudioOutputCallback for PlayerCallback {
                     };
                     read_idx += 2;
 
-                    if eq_enabled {
-                        let (mut pl, mut pr) = self.eq.process_stereo(l, r);
-                        if mono {
-                            let m = (pl + pr) * 0.5;
-                            pl = m;
-                            pr = m;
-                        }
-                        if balance < 0.0 {
-                            pr *= (1.0 + balance).max(0.0);
-                        } else if balance > 0.0 {
-                            pl *= (1.0 - balance).max(0.0);
-                        }
-                        l = pl;
-                        r = pr;
-                    }
+                    let (out_l, out_r) = self.dsp.process_stereo(l as f64, r as f64);
+                    l = out_l as f32;
+                    r = out_r as f32;
 
                     if self.fade_gain < want {
                         self.fade_gain = (self.fade_gain + step).min(want);
@@ -719,7 +498,7 @@ pub fn init_engine() {
                 PLAYER_STATE.lock().unwrap().target_sample_rate = config.sample_rate.0;
                 let channels = config.channels as usize;
                 
-                let mut eq = GraphicEq::new(config.sample_rate.0 as f32);
+                let mut dsp = DspPipelineV2::new(config.sample_rate.0 as f64);
                 let mut fade_gain: f32 = 1.0;
                 let mut duck: f32 = 1.0;
                 let mut last: (f32, f32) = (0.0, 0.0);
@@ -743,11 +522,12 @@ pub fn init_engine() {
                              state.gate_output, flush, state.balance, state.mono)
                         };
 
-                        if eq_updated || eq.active_bands() == 0 {
+                        dsp.eq_enabled = eq_enabled;
+                        if eq_updated || dsp.active_bank.active == 0 {
                             if let Some(specs) = eq_specs {
-                                eq.set_bands(&specs, preamp);
+                                dsp.install_parameters(&specs, preamp as f64, 0.0, 1.0, balance as f64, mono);
                             } else {
-                                eq.update_gains(&gains, preamp);
+                                dsp.update_graphic_gains(&gains, preamp as f64, 0.0, 1.0, balance as f64, mono);
                             }
                         }
 
@@ -797,21 +577,9 @@ pub fn init_engine() {
                                     };
                                     read_idx += 2;
 
-                                    if eq_enabled {
-                                        let (mut fl, mut fr) = eq.process_stereo(l, r);
-                                        if mono {
-                                            let m = (fl + fr) * 0.5;
-                                            fl = m;
-                                            fr = m;
-                                        }
-                                        if balance < 0.0 {
-                                            fr *= (1.0 + balance).max(0.0);
-                                        } else if balance > 0.0 {
-                                            fl *= (1.0 - balance).max(0.0);
-                                        }
-                                        l = fl;
-                                        r = fr;
-                                    }
+                                    let (out_l, out_r) = dsp.process_stereo(l as f64, r as f64);
+                                    l = out_l as f32;
+                                    r = out_r as f32;
 
                                     if fade_gain < want {
                                         fade_gain = (fade_gain + step).min(want);
@@ -1335,7 +1103,7 @@ fn open_output_stream(sample_rate: Option<u32>) {
     fn make_callback(consumer: Arc<parking_lot::Mutex<rtrb::Consumer<f32>>>) -> PlayerCallback {
         PlayerCallback {
             consumer,
-            eq: GraphicEq::new(48000.0),
+            dsp: DspPipelineV2::new(48000.0),
             fade_gain: 0.0,
             duck: 1.0,
             last: (0.0, 0.0),
@@ -1747,14 +1515,15 @@ mod tests {
 
     #[test]
     fn test_stereo_biquad_and_eq() {
-        let mut eq = GraphicEq::new(48000.0);
+        let mut dsp = DspPipelineV2::new(48000.0);
+        dsp.eq_enabled = true;
         let gains = [3.0, 2.0, 1.0, 0.0, -1.0, -2.0, -3.0, 0.0, 1.0, 2.0];
-        eq.update_gains(&gains, 0.0);
-        assert_eq!(eq.active_bands(), 10);
+        dsp.update_graphic_gains(&gains, 0.0, 0.0, 1.0, 0.0, false);
+        assert_eq!(dsp.active_bands(), 10);
 
         // Process test frames
         for _ in 0..100 {
-            let (l, r) = eq.process_stereo(0.5, -0.5);
+            let (l, r) = dsp.process_stereo(0.5, -0.5);
             assert!(l.is_finite());
             assert!(r.is_finite());
         }
@@ -1765,10 +1534,10 @@ mod tests {
             EqBandSpec { kind: EQ_PEAK, freq: 1000.0, gain_db: -2.0, q: 1.4 },
             EqBandSpec { kind: EQ_HIGH_SHELF, freq: 10000.0, gain_db: -3.0, q: 0.71 },
         ];
-        eq.set_bands(&specs, -3.5);
-        assert_eq!(eq.active_bands(), 3);
+        dsp.install_parameters(&specs, -3.5, 0.0, 1.0, 0.0, false);
+        assert_eq!(dsp.active_bands(), 3);
 
-        let (pl, pr) = eq.process_stereo(0.5, -0.5);
+        let (pl, pr) = dsp.process_stereo(0.5, -0.5);
         assert!(pl.is_finite());
         assert!(pr.is_finite());
         // Preamp of -3.5 dB attenuates the signal below 0.5
