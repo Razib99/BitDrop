@@ -137,7 +137,8 @@ pub struct ScanCounts {
     pub tagged: u32,
 }
 
-fn with_db<T>(f: impl FnOnce(&MetadataDb) -> anyhow::Result<T>) -> Result<T, String> {
+#[flutter_rust_bridge::frb(ignore)]
+pub fn with_db<T>(f: impl FnOnce(&MetadataDb) -> anyhow::Result<T>) -> Result<T, String> {
     let guard = DB.lock().map_err(|e| e.to_string())?;
     let db = guard
         .as_ref()
@@ -145,7 +146,8 @@ fn with_db<T>(f: impl FnOnce(&MetadataDb) -> anyhow::Result<T>) -> Result<T, Str
     f(db).map_err(|e| e.to_string())
 }
 
-fn with_db_mut<T>(f: impl FnOnce(&mut MetadataDb) -> anyhow::Result<T>) -> Result<T, String> {
+#[flutter_rust_bridge::frb(ignore)]
+pub fn with_db_mut<T>(f: impl FnOnce(&mut MetadataDb) -> anyhow::Result<T>) -> Result<T, String> {
     let mut guard = DB.lock().map_err(|e| e.to_string())?;
     let db = guard
         .as_mut()

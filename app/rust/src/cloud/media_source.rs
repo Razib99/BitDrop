@@ -143,6 +143,7 @@ pub fn bytes_fetched() -> usize {
 }
 
 pub struct SparseTrackCache {
+    pub file_id: String,
     pub file: File,
     pub total_size: u64,
     pub chunk_written_bytes: Box<[AtomicU32]>,
@@ -152,10 +153,26 @@ pub struct SparseTrackCache {
     pub data_arrived: Condvar,
     pub active_generation: AtomicU64,
     pub failed: AtomicBool,
+    pub db: Option<Arc<parking_lot::Mutex<crate::cloud::db::MetadataDb>>>,
 }
 
 impl SparseTrackCache {
     pub fn new(sparse_path: &Path, index_path: &Path, total_size: u64) -> io::Result<Arc<Self>> {
+        let file_id = sparse_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        Self::new_with_db(&file_id, sparse_path, index_path, total_size, None)
+    }
+
+    pub fn new_with_db(
+        file_id: &str,
+        sparse_path: &Path,
+        index_path: &Path,
+        total_size: u64,
+        db: Option<Arc<parking_lot::Mutex<crate::cloud::db::MetadataDb>>>,
+    ) -> io::Result<Arc<Self>> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -178,21 +195,8 @@ impl SparseTrackCache {
             failed.push(AtomicBool::new(false));
         }
 
-        // Check if an index file exists with previously completed chunks
-        if index_path.exists() {
-            if let Ok(content) = fs::read_to_string(index_path) {
-                for line in content.lines() {
-                    if let Ok(idx) = line.trim().parse::<usize>() {
-                        if idx < chunk_count {
-                            let chunk_len = ((total_size - (idx as u64 * CHUNK_SIZE)).min(CHUNK_SIZE)) as u32;
-                            written[idx].store(chunk_len, Ordering::Relaxed);
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(Arc::new(Self {
+        let cache = Arc::new(Self {
+            file_id: file_id.to_string(),
             file,
             total_size,
             chunk_written_bytes: written.into_boxed_slice(),
@@ -202,7 +206,130 @@ impl SparseTrackCache {
             data_arrived: Condvar::new(),
             active_generation: AtomicU64::new(1),
             failed: AtomicBool::new(false),
-        }))
+            db,
+        });
+
+        // 1. Query SQLite for cached chunks belonging to this file_id
+        let records = cache.get_chunks_for_file(file_id);
+
+        if !records.is_empty() {
+            let actual_file_len = cache.file.metadata().map(|m| m.len()).unwrap_or(0);
+            for rec in records {
+                let idx = rec.chunk_idx as usize;
+                if idx < chunk_count {
+                    let chunk_start = idx as u64 * CHUNK_SIZE;
+                    let chunk_len = ((total_size - chunk_start).min(CHUNK_SIZE)) as u32;
+
+                    // Verify bounds and verify CRC32 from sparse file on disk
+                    if actual_file_len >= chunk_start + chunk_len as u64 {
+                        let mut verify_buf = vec![0u8; chunk_len as usize];
+                        if let Ok(n) = cache.file.read_at(&mut verify_buf, chunk_start) {
+                            if n == chunk_len as usize {
+                                let mut hasher = crc32fast::Hasher::new();
+                                hasher.update(&verify_buf);
+                                if hasher.finalize() == rec.crc32 {
+                                    // CRC32 integrity verified!
+                                    cache.chunk_written_bytes[idx].store(chunk_len, Ordering::Relaxed);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
+                    // CRC32 mismatch or truncated file! Invalidate SQLite record so it re-fetches cleanly
+                    eprintln!(
+                        "[bitdrop] CRC32 mismatch or truncated chunk {} for {}, invalidating cache entry",
+                        idx, file_id
+                    );
+                    cache.delete_chunk(file_id, rec.chunk_idx);
+                }
+            }
+        } else if index_path.exists() {
+            // Migration from legacy .idx file:
+            // Read .idx, verify bytes, compute CRC32, populate SQLite
+            if let Ok(content) = fs::read_to_string(index_path) {
+                let actual_file_len = cache.file.metadata().map(|m| m.len()).unwrap_or(0);
+                for line in content.lines() {
+                    if let Ok(idx) = line.trim().parse::<usize>() {
+                        if idx < chunk_count {
+                            let chunk_start = idx as u64 * CHUNK_SIZE;
+                            let chunk_len = ((total_size - chunk_start).min(CHUNK_SIZE)) as u32;
+                            if actual_file_len >= chunk_start + chunk_len as u64 {
+                                let mut verify_buf = vec![0u8; chunk_len as usize];
+                                if let Ok(n) = cache.file.read_at(&mut verify_buf, chunk_start) {
+                                    if n == chunk_len as usize {
+                                        let mut hasher = crc32fast::Hasher::new();
+                                        hasher.update(&verify_buf);
+                                        let crc = hasher.finalize();
+                                        let now = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_secs() as i64;
+                                        let rec = crate::cloud::db::CachedChunkRecord {
+                                            file_id: file_id.to_string(),
+                                            chunk_idx: idx as u32,
+                                            byte_offset: chunk_start,
+                                            byte_len: chunk_len,
+                                            crc32: crc,
+                                            file_mtime: now,
+                                            last_accessed_ts: now,
+                                        };
+                                        cache.record_chunk(&rec);
+                                        cache.chunk_written_bytes[idx].store(chunk_len, Ordering::Relaxed);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(cache)
+    }
+
+    pub fn record_chunk(&self, chunk: &crate::cloud::db::CachedChunkRecord) {
+        if let Some(db) = &self.db {
+            let _ = db.lock().record_cached_chunk(chunk);
+        } else {
+            let _ = crate::api::cloud_library::with_db_mut(|db| {
+                db.record_cached_chunk(chunk).map_err(anyhow::Error::from)
+            });
+        }
+    }
+
+    pub fn delete_chunk(&self, file_id: &str, chunk_idx: u32) {
+        if let Some(db) = &self.db {
+            let _ = db.lock().delete_cached_chunk(file_id, chunk_idx);
+        } else {
+            let _ = crate::api::cloud_library::with_db_mut(|db| {
+                db.delete_cached_chunk(file_id, chunk_idx).map_err(anyhow::Error::from)
+            });
+        }
+    }
+
+    pub fn get_chunks_for_file(&self, file_id: &str) -> Vec<crate::cloud::db::CachedChunkRecord> {
+        if let Some(db) = &self.db {
+            db.lock().get_cached_chunks(file_id).unwrap_or_default()
+        } else {
+            crate::api::cloud_library::with_db(|db| {
+                db.get_cached_chunks(file_id).map_err(anyhow::Error::from)
+            }).unwrap_or_default()
+        }
+    }
+
+    pub fn touch_chunk(&self, file_id: &str, chunk_idx: u32) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        if let Some(db) = &self.db {
+            let _ = db.lock().touch_chunk_access(file_id, chunk_idx, now);
+        } else {
+            let _ = crate::api::cloud_library::with_db_mut(|db| {
+                db.touch_chunk_access(file_id, chunk_idx, now).map_err(anyhow::Error::from)
+            });
+        }
     }
 }
 
@@ -228,7 +355,7 @@ impl CloudMediaSource {
         let sparse_path = cache_dir.join(format!("{}.sparse", file_id));
         let index_path = cache_dir.join(format!("{}.idx", file_id));
 
-        let cache = SparseTrackCache::new(&sparse_path, &index_path, total_size)?;
+        let cache = SparseTrackCache::new_with_db(&file_id, &sparse_path, &index_path, total_size, None)?;
 
         // Populate initial seek-bar telemetry from already cached chunks
         {
@@ -393,6 +520,32 @@ impl CloudMediaSource {
                             cache.chunk_failed[chunk_idx].store(false, Ordering::Release);
                             cache.failed.store(false, Ordering::Release);
 
+                            // Compute CRC32 checksum from disk to verify write integrity
+                            let mut hasher = crc32fast::Hasher::new();
+                            let mut verify_buf = vec![0u8; chunk_len as usize];
+                            let crc = if cache.file.read_at(&mut verify_buf, chunk_start).is_ok() {
+                                hasher.update(&verify_buf);
+                                hasher.finalize()
+                            } else {
+                                0
+                            };
+
+                            let now_ts = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs() as i64;
+
+                            let rec = crate::cloud::db::CachedChunkRecord {
+                                file_id: file_id.clone(),
+                                chunk_idx: chunk_idx as u32,
+                                byte_offset: chunk_start,
+                                byte_len: chunk_len,
+                                crc32: crc,
+                                file_mtime: now_ts,
+                                last_accessed_ts: now_ts,
+                            };
+                            cache.record_chunk(&rec);
+
                             let mut guard = CACHED.lock();
                             if let Some((_, ref mut chunks)) = guard.get_mut(&file_id) {
                                 if !chunks.contains(&(chunk_idx as u64)) {
@@ -478,6 +631,7 @@ impl Read for CloudMediaSource {
         // Positional zero-seek read directly from unified kernel page cache
         let bytes_read = self.cache.file.read_at(&mut buf[..to_read], self.position)?;
         self.position += bytes_read as u64;
+        self.cache.touch_chunk(&self.file_id, chunk_idx as u32);
 
         // Proactive N+1 chunk prefetch when decode cursor crosses 50% of the active chunk
         if chunk_offset > (CHUNK_SIZE as u32 / 2)
@@ -525,5 +679,149 @@ impl Drop for CloudMediaSource {
     fn drop(&mut self) {
         self.cache.active_generation.fetch_add(1, Ordering::SeqCst);
         self.cache.data_arrived.notify_all();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cloud::db::MetadataDb;
+    use std::fs::File;
+    use std::io::Write;
+
+    #[test]
+    fn test_sparse_cache_sqlite_and_crc32_verification() {
+        let temp_dir = std::env::temp_dir().join(format!("bitdrop_test_cache_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let db = Arc::new(parking_lot::Mutex::new(MetadataDb::new_in_memory().unwrap()));
+        let file_id = "test_track_integrity";
+        let sparse_path = temp_dir.join(format!("{}.sparse", file_id));
+        let index_path = temp_dir.join(format!("{}.idx", file_id));
+        let total_size = 4 * 1024 * 1024; // 4 MB (2 chunks)
+
+        // Write deterministic 2MB chunk 0 data
+        let mut chunk0_data = vec![0xABu8; (CHUNK_SIZE) as usize];
+        chunk0_data[0] = 0x12;
+        chunk0_data[100] = 0x34;
+
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&chunk0_data);
+        let valid_crc = hasher.finalize();
+
+        {
+            let mut f = File::create(&sparse_path).unwrap();
+            f.write_all(&chunk0_data).unwrap();
+            // Truncate/extend to total_size
+            f.set_len(total_size).unwrap();
+        }
+
+        // 1. Record valid chunk 0 in SQLite
+        let now = 1700000000;
+        let rec = crate::cloud::db::CachedChunkRecord {
+            file_id: file_id.to_string(),
+            chunk_idx: 0,
+            byte_offset: 0,
+            byte_len: CHUNK_SIZE as u32,
+            crc32: valid_crc,
+            file_mtime: now,
+            last_accessed_ts: now,
+        };
+        db.lock().record_cached_chunk(&rec).unwrap();
+
+        // 2. Open cache: chunk 0 should be verified and ready
+        let cache = SparseTrackCache::new_with_db(
+            file_id,
+            &sparse_path,
+            &index_path,
+            total_size,
+            Some(Arc::clone(&db)),
+        )
+        .unwrap();
+
+        assert_eq!(
+            cache.chunk_written_bytes[0].load(Ordering::Relaxed),
+            CHUNK_SIZE as u32,
+            "Chunk 0 must be verified via CRC32"
+        );
+        assert_eq!(
+            cache.chunk_written_bytes[1].load(Ordering::Relaxed),
+            0,
+            "Chunk 1 must not be written yet"
+        );
+
+        // 3. Corrupt chunk 0 on disk (flip 1 byte)
+        {
+            let f = OpenOptions::new().write(true).open(&sparse_path).unwrap();
+            f.write_at(&[0xFF], 100).unwrap(); // corrupted byte at offset 100
+        }
+
+        // 4. Reopen cache: CRC32 mismatch must be detected and invalidated
+        let cache_corrupted = SparseTrackCache::new_with_db(
+            file_id,
+            &sparse_path,
+            &index_path,
+            total_size,
+            Some(Arc::clone(&db)),
+        )
+        .unwrap();
+
+        assert_eq!(
+            cache_corrupted.chunk_written_bytes[0].load(Ordering::Relaxed),
+            0,
+            "Corrupted chunk 0 must be invalidated to 0 bytes so it re-fetches"
+        );
+        assert!(
+            db.lock().get_cached_chunk(file_id, 0).unwrap().is_none(),
+            "Corrupted chunk 0 record must be removed from SQLite"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_sparse_cache_legacy_idx_migration() {
+        let temp_dir = std::env::temp_dir().join(format!("bitdrop_test_mig_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let db = Arc::new(parking_lot::Mutex::new(MetadataDb::new_in_memory().unwrap()));
+        let file_id = "legacy_track";
+        let sparse_path = temp_dir.join(format!("{}.sparse", file_id));
+        let index_path = temp_dir.join(format!("{}.idx", file_id));
+        let total_size = 2 * 1024 * 1024; // 2 MB (1 chunk)
+
+        let chunk_data = vec![0x7Fu8; total_size as usize];
+        {
+            let mut f = File::create(&sparse_path).unwrap();
+            f.write_all(&chunk_data).unwrap();
+        }
+        {
+            let mut idx_file = File::create(&index_path).unwrap();
+            writeln!(idx_file, "0").unwrap();
+        }
+
+        // Open cache: should migrate legacy .idx to SQLite with calculated CRC32
+        let cache = SparseTrackCache::new_with_db(
+            file_id,
+            &sparse_path,
+            &index_path,
+            total_size,
+            Some(Arc::clone(&db)),
+        )
+        .unwrap();
+
+        assert_eq!(
+            cache.chunk_written_bytes[0].load(Ordering::Relaxed),
+            total_size as u32
+        );
+
+        let chunk_rec = db.lock().get_cached_chunk(file_id, 0).unwrap().unwrap();
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&chunk_data);
+        assert_eq!(chunk_rec.crc32, hasher.finalize());
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

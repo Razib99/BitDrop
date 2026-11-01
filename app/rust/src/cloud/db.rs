@@ -74,6 +74,18 @@ pub struct TrackTagUpdate {
     pub artwork_path: String,
 }
 
+/// Record of a completed audio chunk with CRC32 integrity checksum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedChunkRecord {
+    pub file_id: String,
+    pub chunk_idx: u32,
+    pub byte_offset: u64,
+    pub byte_len: u32,
+    pub crc32: u32,
+    pub file_mtime: i64,
+    pub last_accessed_ts: i64,
+}
+
 pub struct MetadataDb {
     pub conn: Connection,
 }
@@ -240,6 +252,33 @@ impl MetadataDb {
               )",
             [],
         );
+
+        // 6. Cached chunks table for streaming data integrity and CRC32 verification (Phase 5.1)
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS cached_chunks (
+                file_id          TEXT NOT NULL,
+                chunk_idx        INTEGER NOT NULL,
+                byte_offset      INTEGER NOT NULL,
+                byte_len         INTEGER NOT NULL,
+                crc32            INTEGER NOT NULL,
+                file_mtime       INTEGER NOT NULL,
+                last_accessed_ts INTEGER NOT NULL,
+                PRIMARY KEY (file_id, chunk_idx)
+            )",
+            [],
+        )?;
+
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cached_chunks_lru
+             ON cached_chunks(last_accessed_ts ASC)",
+            [],
+        )?;
+
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cached_chunks_file
+             ON cached_chunks(file_id)",
+            [],
+        )?;
 
         Ok(())
     }
@@ -663,9 +702,123 @@ impl MetadataDb {
         Ok(())
     }
 
+    /// Records or updates a cached chunk with verified CRC32 checksum.
+    pub fn record_cached_chunk(&self, chunk: &CachedChunkRecord) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO cached_chunks (
+                file_id, chunk_idx, byte_offset, byte_len, crc32, file_mtime, last_accessed_ts
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                chunk.file_id,
+                chunk.chunk_idx,
+                chunk.byte_offset as i64,
+                chunk.byte_len as i64,
+                chunk.crc32 as i64,
+                chunk.file_mtime,
+                chunk.last_accessed_ts,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Fetches all cached chunk records for a given file_id.
+    pub fn get_cached_chunks(&self, file_id: &str) -> Result<Vec<CachedChunkRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT file_id, chunk_idx, byte_offset, byte_len, crc32, file_mtime, last_accessed_ts
+             FROM cached_chunks WHERE file_id = ?1 ORDER BY chunk_idx ASC",
+        )?;
+        let rows = stmt.query_map(params![file_id], |r| {
+            Ok(CachedChunkRecord {
+                file_id: r.get(0)?,
+                chunk_idx: r.get::<_, u32>(1)?,
+                byte_offset: r.get::<_, i64>(2)? as u64,
+                byte_len: r.get::<_, i64>(3)? as u32,
+                crc32: r.get::<_, i64>(4)? as u32,
+                file_mtime: r.get(5)?,
+                last_accessed_ts: r.get(6)?,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// Fetches a specific cached chunk record.
+    pub fn get_cached_chunk(&self, file_id: &str, chunk_idx: u32) -> Result<Option<CachedChunkRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT file_id, chunk_idx, byte_offset, byte_len, crc32, file_mtime, last_accessed_ts
+             FROM cached_chunks WHERE file_id = ?1 AND chunk_idx = ?2",
+        )?;
+        let mut rows = stmt.query_map(params![file_id, chunk_idx], |r| {
+            Ok(CachedChunkRecord {
+                file_id: r.get(0)?,
+                chunk_idx: r.get::<_, u32>(1)?,
+                byte_offset: r.get::<_, i64>(2)? as u64,
+                byte_len: r.get::<_, i64>(3)? as u32,
+                crc32: r.get::<_, i64>(4)? as u32,
+                file_mtime: r.get(5)?,
+                last_accessed_ts: r.get(6)?,
+            })
+        })?;
+        if let Some(r) = rows.next() {
+            Ok(Some(r?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Deletes a specific cached chunk record (e.g. after CRC32 mismatch or truncation).
+    pub fn delete_cached_chunk(&self, file_id: &str, chunk_idx: u32) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM cached_chunks WHERE file_id = ?1 AND chunk_idx = ?2",
+            params![file_id, chunk_idx],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes all cached chunk records for a file.
+    pub fn delete_all_cached_chunks(&self, file_id: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM cached_chunks WHERE file_id = ?1",
+            params![file_id],
+        )?;
+        Ok(())
+    }
+
+    /// Updates last_accessed_ts for a chunk.
+    pub fn touch_chunk_access(&self, file_id: &str, chunk_idx: u32, now_ts: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE cached_chunks SET last_accessed_ts = ?1 WHERE file_id = ?2 AND chunk_idx = ?3",
+            params![now_ts, file_id, chunk_idx],
+        )?;
+        Ok(())
+    }
+
+    /// Updates last_accessed_ts for all chunks of a file.
+    pub fn touch_file_access(&self, file_id: &str, now_ts: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE cached_chunks SET last_accessed_ts = ?1 WHERE file_id = ?2",
+            params![now_ts, file_id],
+        )?;
+        Ok(())
+    }
+
+    /// Returns the total bytes across all cached chunks.
+    pub fn total_cached_bytes(&self) -> Result<u64> {
+        let total: Option<i64> = self.conn.query_row(
+            "SELECT SUM(byte_len) FROM cached_chunks",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(total.unwrap_or(0).max(0) as u64)
+    }
+
     pub fn clear(&self) -> Result<()> {
         self.conn.execute("DELETE FROM tracks", [])?;
         self.conn.execute("DELETE FROM albums_summary", [])?;
+        self.conn.execute("DELETE FROM cached_chunks", [])?;
         Ok(())
     }
 }
@@ -830,5 +983,58 @@ mod tests {
 
         let (total3, _) = db.count().unwrap();
         assert_eq!(total3, 1);
+    }
+
+    #[test]
+    fn test_cached_chunks_crud_and_crc32() {
+        let db = MetadataDb::new_in_memory().expect("in-memory db failed");
+
+        let chunk0 = CachedChunkRecord {
+            file_id: "flac_track_1".to_string(),
+            chunk_idx: 0,
+            byte_offset: 0,
+            byte_len: 2 * 1024 * 1024,
+            crc32: 0x12345678,
+            file_mtime: 1700000000,
+            last_accessed_ts: 1700000000,
+        };
+        let chunk1 = CachedChunkRecord {
+            file_id: "flac_track_1".to_string(),
+            chunk_idx: 1,
+            byte_offset: 2 * 1024 * 1024,
+            byte_len: 1024 * 1024,
+            crc32: 0x87654321,
+            file_mtime: 1700000001,
+            last_accessed_ts: 1700000001,
+        };
+
+        db.record_cached_chunk(&chunk0).unwrap();
+        db.record_cached_chunk(&chunk1).unwrap();
+
+        let chunks = db.get_cached_chunks("flac_track_1").unwrap();
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], chunk0);
+        assert_eq!(chunks[1], chunk1);
+
+        assert_eq!(db.total_cached_bytes().unwrap(), 3 * 1024 * 1024);
+
+        // Fetch single chunk
+        let single = db.get_cached_chunk("flac_track_1", 0).unwrap().unwrap();
+        assert_eq!(single.crc32, 0x12345678);
+
+        // Touch access time
+        db.touch_chunk_access("flac_track_1", 0, 1700000050).unwrap();
+        let touched = db.get_cached_chunk("flac_track_1", 0).unwrap().unwrap();
+        assert_eq!(touched.last_accessed_ts, 1700000050);
+
+        // Delete single chunk
+        db.delete_cached_chunk("flac_track_1", 0).unwrap();
+        assert_eq!(db.get_cached_chunks("flac_track_1").unwrap().len(), 1);
+        assert_eq!(db.total_cached_bytes().unwrap(), 1024 * 1024);
+
+        // Delete all
+        db.delete_all_cached_chunks("flac_track_1").unwrap();
+        assert_eq!(db.get_cached_chunks("flac_track_1").unwrap().len(), 0);
+        assert_eq!(db.total_cached_bytes().unwrap(), 0);
     }
 }
