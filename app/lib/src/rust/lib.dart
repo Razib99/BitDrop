@@ -7,19 +7,16 @@ import 'frb_generated.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<PathBuf>>
-abstract class PathBuf implements RustOpaqueInterface {}
-
-class U8Array16 extends NonGrowableListView<int> {
-  static const arraySize = 16;
+class F32Array10 extends NonGrowableListView<double> {
+  static const arraySize = 10;
 
   @internal
-  Uint8List get inner => _inner;
-  final Uint8List _inner;
+  Float32List get inner => _inner;
+  final Float32List _inner;
 
-  U8Array16(this._inner)
+  F32Array10(this._inner)
       : assert(_inner.length == arraySize),
         super(_inner);
 
-  U8Array16.init() : this(Uint8List(arraySize));
+  F32Array10.init() : this(Float32List(arraySize));
 }

@@ -11,7 +11,9 @@ import 'api/cloud_library.dart';
 import 'api/simple.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dsp.dart';
 import 'frb_generated.dart';
+import 'lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_web.dart';
 
 abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
@@ -30,6 +32,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  PlayerState dco_decode_box_autoadd_player_state(dynamic raw);
 
   @protected
   int dco_decode_box_autoadd_u_32(dynamic raw);
@@ -53,7 +58,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   EngineOutputState dco_decode_engine_output_state(dynamic raw);
 
   @protected
+  EqBandSpec dco_decode_eq_band_spec(dynamic raw);
+
+  @protected
   double dco_decode_f_32(dynamic raw);
+
+  @protected
+  F32Array10 dco_decode_f_32_array_10(dynamic raw);
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
@@ -66,6 +77,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CloudTrack> dco_decode_list_cloud_track(dynamic raw);
+
+  @protected
+  List<EqBandSpec> dco_decode_list_eq_band_spec(dynamic raw);
 
   @protected
   List<double> dco_decode_list_prim_f_32_loose(dynamic raw);
@@ -95,7 +109,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
 
   @protected
+  List<EqBandSpec>? dco_decode_opt_list_eq_band_spec(dynamic raw);
+
+  @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  PlayerState dco_decode_player_state(dynamic raw);
 
   @protected
   ReplacedFile dco_decode_replaced_file(dynamic raw);
@@ -128,6 +148,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  PlayerState sse_decode_box_autoadd_player_state(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
@@ -151,7 +174,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  EqBandSpec sse_decode_eq_band_spec(SseDeserializer deserializer);
+
+  @protected
   double sse_decode_f_32(SseDeserializer deserializer);
+
+  @protected
+  F32Array10 sse_decode_f_32_array_10(SseDeserializer deserializer);
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
@@ -166,6 +195,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CloudTrack> sse_decode_list_cloud_track(SseDeserializer deserializer);
+
+  @protected
+  List<EqBandSpec> sse_decode_list_eq_band_spec(SseDeserializer deserializer);
 
   @protected
   List<double> sse_decode_list_prim_f_32_loose(SseDeserializer deserializer);
@@ -197,7 +229,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
+  List<EqBandSpec>? sse_decode_opt_list_eq_band_spec(
+      SseDeserializer deserializer);
+
+  @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  PlayerState sse_decode_player_state(SseDeserializer deserializer);
 
   @protected
   ReplacedFile sse_decode_replaced_file(SseDeserializer deserializer);
@@ -233,6 +272,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_player_state(
+      PlayerState self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
 
   @protected
@@ -256,7 +299,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       EngineOutputState self, SseSerializer serializer);
 
   @protected
+  void sse_encode_eq_band_spec(EqBandSpec self, SseSerializer serializer);
+
+  @protected
   void sse_encode_f_32(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_f_32_array_10(F32Array10 self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
@@ -272,6 +321,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_cloud_track(
       List<CloudTrack> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_eq_band_spec(
+      List<EqBandSpec> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_f_32_loose(
@@ -307,8 +360,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_list_eq_band_spec(
+      List<EqBandSpec>? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_list_prim_u_8_strict(
       Uint8List? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_player_state(PlayerState self, SseSerializer serializer);
 
   @protected
   void sse_encode_replaced_file(ReplacedFile self, SseSerializer serializer);

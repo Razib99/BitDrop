@@ -50,10 +50,25 @@ pub static FETCHES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 /// Total bytes pulled from the network this session.
 pub static BYTES_FETCHED: AtomicUsize = AtomicUsize::new(0);
 
-/// Telemetry cache for UI seek-bar visualization: (file_id, total_bytes, completed_chunk_indices).
-pub static CACHED: Mutex<Option<(String, u64, Vec<u64>)>> = Mutex::new(None);
+use std::collections::HashMap;
+
+pub type TokenProviderCallback = Box<dyn Fn() -> Option<String> + Send + Sync>;
+
+/// Global token provider callback for refreshing 401 expired OAuth tokens.
+pub static TOKEN_PROVIDER: Mutex<Option<TokenProviderCallback>> = Mutex::new(None);
+
+pub fn set_token_provider<F>(f: F)
+where
+    F: Fn() -> Option<String> + Send + Sync + 'static,
+{
+    let mut guard = TOKEN_PROVIDER.lock();
+    *guard = Some(Box::new(f));
+}
 
 lazy_static::lazy_static! {
+    /// Telemetry cache for UI seek-bar visualization: key = file_id -> (total_bytes, completed_chunk_indices).
+    pub static ref CACHED: Mutex<HashMap<String, (u64, Vec<u64>)>> = Mutex::new(HashMap::new());
+
     /// Global multi-threaded I/O runtime for network fetch actors.
     static ref GLOBAL_IO_RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
@@ -68,16 +83,39 @@ lazy_static::lazy_static! {
         .pool_max_idle_per_host(16)
         .build()
         .expect("Failed to build HTTP client");
+    /// Currently active sparse track cache for instantaneous cancellation on seek/skip/stop.
+    static ref ACTIVE_CACHE: Mutex<Option<Arc<SparseTrackCache>>> = Mutex::new(None);
+}
+
+pub fn set_active_cache(cache: Arc<SparseTrackCache>) {
+    let mut guard = ACTIVE_CACHE.lock();
+    if let Some(old) = guard.replace(cache) {
+        old.active_generation.fetch_add(1, Ordering::SeqCst);
+        old.data_arrived.notify_all();
+    }
+}
+
+pub fn abort_active_fetches() {
+    let mut guard = ACTIVE_CACHE.lock();
+    if let Some(cache) = guard.take() {
+        cache.active_generation.fetch_add(1, Ordering::SeqCst);
+        cache.data_arrived.notify_all();
+    }
 }
 
 pub fn forget_cached_ranges() {
     let mut guard = CACHED.lock();
-    *guard = None;
+    guard.clear();
 }
 
-pub fn cached_byte_ranges() -> (u64, Vec<(u64, u64)>) {
+pub fn cached_byte_ranges(file_id: Option<&str>) -> (u64, Vec<(u64, u64)>) {
     let guard = CACHED.lock();
-    let Some((_, total, chunks)) = guard.as_ref() else {
+    let entry = if let Some(fid) = file_id {
+        guard.get(fid)
+    } else {
+        guard.values().next()
+    };
+    let Some((total, chunks)) = entry else {
         return (0, Vec::new());
     };
 
@@ -109,6 +147,7 @@ pub struct SparseTrackCache {
     pub total_size: u64,
     pub chunk_written_bytes: Box<[AtomicU32]>,
     pub chunk_fetching: Box<[AtomicBool]>,
+    pub chunk_failed: Box<[AtomicBool]>,
     pub sync_mutex: Mutex<()>,
     pub data_arrived: Condvar,
     pub active_generation: AtomicU64,
@@ -121,6 +160,7 @@ impl SparseTrackCache {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(sparse_path)?;
 
         // Ensure file length matches total size (creates sparse metadata on ext4/f2fs without allocating disk blocks)
@@ -131,9 +171,11 @@ impl SparseTrackCache {
         let chunk_count = total_size.div_ceil(CHUNK_SIZE) as usize;
         let mut written = Vec::with_capacity(chunk_count);
         let mut fetching = Vec::with_capacity(chunk_count);
+        let mut failed = Vec::with_capacity(chunk_count);
         for _ in 0..chunk_count {
             written.push(AtomicU32::new(0));
             fetching.push(AtomicBool::new(false));
+            failed.push(AtomicBool::new(false));
         }
 
         // Check if an index file exists with previously completed chunks
@@ -155,6 +197,7 @@ impl SparseTrackCache {
             total_size,
             chunk_written_bytes: written.into_boxed_slice(),
             chunk_fetching: fetching.into_boxed_slice(),
+            chunk_failed: failed.into_boxed_slice(),
             sync_mutex: Mutex::new(()),
             data_arrived: Condvar::new(),
             active_generation: AtomicU64::new(1),
@@ -197,8 +240,10 @@ impl CloudMediaSource {
                 }
             }
             let mut guard = CACHED.lock();
-            *guard = Some((file_id.clone(), total_size, existing));
+            guard.insert(file_id.clone(), (total_size, existing));
         }
+
+        set_active_cache(Arc::clone(&cache));
 
         Ok(Self {
             file_id,
@@ -235,69 +280,150 @@ impl CloudMediaSource {
         GLOBAL_IO_RT.spawn(async move {
             FETCHES_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
 
-            let fetch_res = async {
+            let backoffs = [
+                std::time::Duration::from_millis(200),
+                std::time::Duration::from_millis(500),
+                std::time::Duration::from_millis(1200),
+            ];
+
+            let mut current_token = token;
+            let mut final_res: Result<()> = Ok(());
+
+            for attempt in 0..=3 {
+                if cache.active_generation.load(Ordering::Relaxed) != generation {
+                    // Superseded by newer track request
+                    FETCHES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+                    cache.chunk_fetching[chunk_idx].store(false, Ordering::Release);
+                    return;
+                }
+
                 let range_val = format!("bytes={}-{}", chunk_start, chunk_end);
                 let mut headers = HeaderMap::new();
-                headers.insert(RANGE, HeaderValue::from_str(&range_val)?);
-
-                if let Some(ref t) = token {
-                    headers.insert(
-                        AUTHORIZATION,
-                        HeaderValue::from_str(&format!("Bearer {}", t))?,
-                    );
+                if let Ok(hv) = HeaderValue::from_str(&range_val) {
+                    headers.insert(RANGE, hv);
                 }
 
-                let response = HTTP_CLIENT.get(&url).headers(headers).send().await?;
-                let status = response.status();
-                if !status.is_success() && status.as_u16() != 206 {
-                    return Err(anyhow::anyhow!("HTTP error status: {}", status));
-                }
-
-                let mut stream = response.bytes_stream();
-                let mut written_in_chunk: u32 = 0;
-
-                while let Some(item) = stream.next().await {
-                    if cache.active_generation.load(Ordering::Relaxed) != generation {
-                        // Superseded by newer track request
-                        return Ok(());
+                if let Some(ref t) = current_token {
+                    if let Ok(hv) = HeaderValue::from_str(&format!("Bearer {}", t)) {
+                        headers.insert(AUTHORIZATION, hv);
                     }
-
-                    let bytes = item?;
-                    let slice_len = bytes.len() as u32;
-                    let write_pos = chunk_start + written_in_chunk as u64;
-
-                    cache.file.write_at(&bytes, write_pos)?;
-                    written_in_chunk += slice_len;
-
-                    cache.chunk_written_bytes[chunk_idx].store(written_in_chunk, Ordering::Release);
-                    BYTES_FETCHED.fetch_add(slice_len as usize, Ordering::Relaxed);
-
-                    // Wake up any threads waiting in Read::read() for this slice
-                    cache.data_arrived.notify_all();
                 }
 
-                // If chunk completed fully, persist completion to index and telemetry
-                if written_in_chunk >= chunk_len {
-                    cache.chunk_written_bytes[chunk_idx].store(chunk_len, Ordering::Release);
-                    let mut guard = CACHED.lock();
-                    if let Some((ref id, _, ref mut chunks)) = *guard {
-                        if id == &file_id && !chunks.contains(&(chunk_idx as u64)) {
-                            chunks.push(chunk_idx as u64);
+                let send_res = HTTP_CLIENT.get(&url).headers(headers).send().await;
+                match send_res {
+                    Ok(response) => {
+                        let status = response.status();
+                        // 401 Unauthorized handling: request token refresh and retry
+                        if status.as_u16() == 401 {
+                            eprintln!("[bitdrop] HTTP 401 Unauthorized for chunk {} of {}, requesting token refresh", chunk_idx, file_id);
+                            let refreshed = {
+                                let provider_guard = TOKEN_PROVIDER.lock();
+                                provider_guard.as_ref().and_then(|cb| cb())
+                            };
+                            if let Some(new_token) = refreshed {
+                                current_token = Some(new_token);
+                            }
+                            if let Some(&delay) = backoffs.get(attempt) {
+                                tokio::time::sleep(delay).await;
+                                continue;
+                            } else {
+                                final_res = Err(anyhow::anyhow!("HTTP 401 Unauthorized persistent"));
+                                break;
+                            }
+                        }
+
+                        if !status.is_success() && status.as_u16() != 206 {
+                            final_res = Err(anyhow::anyhow!("HTTP error status: {}", status));
+                            if let Some(&delay) = backoffs.get(attempt) {
+                                tokio::time::sleep(delay).await;
+                                continue;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        let mut stream = response.bytes_stream();
+                        let mut written_in_chunk: u32 = 0;
+                        let mut stream_err = None;
+
+                        while let Some(item) = stream.next().await {
+                            if cache.active_generation.load(Ordering::Relaxed) != generation {
+                                FETCHES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+                                cache.chunk_fetching[chunk_idx].store(false, Ordering::Release);
+                                return;
+                            }
+
+                            match item {
+                                Ok(bytes) => {
+                                    let slice_len = bytes.len() as u32;
+                                    let write_pos = chunk_start + written_in_chunk as u64;
+
+                                    if let Err(e) = cache.file.write_at(&bytes, write_pos) {
+                                        stream_err = Some(anyhow::anyhow!("Disk write error: {:?}", e));
+                                        break;
+                                    }
+                                    written_in_chunk += slice_len;
+
+                                    cache.chunk_written_bytes[chunk_idx].store(written_in_chunk, Ordering::Release);
+                                    BYTES_FETCHED.fetch_add(slice_len as usize, Ordering::Relaxed);
+
+                                    // Wake up any threads waiting in Read::read() for this slice
+                                    cache.data_arrived.notify_all();
+                                }
+                                Err(e) => {
+                                    stream_err = Some(anyhow::anyhow!("Stream interrupted: {:?}", e));
+                                    break;
+                                }
+                            }
+                        }
+
+                        if let Some(err) = stream_err {
+                            final_res = Err(err);
+                            if attempt < 3 {
+                                tokio::time::sleep(backoffs[attempt]).await;
+                                continue;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        // Chunk completed successfully! Clear any previous failure flags.
+                        if written_in_chunk >= chunk_len {
+                            cache.chunk_written_bytes[chunk_idx].store(chunk_len, Ordering::Release);
+                            cache.chunk_failed[chunk_idx].store(false, Ordering::Release);
+                            cache.failed.store(false, Ordering::Release);
+
+                            let mut guard = CACHED.lock();
+                            if let Some((_, ref mut chunks)) = guard.get_mut(&file_id) {
+                                if !chunks.contains(&(chunk_idx as u64)) {
+                                    chunks.push(chunk_idx as u64);
+                                }
+                            }
+                            // Append chunk completion to index file
+                            if let Ok(mut idx_file) = OpenOptions::new().create(true).append(true).open(&index_path) {
+                                use std::io::Write;
+                                let _ = writeln!(idx_file, "{}", chunk_idx);
+                            }
+                        }
+
+                        final_res = Ok(());
+                        break;
+                    }
+                    Err(e) => {
+                        final_res = Err(anyhow::anyhow!("Connection error: {:?}", e));
+                        if attempt < 3 {
+                            tokio::time::sleep(backoffs[attempt]).await;
+                            continue;
+                        } else {
+                            break;
                         }
                     }
-                    // Append chunk completion to index file
-                    if let Ok(mut idx_file) = OpenOptions::new().create(true).append(true).open(&index_path) {
-                        use std::io::Write;
-                        let _ = writeln!(idx_file, "{}", chunk_idx);
-                    }
                 }
-
-                Ok::<(), anyhow::Error>(())
             }
-            .await;
 
-            if let Err(e) = fetch_res {
-                eprintln!("[bitdrop] error streaming chunk {} for {}: {:?}", chunk_idx, file_id, e);
+            if let Err(e) = final_res {
+                eprintln!("[bitdrop] failed streaming chunk {} for {} after retries: {:?}", chunk_idx, file_id, e);
+                cache.chunk_failed[chunk_idx].store(true, Ordering::Release);
                 cache.failed.store(true, Ordering::Release);
             }
 
@@ -323,8 +449,8 @@ impl CloudMediaSource {
             if self.cache.active_generation.load(Ordering::Relaxed) != self.generation {
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "Track skipped"));
             }
-            if self.cache.failed.load(Ordering::Relaxed) {
-                return Err(io::Error::new(io::ErrorKind::Other, "Network fetch failed"));
+            if self.cache.chunk_failed[chunk_idx].load(Ordering::Relaxed) {
+                return Err(io::Error::other("Network fetch failed after retries"));
             }
             self.cache.data_arrived.wait(&mut guard);
         }
@@ -354,10 +480,11 @@ impl Read for CloudMediaSource {
         self.position += bytes_read as u64;
 
         // Proactive N+1 chunk prefetch when decode cursor crosses 50% of the active chunk
-        if chunk_offset > (CHUNK_SIZE as u32 / 2) && chunk_idx + 1 < self.cache.chunk_written_bytes.len() {
-            if self.cache.chunk_written_bytes[chunk_idx + 1].load(Ordering::Relaxed) == 0 {
-                self.trigger_chunk_fetch(chunk_idx + 1);
-            }
+        if chunk_offset > (CHUNK_SIZE as u32 / 2)
+            && chunk_idx + 1 < self.cache.chunk_written_bytes.len()
+            && self.cache.chunk_written_bytes[chunk_idx + 1].load(Ordering::Relaxed) == 0
+        {
+            self.trigger_chunk_fetch(chunk_idx + 1);
         }
 
         Ok(bytes_read)
@@ -391,5 +518,12 @@ impl MediaSource for CloudMediaSource {
 
     fn byte_len(&self) -> Option<u64> {
         Some(self.cache.total_size)
+    }
+}
+
+impl Drop for CloudMediaSource {
+    fn drop(&mut self) {
+        self.cache.active_generation.fetch_add(1, Ordering::SeqCst);
+        self.cache.data_arrived.notify_all();
     }
 }

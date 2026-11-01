@@ -429,7 +429,7 @@ fn parse_track_and_title(s: &str) -> (u32, String) {
         let num: u32 = num_str.parse().unwrap_or(0);
         let rem: String = chars.collect();
         let title = rem
-            .trim_start_matches(|c: char| c == '-' || c == '.' || c == ' ' || c == '_' || c == '~')
+            .trim_start_matches(['-', '.', ' ', '_', '~'])
             .trim();
         if !title.is_empty() {
             return (num, title.to_string());
@@ -742,10 +742,10 @@ pub fn cloud_library_scan_tags_batch(
                                 if pic.data_offset + pic.data_length as u64 <= bytes.len() as u64 {
                                     let start = pic.data_offset as usize;
                                     let end = start + pic.data_length as usize;
-                                    if end <= bytes.len() {
-                                        if std::fs::write(&art_target, &bytes[start..end]).is_ok() {
-                                            artwork_path = art_target.to_string_lossy().to_string();
-                                        }
+                                    if end <= bytes.len()
+                                        && std::fs::write(&art_target, &bytes[start..end]).is_ok()
+                                    {
+                                        artwork_path = art_target.to_string_lossy().to_string();
                                     }
                                 } else if pic.data_length > 0 && pic.data_length <= 5 * 1024 * 1024 {
                                     RATE_LIMITER.until_ready().await;

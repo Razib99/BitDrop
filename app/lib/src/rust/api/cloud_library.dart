@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `parse_index_number`, `parse_year`, `sanitize_filename`, `with_db_mut`, `with_db`
+// These functions are ignored because they are not marked as `pub`: `fetch_online_cover_art`, `parse_filename_metadata`, `parse_index_number`, `parse_track_and_title`, `parse_year`, `sanitize_filename`, `url_encode`, `with_db_mut`, `with_db`
 // These types are ignored because they are not used by any `pub` functions: `CACHE_DIR`, `DB`, `HTTP_CLIENT`, `RATE_LIMITER`, `RT`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 

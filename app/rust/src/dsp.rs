@@ -24,8 +24,8 @@ pub const MAX_EQ_BANDS: usize = 16;
 pub const ISO_10_BAND: [f64; 10] =
     [31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0];
 
-pub const BUTTERWORTH_Q: f64 = 0.7071067811865476; // 1.0 / sqrt(2)
-pub const OCTAVE_PEAK_Q: f64 = 1.4142135623730951; // sqrt(2)
+pub const BUTTERWORTH_Q: f64 = std::f64::consts::FRAC_1_SQRT_2; // 1.0 / sqrt(2)
+pub const OCTAVE_PEAK_Q: f64 = std::f64::consts::SQRT_2; // sqrt(2)
 pub const SUBSONIC_FREQ: f64 = 18.0;
 
 /// Atomic metrics exported to UI and diagnostic systems.
@@ -38,6 +38,222 @@ pub struct EqBandSpec {
     pub freq: f32,
     pub gain_db: f32,
     pub q: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DspConfigSnapshot {
+    pub sample_rate: f64,
+    pub eq_enabled: bool,
+    pub preamp_db: f64,
+    pub auto_gain: f64,
+    pub balance: f64,
+    pub mono: bool,
+    pub specs: [EqBandSpec; MAX_EQ_BANDS],
+    pub spec_count: usize,
+    pub is_parametric: bool,
+    pub graphic_gains: [f32; 10],
+    pub version: u64,
+}
+
+impl Default for DspConfigSnapshot {
+    fn default() -> Self {
+        Self {
+            sample_rate: 48000.0,
+            eq_enabled: false,
+            preamp_db: 0.0,
+            auto_gain: 0.0,
+            balance: 0.0,
+            mono: false,
+            specs: [EqBandSpec::default(); MAX_EQ_BANDS],
+            spec_count: 0,
+            is_parametric: false,
+            graphic_gains: [0.0; 10],
+            version: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoundaryKind {
+    TrackStarted,
+    TrackEnded,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BoundaryMarker {
+    pub trigger_at_frame: u64,
+    pub kind: BoundaryKind,
+    pub file_id: [u8; 64],
+    pub file_id_len: usize,
+}
+
+impl BoundaryMarker {
+    pub fn track_ended(trigger_at_frame: u64, file_id_str: &str) -> Self {
+        let mut id = [0u8; 64];
+        let bytes = file_id_str.as_bytes();
+        let len = bytes.len().min(64);
+        id[..len].copy_from_slice(&bytes[..len]);
+        Self {
+            trigger_at_frame,
+            kind: BoundaryKind::TrackEnded,
+            file_id: id,
+            file_id_len: len,
+        }
+    }
+
+    pub fn track_started(trigger_at_frame: u64, file_id_str: &str) -> Self {
+        let mut id = [0u8; 64];
+        let bytes = file_id_str.as_bytes();
+        let len = bytes.len().min(64);
+        id[..len].copy_from_slice(&bytes[..len]);
+        Self {
+            trigger_at_frame,
+            kind: BoundaryKind::TrackStarted,
+            file_id: id,
+            file_id_len: len,
+        }
+    }
+
+    pub fn file_id_str(&self) -> &str {
+        std::str::from_utf8(&self.file_id[..self.file_id_len]).unwrap_or("")
+    }
+}
+
+/// Downmixes interleaved multichannel audio into stereo using ITU-R BS.775 standard coefficients.
+/// 
+/// Channels supported:
+/// - 1 (Mono): duplicated to L and R
+/// - 2 (Stereo): passed through
+/// - 3 (3.0 / 2.1: FL, FR, FC): L = (FL + 0.7071 * FC) * 0.5858, R = (FR + 0.7071 * FC) * 0.5858
+/// - 4 (Quad / 4.0): L = (FL + 0.7071 * CH2) * 0.5858, R = (FR + 0.7071 * CH3) * 0.5858
+/// - 5 (5.0: FL, FR, FC, SL, SR): L = (FL + 0.7071 * FC + 0.7071 * SL) * 0.4142, R = (FR + 0.7071 * FC + 0.7071 * SR) * 0.4142
+/// - 6 (5.1: FL, FR, FC, LFE, SL, SR):
+///   L = (FL + 0.7071 * FC + 0.7071 * LFE + 0.7071 * SL) * 0.3204
+///   R = (FR + 0.7071 * FC + 0.7071 * LFE + 0.7071 * SR) * 0.3204
+pub fn downmix_to_stereo(samples: &[f32], channels: usize) -> Vec<f32> {
+    if channels == 2 {
+        return samples.to_vec();
+    }
+    if channels == 1 {
+        let mut stereo = Vec::with_capacity(samples.len() * 2);
+        for &s in samples {
+            stereo.push(s);
+            stereo.push(s);
+        }
+        return stereo;
+    }
+    let frames = samples.len() / channels;
+    let mut stereo = Vec::with_capacity(frames * 2);
+    const C: f32 = std::f32::consts::FRAC_1_SQRT_2;
+    if channels == 3 {
+        const SCALE: f32 = 0.5858;
+        for i in 0..frames {
+            let fl = samples[i * 3];
+            let fr = samples[i * 3 + 1];
+            let fc = samples[i * 3 + 2];
+            stereo.push((fl + C * fc) * SCALE);
+            stereo.push((fr + C * fc) * SCALE);
+        }
+    } else if channels == 4 {
+        const SCALE: f32 = 0.5858;
+        for i in 0..frames {
+            let fl = samples[i * 4];
+            let fr = samples[i * 4 + 1];
+            let ch2 = samples[i * 4 + 2];
+            let ch3 = samples[i * 4 + 3];
+            stereo.push((fl + C * ch2) * SCALE);
+            stereo.push((fr + C * ch3) * SCALE);
+        }
+    } else if channels == 5 {
+        const SCALE: f32 = 0.4142;
+        for i in 0..frames {
+            let fl = samples[i * 5];
+            let fr = samples[i * 5 + 1];
+            let fc = samples[i * 5 + 2];
+            let sl = samples[i * 5 + 3];
+            let sr = samples[i * 5 + 4];
+            stereo.push((fl + C * fc + C * sl) * SCALE);
+            stereo.push((fr + C * fc + C * sr) * SCALE);
+        }
+    } else {
+        // 5.1 and above (ITU-R BS.775)
+        const SCALE: f32 = 0.3204;
+        for i in 0..frames {
+            let fl = samples[i * channels];
+            let fr = samples[i * channels + 1];
+            let fc = samples[i * channels + 2];
+            let lfe = samples[i * channels + 3];
+            let sl = samples[i * channels + 4];
+            let sr = samples[i * channels + 5];
+            let l = (fl + C * fc + C * lfe + C * sl) * SCALE;
+            let r = (fr + C * fc + C * lfe + C * sr) * SCALE;
+            stereo.push(l);
+            stereo.push(r);
+        }
+    }
+    stereo
+}
+
+const TRIPLE_DIRTY_BIT: u8 = 0x80;
+
+/// Lock-free, wait-free, zero-allocation triple buffer for passing DSP configurations
+/// from the UI/control thread to the real-time audio thread without locking or blocking.
+pub struct TripleBuffer<T: Copy> {
+    buffers: [std::cell::UnsafeCell<T>; 3],
+    shared: std::sync::atomic::AtomicU8,
+    write_idx: std::sync::atomic::AtomicU8,
+    read_idx: std::sync::atomic::AtomicU8,
+}
+
+unsafe impl<T: Copy + Send> Send for TripleBuffer<T> {}
+unsafe impl<T: Copy + Sync> Sync for TripleBuffer<T> {}
+
+impl<T: Copy + Default> TripleBuffer<T> {
+    pub fn new(initial: T) -> Self {
+        Self {
+            buffers: [
+                std::cell::UnsafeCell::new(initial),
+                std::cell::UnsafeCell::new(initial),
+                std::cell::UnsafeCell::new(initial),
+            ],
+            shared: std::sync::atomic::AtomicU8::new(2),
+            write_idx: std::sync::atomic::AtomicU8::new(1),
+            read_idx: std::sync::atomic::AtomicU8::new(0),
+        }
+    }
+
+    /// Publish a new snapshot from the producer (control thread).
+    /// Wait-free O(1), zero allocations, zero mutex locks.
+    pub fn publish(&self, value: T) {
+        let w = self.write_idx.load(std::sync::atomic::Ordering::Relaxed) as usize;
+        unsafe {
+            *self.buffers[w].get() = value;
+        }
+        let old_shared = self.shared.swap((w as u8) | TRIPLE_DIRTY_BIT, std::sync::atomic::Ordering::AcqRel);
+        let new_w = old_shared & 0x03;
+        self.write_idx.store(new_w, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Read the newest published snapshot from the consumer (real-time audio thread).
+    /// Wait-free O(1), zero allocations, zero mutex locks.
+    pub fn read_new(&self) -> Option<T> {
+        let shared = self.shared.load(std::sync::atomic::Ordering::Acquire);
+        if (shared & TRIPLE_DIRTY_BIT) == 0 {
+            return None;
+        }
+        let r = self.read_idx.load(std::sync::atomic::Ordering::Relaxed);
+        let old_shared = self.shared.swap(r, std::sync::atomic::Ordering::AcqRel);
+        let new_r = old_shared & 0x03;
+        self.read_idx.store(new_r, std::sync::atomic::Ordering::Relaxed);
+        let val = unsafe { *self.buffers[new_r as usize].get() };
+        Some(val)
+    }
+
+    /// Unconditionally read the current buffer held by the consumer.
+    pub fn read_current(&self) -> T {
+        let r = self.read_idx.load(std::sync::atomic::Ordering::Relaxed) as usize;
+        unsafe { *self.buffers[r].get() }
+    }
 }
 
 /// A stereo biquad filter in 64-bit precision Transposed Direct Form II.
@@ -193,14 +409,14 @@ impl FilterBankF64 {
     pub fn set_bands(&mut self, specs: &[EqBandSpec], preamp_db: f64, fs: f64) {
         self.preamp_linear = 10f64.powf(preamp_db / 20.0);
         let n = specs.len().min(MAX_EQ_BANDS);
-        for i in 0..n {
-            self.specs[i] = specs[i];
+        for (i, &spec) in specs.iter().take(n).enumerate() {
+            self.specs[i] = spec;
             self.bands[i].set_coeffs(
-                specs[i].kind,
-                specs[i].freq as f64,
+                spec.kind,
+                spec.freq as f64,
                 fs,
-                specs[i].q as f64,
-                specs[i].gain_db as f64,
+                spec.q as f64,
+                spec.gain_db as f64,
             );
         }
         self.active = n;
@@ -934,5 +1150,65 @@ mod tests {
         eprintln!(" Bit Identity  : 100% Exact Match (0-bit deviation)");
         eprintln!(" Status        : PASS (Pure Bit-Perfect Bypass Verified)");
         eprintln!("=======================================================\n");
+    }
+
+    #[test]
+    fn test_rubato_params() {
+        let params = rubato::SincInterpolationParameters {
+            sinc_len: 256,
+            f_cutoff: Some(0.95),
+            oversampling_factor: 256,
+            interpolation: rubato::SincInterpolationType::Cubic,
+            window: rubato::WindowFunction::BlackmanHarris2,
+        };
+        let _resampler = rubato::Async::<f64>::new_sinc(
+            48000.0 / 44100.0,
+            1.0,
+            &params,
+            1024,
+            2,
+            rubato::FixedAsync::Input,
+        ).unwrap();
+    }
+
+    #[test]
+    fn test_triple_buffer_concurrent() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let tb = Arc::new(TripleBuffer::<DspConfigSnapshot>::new(DspConfigSnapshot::default()));
+        let tb_prod = Arc::clone(&tb);
+        let tb_cons = Arc::clone(&tb);
+
+        let producer = thread::spawn(move || {
+            for i in 1..=50_000 {
+                let snap = DspConfigSnapshot {
+                    version: i,
+                    preamp_db: i as f64 * 0.1,
+                    ..Default::default()
+                };
+                tb_prod.publish(snap);
+            }
+        });
+
+        let consumer = thread::spawn(move || {
+            let mut last_seen_version = 0;
+            let mut reads = 0;
+            while last_seen_version < 50_000 {
+                if let Some(snap) = tb_cons.read_new() {
+                    assert!(snap.version >= last_seen_version, "Out of order snapshot version!");
+                    assert!((snap.preamp_db - snap.version as f64 * 0.1).abs() < 1e-6, "Torn read detected!");
+                    last_seen_version = snap.version;
+                    reads += 1;
+                }
+                std::hint::spin_loop();
+            }
+            reads
+        });
+
+        producer.join().unwrap();
+        let total_reads = consumer.join().unwrap();
+        assert!(total_reads > 0);
+        eprintln!("Triple buffer concurrent test passed: {} snapshots consumed", total_reads);
     }
 }

@@ -3,12 +3,14 @@
 
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
+import '../dsp.dart';
 import '../frb_generated.dart';
+import '../lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `active_bands`, `new`, `open_media_source`, `process_stereo`, `process`, `ramp_step`, `recompute`, `request_load`, `reset_state`, `set_bands`, `set_coeffs`, `set_peaking`, `set_ramp`, `set_sample_rate`, `stream_opens`, `update_gains`
-// These types are ignored because they are not used by any `pub` functions: `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DecoderCmd`, `EqBandSpec`, `GraphicEq`, `LOAD_SENDER`, `OpenedTrack`, `PLAYER_STATE`, `PlayerState`, `StereoBiquad`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `default`, `default`, `default`, `deref`, `deref`, `deref`, `deref`, `eq`, `fmt`, `initialize`, `initialize`, `initialize`, `initialize`
+// These functions are ignored because they are not marked as `pub`: `open_media_source`, `ramp_step`, `request_load`, `set_ramp`, `stream_opens`
+// These types are ignored because they are not used by any `pub` functions: `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DSP_TRIPLE_BUFFER`, `DecoderCmd`, `LOAD_SENDER`, `OpenedTrack`, `PLAYER_STATE`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `default`, `deref`, `deref`, `deref`, `deref`, `deref`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Enables hardware Flush-to-Zero (FTZ) and Denormals-are-Zero (DAZ) mode.
 /// On ARM64 (Android), this sets bits 24 (FZ) and 19 (DN) of FPCR.
@@ -16,6 +18,10 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// Prevents catastrophic CPU denormal microcode exceptions during filter decays and fades.
 Future<void> enableHardwareFlushToZero() =>
     RustLib.instance.api.crateApiAudioEngineEnableHardwareFlushToZero();
+
+/// Publishes the current EQ and DSP configuration into the lock-free Triple Buffer.
+Future<void> publishDspConfig({required PlayerState state}) =>
+    RustLib.instance.api.crateApiAudioEnginePublishDspConfig(state: state);
 
 Future<void> initEngine() =>
     RustLib.instance.api.crateApiAudioEngineInitEngine();
@@ -61,6 +67,8 @@ void engineResume() => RustLib.instance.api.crateApiAudioEngineEngineResume();
 /// that feels broken.
 void engineSeek({required int positionMs}) =>
     RustLib.instance.api.crateApiAudioEngineEngineSeek(positionMs: positionMs);
+
+void engineStop() => RustLib.instance.api.crateApiAudioEngineEngineStop();
 
 /// Which parts of the current track would play without touching the network.
 ///
@@ -210,4 +218,147 @@ class EngineOutputState {
           outputSampleRate == other.outputSampleRate &&
           dspActive == other.dspActive &&
           hasTrack == other.hasTrack;
+}
+
+class PlayerState {
+  final int targetSampleRate;
+  final bool flushRequested;
+  final bool isPlaying;
+  final int positionMs;
+  final int durationMs;
+  final String currentTrackId;
+  final bool eqEnabled;
+  final F32Array10 eqGains;
+  final double eqPreamp;
+  final List<EqBandSpec>? eqSpecs;
+  final double autoGain;
+  final double balance;
+  final bool mono;
+  final bool eqUpdated;
+
+  /// Where the output gain is heading, 0.0 or 1.0.
+  ///
+  /// Track changes ramp to silence, swap, then ramp back. Cutting straight
+  /// from one track's samples to another's puts a step discontinuity into
+  /// the stream, which is audible as a click and is worse on good gear.
+  final double fadeTarget;
+
+  /// Gain change per frame, derived from the output rate.
+  final double fadeStep;
+
+  /// Output is pinned to silence while the engine refills, whatever
+  /// `fade_target` says. The two are separate because they answer different
+  /// questions: the target is where the ramp is going, the gate is whether
+  /// the engine is ready to be heard at all. Starting a track or landing a
+  /// seek on an empty queue is what makes playback stutter into life.
+  final bool gateOutput;
+
+  /// A track is being opened. Set the instant the user picks one, before
+  /// any network round trip, so the UI can react immediately.
+  final bool loading;
+
+  /// How far the decoder has read. `position_ms` is this minus the queue,
+  /// which is the part the listener has actually heard.
+  final int decodedMs;
+
+  /// True while playback is waiting on the network rather than simply
+  /// paused, so the UI can say which it is.
+  final bool buffering;
+
+  /// Roughly how much decoded audio is queued ahead of the output.
+  final int bufferedMs;
+
+  /// What the current track actually is, as the decoder read it. The UI
+  /// must never infer these from a filename.
+  final String sourceCodec;
+  final int sourceSampleRate;
+  final int sourceBits;
+  final int sourceChannels;
+
+  const PlayerState({
+    required this.targetSampleRate,
+    required this.flushRequested,
+    required this.isPlaying,
+    required this.positionMs,
+    required this.durationMs,
+    required this.currentTrackId,
+    required this.eqEnabled,
+    required this.eqGains,
+    required this.eqPreamp,
+    this.eqSpecs,
+    required this.autoGain,
+    required this.balance,
+    required this.mono,
+    required this.eqUpdated,
+    required this.fadeTarget,
+    required this.fadeStep,
+    required this.gateOutput,
+    required this.loading,
+    required this.decodedMs,
+    required this.buffering,
+    required this.bufferedMs,
+    required this.sourceCodec,
+    required this.sourceSampleRate,
+    required this.sourceBits,
+    required this.sourceChannels,
+  });
+
+  @override
+  int get hashCode =>
+      targetSampleRate.hashCode ^
+      flushRequested.hashCode ^
+      isPlaying.hashCode ^
+      positionMs.hashCode ^
+      durationMs.hashCode ^
+      currentTrackId.hashCode ^
+      eqEnabled.hashCode ^
+      eqGains.hashCode ^
+      eqPreamp.hashCode ^
+      eqSpecs.hashCode ^
+      autoGain.hashCode ^
+      balance.hashCode ^
+      mono.hashCode ^
+      eqUpdated.hashCode ^
+      fadeTarget.hashCode ^
+      fadeStep.hashCode ^
+      gateOutput.hashCode ^
+      loading.hashCode ^
+      decodedMs.hashCode ^
+      buffering.hashCode ^
+      bufferedMs.hashCode ^
+      sourceCodec.hashCode ^
+      sourceSampleRate.hashCode ^
+      sourceBits.hashCode ^
+      sourceChannels.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PlayerState &&
+          runtimeType == other.runtimeType &&
+          targetSampleRate == other.targetSampleRate &&
+          flushRequested == other.flushRequested &&
+          isPlaying == other.isPlaying &&
+          positionMs == other.positionMs &&
+          durationMs == other.durationMs &&
+          currentTrackId == other.currentTrackId &&
+          eqEnabled == other.eqEnabled &&
+          eqGains == other.eqGains &&
+          eqPreamp == other.eqPreamp &&
+          eqSpecs == other.eqSpecs &&
+          autoGain == other.autoGain &&
+          balance == other.balance &&
+          mono == other.mono &&
+          eqUpdated == other.eqUpdated &&
+          fadeTarget == other.fadeTarget &&
+          fadeStep == other.fadeStep &&
+          gateOutput == other.gateOutput &&
+          loading == other.loading &&
+          decodedMs == other.decodedMs &&
+          buffering == other.buffering &&
+          bufferedMs == other.bufferedMs &&
+          sourceCodec == other.sourceCodec &&
+          sourceSampleRate == other.sourceSampleRate &&
+          sourceBits == other.sourceBits &&
+          sourceChannels == other.sourceChannels;
 }

@@ -438,7 +438,7 @@ impl MetadataDb {
 
     /// Single track tag update (backward compatible wrapper).
     pub fn update_tags_single(&mut self, update: &TrackTagUpdate) -> Result<()> {
-        self.batch_update_tags(&[update.clone()])
+        self.batch_update_tags(std::slice::from_ref(update))
     }
 
     pub fn set_artwork(&self, file_id: &str, path: &str) -> Result<()> {
@@ -533,7 +533,7 @@ impl MetadataDb {
              ORDER BY album, album_artist, disc_number, track_number, title",
         )?;
 
-        let rows = stmt.query_map([], |r| Self::row_to_cloud_track(r))?;
+        let rows = stmt.query_map([], Self::row_to_cloud_track)?;
         rows.collect()
     }
 
@@ -597,10 +597,8 @@ impl MetadataDb {
                 "SELECT file_id FROM tracks WHERE file_id NOT IN (SELECT file_id FROM temp_valid_ids)",
             )?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-            for r in rows {
-                if let Ok(id) = r {
-                    to_delete.push(id);
-                }
+            for id in rows.flatten() {
+                to_delete.push(id);
             }
         } else {
             for prefix in folder_prefixes {
@@ -612,10 +610,8 @@ impl MetadataDb {
                 let like_pattern = format!("{} / %", prefix);
                 let rows =
                     stmt.query_map(params![prefix, like_pattern], |r| r.get::<_, String>(0))?;
-                for r in rows {
-                    if let Ok(id) = r {
-                        to_delete.push(id);
-                    }
+                for id in rows.flatten() {
+                    to_delete.push(id);
                 }
             }
         }

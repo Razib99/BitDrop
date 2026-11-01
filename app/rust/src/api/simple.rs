@@ -5,7 +5,6 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use std::io::Cursor;
-use std::path::Path;
 
 pub struct DecodedAudio {
     pub sample_rate: u32,
@@ -30,7 +29,7 @@ pub fn decode_flac_full(audio_data: Vec<u8>) -> Result<DecodedAudio, String> {
     let format_opts: FormatOptions = Default::default();
     let metadata_opts: MetadataOptions = Default::default();
 
-    let mut probed = symphonia::default::get_probe()
+    let probed = symphonia::default::get_probe()
         .format(&hint, mss, &format_opts, &metadata_opts)
         .map_err(|e| format!("Failed to probe audio data: {:?}", e))?;
 
