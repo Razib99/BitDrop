@@ -75,12 +75,23 @@ pub fn enable_hardware_flush_to_zero() {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum EngineEvent {
+    PlaybackState { is_playing: bool, is_buffering: bool },
+    TrackStarted { file_id: String },
+    TrackEnded { file_id: String },
+    PositionUpdate { position_ms: u32, duration_ms: u32 },
+    BufferTelemetry { buffered_ms: u32, fetches_in_flight: u32, bytes_fetched: u64 },
+    LimiterTelemetry { gr_millidb: u32, clipped_samples: u64 },
+}
+
 lazy_static::lazy_static! {
     static ref PLAYER_STATE: Mutex<PlayerState> = Mutex::new(PlayerState::default());
     static ref CMD_SENDER: Mutex<Option<crossbeam_channel::Sender<DecoderCmd>>> = Mutex::new(None);
     /// Opening a source is slow and belongs off the decode thread; see the
     /// loader thread in `init_engine`.
     static ref LOAD_SENDER: Mutex<Option<crossbeam_channel::Sender<DecoderCmd>>> = Mutex::new(None);
+    static ref EVENT_SINK: Mutex<Option<crate::frb_generated::StreamSink<EngineEvent>>> = Mutex::new(None);
 }
 
 /// Bumped on every play request. The loader stamps each open with the value
@@ -96,6 +107,8 @@ lazy_static::lazy_static! {
     static ref AUDIO_CONSUMER: Mutex<Option<rtrb::Consumer<f32>>> =
         Mutex::new(None);
     static ref BOUNDARY_CONSUMER: Mutex<Option<rtrb::Consumer<BoundaryMarker>>> =
+        Mutex::new(None);
+    static ref TRIGGERED_PRODUCER: Mutex<Option<rtrb::Producer<BoundaryMarker>>> =
         Mutex::new(None);
 }
 
@@ -207,7 +220,7 @@ const SEEK_FADE_MS: u32 = 20;
 
 /// Ramp for pausing and for concealing an underrun. Below the threshold
 /// where a gain change is heard as anything but a clean stop.
-const DUCK_MS: u32 = 30;
+pub const DUCK_MS: u32 = 30;
 
 /// How much decoded audio to bank before a new track or a landed seek is
 /// allowed to be heard. This is the whole difference between "it starts" and
@@ -215,7 +228,7 @@ const DUCK_MS: u32 = 30;
 const PREBUFFER_MS: u32 = 500;
 
 /// Per-frame gain change that walks a ramp of `ms` at `sample_rate`.
-fn ramp_step(ms: u32, sample_rate: u32) -> f32 {
+pub fn ramp_step(ms: u32, sample_rate: u32) -> f32 {
     let sr = if sample_rate == 0 { 48000 } else { sample_rate };
     1.0 / (ms.max(1) as f32 * sr as f32 / 1000.0)
 }
@@ -269,6 +282,15 @@ pub enum DecoderCmd {
         cache_dir: String,
         ext: String,
     },
+    SetNextTrack(String),
+    SetNextCloud {
+        file_id: String,
+        url: String,
+        auth_token: Option<String>,
+        total_size: u64,
+        cache_dir: String,
+        ext: String,
+    },
     Pause,
     Resume,
     Seek(u32), // ms
@@ -301,8 +323,12 @@ fn open_media_source(source: Box<dyn MediaSource>, ext: &str) -> Option<OpenedTr
     }
 
     let mss = MediaSourceStream::new(source, Default::default());
+    let format_opts = symphonia::core::formats::FormatOptions {
+        enable_gapless: true,
+        ..Default::default()
+    };
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &Default::default(), &Default::default())
+        .format(&hint, mss, &format_opts, &Default::default())
         .ok()?;
 
     let format = probed.format;
@@ -351,27 +377,20 @@ fn open_media_source(source: Box<dyn MediaSource>, ext: &str) -> Option<OpenedTr
 
 #[cfg(target_os = "android")]
 struct PlayerCallback {
-    consumer: Option<rtrb::Consumer<f32>>,
-    boundary_consumer: Option<rtrb::Consumer<BoundaryMarker>>,
-    dsp: DspPipelineV2,
-    /// Survives across callbacks: a ramp spans several buffers.
-    fade_gain: f32,
-    /// Underrun concealment, multiplied with `fade_gain`. Kept separate so a
-    /// dropout never disturbs the musical fade in progress around it.
-    duck: f32,
-    /// The last frame written. An underrun decays this to silence instead of
-    /// writing a hard zero, which would be a click.
-    last: (f32, f32),
+    renderer: crate::renderer::OutputRenderer,
 }
 
 #[cfg(target_os = "android")]
 impl Drop for PlayerCallback {
     fn drop(&mut self) {
-        if let Some(c) = self.consumer.take() {
+        if let Some(c) = self.renderer.consumer.take() {
             *AUDIO_CONSUMER.lock().unwrap() = Some(c);
         }
-        if let Some(bc) = self.boundary_consumer.take() {
+        if let Some(bc) = self.renderer.boundary_consumer.take() {
             *BOUNDARY_CONSUMER.lock().unwrap() = Some(bc);
+        }
+        if let Some(tp) = self.renderer.triggered_producer.take() {
+            *TRIGGERED_PRODUCER.lock().unwrap() = Some(tp);
         }
     }
 }
@@ -394,181 +413,14 @@ impl AudioOutputCallback for PlayerCallback {
         _stream: &mut dyn AudioOutputStreamSafe,
         audio_data: &mut [(f32, f32)],
     ) -> DataCallbackResult {
-        enable_hardware_flush_to_zero();
         CONSUMED_FRAMES.fetch_add(audio_data.len() as u64, Ordering::Relaxed);
-
-        // Read real-time atomic state flags - ZERO mutex locks on the audio thread!
-        let is_playing = CALLBACK_IS_PLAYING.load(Ordering::Acquire);
-        let gated = CALLBACK_GATE_OUTPUT.load(Ordering::Acquire);
-        let flush = CALLBACK_FLUSH_REQUESTED.swap(false, Ordering::AcqRel);
-        let fade_target = f32::from_bits(CALLBACK_FADE_TARGET.load(Ordering::Relaxed));
-        let fade_step = f32::from_bits(CALLBACK_FADE_STEP.load(Ordering::Relaxed));
-
-        // Fetch pre-computed DSP snapshot from lock-free Triple Buffer - ZERO allocations/mutex locks!
-        if let Some(snap) = DSP_TRIPLE_BUFFER.read_new() {
-            self.dsp.eq_enabled = snap.eq_enabled;
-            if snap.sample_rate > 0.0 && (self.dsp.sample_rate - snap.sample_rate).abs() > 0.5 {
-                self.dsp.set_sample_rate(snap.sample_rate);
-            }
-            if snap.is_parametric {
-                self.dsp.install_parameters(
-                    &snap.specs[..snap.spec_count],
-                    snap.preamp_db,
-                    0.0,
-                    1.0,
-                    snap.balance,
-                    snap.mono,
-                );
-            } else {
-                self.dsp.update_graphic_gains(
-                    &snap.graphic_gains,
-                    snap.preamp_db,
-                    0.0,
-                    1.0,
-                    snap.balance,
-                    snap.mono,
-                );
-            }
-        }
-
-        let consumer = match self.consumer.as_mut() {
-            Some(c) => c,
-            None => return DataCallbackResult::Stop,
+        let slice: &mut [f32] = unsafe {
+            std::slice::from_raw_parts_mut(audio_data.as_mut_ptr() as *mut f32, audio_data.len() * 2)
         };
-
-        if flush {
-            let slots = consumer.slots();
-            if slots > 0 {
-                if let Ok(chunk) = consumer.read_chunk(slots) {
-                    chunk.commit_all();
-                }
-            }
-            if let Some(bc) = self.boundary_consumer.as_mut() {
-                let b_slots = bc.slots();
-                if b_slots > 0 {
-                    if let Ok(chunk) = bc.read_chunk(b_slots) {
-                        chunk.commit_all();
-                    }
-                }
-            }
-            TRACK_ENDED_FLAG.store(false, Ordering::Release);
+        match self.renderer.render_interleaved(slice, 2) {
+            crate::renderer::RenderAction::Continue => DataCallbackResult::Continue,
+            crate::renderer::RenderAction::Stop => DataCallbackResult::Stop,
         }
-
-        let rate = self.dsp.sample_rate as u32;
-        let (want, step) = if !is_playing {
-            (0.0, ramp_step(DUCK_MS, rate))
-        } else if gated {
-            (0.0, fade_step)
-        } else {
-            (fade_target, fade_step)
-        };
-
-        if want <= 0.0 && self.fade_gain <= 0.0 {
-            for frame in audio_data.iter_mut() {
-                *frame = (0.0, 0.0);
-            }
-            return DataCallbackResult::Continue;
-        }
-
-        let duck_step = ramp_step(DUCK_MS, rate);
-        let frames_needed = audio_data.len();
-        let samples_needed = frames_needed * 2;
-        let avail_samples = consumer.slots();
-        let samples_to_read = samples_needed.min(avail_samples);
-        let frames_to_read = samples_to_read / 2;
-
-        if frames_to_read > 0 {
-            if let Ok(chunk) = consumer.read_chunk(frames_to_read * 2) {
-                let (s1, s2) = chunk.as_slices();
-                let mut read_idx = 0;
-                let s1_len = s1.len();
-
-                for i in 0..frames_to_read {
-                    let (mut l, mut r) = if read_idx + 1 < s1_len {
-                        (s1[read_idx], s1[read_idx + 1])
-                    } else if read_idx < s1_len {
-                        (s1[read_idx], s2[0])
-                    } else {
-                        let s2_idx = read_idx - s1_len;
-                        (s2[s2_idx], s2[s2_idx + 1])
-                    };
-                    read_idx += 2;
-
-                    let (out_l, out_r) = self.dsp.process_stereo(l as f64, r as f64);
-                    l = out_l as f32;
-                    r = out_r as f32;
-
-                    if self.fade_gain < want {
-                        self.fade_gain = (self.fade_gain + step).min(want);
-                    } else if self.fade_gain > want {
-                        self.fade_gain = (self.fade_gain - step).max(want);
-                    }
-                    self.duck = (self.duck + duck_step).min(1.0);
-
-                    self.last = (l, r);
-                    let g = self.fade_gain * self.duck;
-                    audio_data[i] = (l * g, r * g);
-                }
-                chunk.commit_all();
-            }
-
-            let played = CALLBACK_FRAMES_PLAYED.fetch_add(frames_to_read as u64, Ordering::SeqCst) + frames_to_read as u64;
-
-            // Check boundary markers
-            if let Some(bc) = self.boundary_consumer.as_mut() {
-                while bc.slots() > 0 {
-                    if let Ok(chunk) = bc.read_chunk(1) {
-                        let marker = chunk.as_slices().0[0];
-                        if played >= marker.trigger_at_frame {
-                            chunk.commit_all();
-                            match marker.kind {
-                                BoundaryKind::TrackStarted => {}
-                                BoundaryKind::TrackEnded => {
-                                    CALLBACK_IS_PLAYING.store(false, Ordering::Release);
-                                    TRACK_ENDED_FLAG.store(true, Ordering::Release);
-                                }
-                            }
-                        } else {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-            }
-        } else {
-            let played = CALLBACK_FRAMES_PLAYED.load(Ordering::SeqCst);
-            if let Some(bc) = self.boundary_consumer.as_mut() {
-                while bc.slots() > 0 {
-                    if let Ok(chunk) = bc.read_chunk(1) {
-                        let marker = chunk.as_slices().0[0];
-                        if played >= marker.trigger_at_frame {
-                            chunk.commit_all();
-                            match marker.kind {
-                                BoundaryKind::TrackStarted => {}
-                                BoundaryKind::TrackEnded => {
-                                    CALLBACK_IS_PLAYING.store(false, Ordering::Release);
-                                    TRACK_ENDED_FLAG.store(true, Ordering::Release);
-                                }
-                            }
-                        } else {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Conceal underruns
-        for i in frames_to_read..frames_needed {
-            self.duck = (self.duck - duck_step).max(0.0);
-            let g = self.fade_gain * self.duck;
-            audio_data[i] = (self.last.0 * g, self.last.1 * g);
-        }
-
-        DataCallbackResult::Continue
     }
 }
 
@@ -591,6 +443,8 @@ pub fn init_engine() {
 
     let (audio_tx, audio_rx) = rtrb::RingBuffer::<f32>::new(RING_BUFFER_CAPACITY);
     let (boundary_tx, boundary_rx) = rtrb::RingBuffer::<BoundaryMarker>::new(BOUNDARY_QUEUE_CAPACITY);
+    let (triggered_tx, mut triggered_rx) = rtrb::RingBuffer::<BoundaryMarker>::new(BOUNDARY_QUEUE_CAPACITY);
+    let (next_loaded_tx, next_loaded_rx) = crossbeam_channel::bounded::<(String, Box<OpenedTrack>)>(1);
 
     #[cfg(not(target_os = "android"))]
     {
@@ -601,184 +455,23 @@ pub fn init_engine() {
                 let config: cpal::StreamConfig = config.into();
                 PLAYER_STATE.lock().unwrap().target_sample_rate = config.sample_rate.0;
                 let channels = config.channels as usize;
-                
-                let mut dsp = DspPipelineV2::new(config.sample_rate.0 as f64);
-                let mut fade_gain: f32 = 1.0;
-                let mut duck: f32 = 1.0;
-                let mut last: (f32, f32) = (0.0, 0.0);
-                let rate = config.sample_rate.0;
-                let duck_step = ramp_step(DUCK_MS, rate);
-                let mut cpal_consumer = audio_rx;
-                let mut cpal_boundary_consumer = boundary_rx;
+
+                let mut renderer = crate::renderer::OutputRenderer::new(
+                    config.sample_rate.0 as f64,
+                    Some(audio_rx),
+                    Some(boundary_rx),
+                    Some(triggered_tx),
+                );
 
                 let stream = device.build_output_stream(
                     &config,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        enable_hardware_flush_to_zero();
-                        // Read real-time atomic state flags - ZERO mutex locks!
-                        let is_playing = CALLBACK_IS_PLAYING.load(Ordering::Acquire);
-                        let gated = CALLBACK_GATE_OUTPUT.load(Ordering::Acquire);
-                        let flush = CALLBACK_FLUSH_REQUESTED.swap(false, Ordering::AcqRel);
-                        let fade_target = f32::from_bits(CALLBACK_FADE_TARGET.load(Ordering::Relaxed));
-                        let fade_step = f32::from_bits(CALLBACK_FADE_STEP.load(Ordering::Relaxed));
-
-                        // Read lock-free DSP triple buffer - ZERO mutex locks!
-                        if let Some(snap) = DSP_TRIPLE_BUFFER.read_new() {
-                            dsp.eq_enabled = snap.eq_enabled;
-                            if snap.sample_rate > 0.0 && (dsp.sample_rate - snap.sample_rate).abs() > 0.5 {
-                                dsp.set_sample_rate(snap.sample_rate);
-                            }
-                            if snap.is_parametric {
-                                dsp.install_parameters(
-                                    &snap.specs[..snap.spec_count],
-                                    snap.preamp_db,
-                                    0.0,
-                                    1.0,
-                                    snap.balance,
-                                    snap.mono,
-                                );
-                            } else {
-                                dsp.update_graphic_gains(
-                                    &snap.graphic_gains,
-                                    snap.preamp_db,
-                                    0.0,
-                                    1.0,
-                                    snap.balance,
-                                    snap.mono,
-                                );
-                            }
-                        }
-
-                        if flush {
-                            let slots = cpal_consumer.slots();
-                            if slots > 0 {
-                                if let Ok(chunk) = cpal_consumer.read_chunk(slots) {
-                                    chunk.commit_all();
-                                }
-                            }
-                            let b_slots = cpal_boundary_consumer.slots();
-                            if b_slots > 0 {
-                                if let Ok(chunk) = cpal_boundary_consumer.read_chunk(b_slots) {
-                                    chunk.commit_all();
-                                }
-                            }
-                            TRACK_ENDED_FLAG.store(false, Ordering::Release);
-                        }
-
-                        let (want, step) = if !is_playing {
-                            (0.0, duck_step)
-                        } else if gated {
-                            (0.0, fade_step)
-                        } else {
-                            (fade_target, fade_step)
-                        };
-
-                        if want <= 0.0 && fade_gain <= 0.0 {
-                            for sample in data.iter_mut() { *sample = 0.0; }
-                            return;
-                        }
-
-                        let frames_needed = data.len() / channels;
-                        let avail_samples = cpal_consumer.slots();
-                        let samples_to_read = (frames_needed * 2).min(avail_samples);
-                        let frames_to_read = samples_to_read / 2;
-
-                        if frames_to_read > 0 {
-                            if let Ok(chunk) = cpal_consumer.read_chunk(frames_to_read * 2) {
-                                let (s1, s2) = chunk.as_slices();
-                                let mut read_idx = 0;
-                                let s1_len = s1.len();
-
-                                for i in 0..frames_to_read {
-                                    let (mut l, mut r) = if read_idx + 1 < s1_len {
-                                        (s1[read_idx], s1[read_idx + 1])
-                                    } else if read_idx < s1_len {
-                                        (s1[read_idx], s2[0])
-                                    } else {
-                                        let s2_idx = read_idx - s1_len;
-                                        (s2[s2_idx], s2[s2_idx + 1])
-                                    };
-                                    read_idx += 2;
-
-                                    let (out_l, out_r) = dsp.process_stereo(l as f64, r as f64);
-                                    l = out_l as f32;
-                                    r = out_r as f32;
-
-                                    if fade_gain < want {
-                                        fade_gain = (fade_gain + step).min(want);
-                                    } else if fade_gain > want {
-                                        fade_gain = (fade_gain - step).max(want);
-                                    }
-                                    duck = (duck + duck_step).min(1.0);
-
-                                    last = (l, r);
-                                    let g = fade_gain * duck;
-                                    data[i * channels] = l * g;
-                                    if channels > 1 {
-                                        data[i * channels + 1] = r * g;
-                                    }
-                                }
-                                chunk.commit_all();
-                            }
-
-                            let played = CALLBACK_FRAMES_PLAYED.fetch_add(frames_to_read as u64, Ordering::SeqCst) + frames_to_read as u64;
-
-                            // Check boundary markers
-                            while cpal_boundary_consumer.slots() > 0 {
-                                if let Ok(chunk) = cpal_boundary_consumer.read_chunk(1) {
-                                    let marker = chunk.as_slices().0[0];
-                                    if played >= marker.trigger_at_frame {
-                                        chunk.commit_all();
-                                        match marker.kind {
-                                            BoundaryKind::TrackStarted => {}
-                                            BoundaryKind::TrackEnded => {
-                                                CALLBACK_IS_PLAYING.store(false, Ordering::Release);
-                                                TRACK_ENDED_FLAG.store(true, Ordering::Release);
-                                            }
-                                        }
-                                    } else {
-                                        break;
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                        } else {
-                            let played = CALLBACK_FRAMES_PLAYED.load(Ordering::SeqCst);
-                            while cpal_boundary_consumer.slots() > 0 {
-                                if let Ok(chunk) = cpal_boundary_consumer.read_chunk(1) {
-                                    let marker = chunk.as_slices().0[0];
-                                    if played >= marker.trigger_at_frame {
-                                        chunk.commit_all();
-                                        match marker.kind {
-                                            BoundaryKind::TrackStarted => {}
-                                            BoundaryKind::TrackEnded => {
-                                                CALLBACK_IS_PLAYING.store(false, Ordering::Release);
-                                                TRACK_ENDED_FLAG.store(true, Ordering::Release);
-                                            }
-                                        }
-                                    } else {
-                                        break;
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
-
-                        for i in frames_to_read..frames_needed {
-                            duck = (duck - duck_step).max(0.0);
-                            let g = fade_gain * duck;
-                            data[i * channels] = last.0 * g;
-                            if channels > 1 {
-                                data[i * channels + 1] = last.1 * g;
-                            }
-                        }
+                        let _ = renderer.render_interleaved(data, channels);
                     },
                     |err| eprintln!("an error occurred on stream: {}", err),
-                    None
+                    None,
                 );
-                
+
                 if let Ok(stream) = stream {
                     let _ = stream.play();
                     CPAL_STREAM.lock().unwrap().0 = Some(stream);
@@ -791,9 +484,102 @@ pub fn init_engine() {
     {
         *AUDIO_CONSUMER.lock().unwrap() = Some(audio_rx);
         *BOUNDARY_CONSUMER.lock().unwrap() = Some(boundary_rx);
+        *TRIGGERED_PRODUCER.lock().unwrap() = Some(triggered_tx);
         open_output_stream(None);
         start_stream_watchdog();
     }
+
+    // Control Thread: drains triggered boundaries and pushes reactive EngineEvents to Dart via StreamSink
+    thread::spawn(move || {
+        let mut last_playing = false;
+        let mut last_buffering = false;
+        let mut tick_count: u32 = 0;
+
+        loop {
+            thread::sleep(Duration::from_millis(50));
+            tick_count = tick_count.wrapping_add(1);
+
+            // 1. Drain triggered boundary events from audio callback
+            while triggered_rx.slots() > 0 {
+                if let Ok(chunk) = triggered_rx.read_chunk(1) {
+                    let marker = chunk.as_slices().0[0];
+                    chunk.commit_all();
+                    let file_id = marker.file_id_str().to_string();
+                    if let Ok(guard) = EVENT_SINK.lock() {
+                        if let Some(ref sink) = *guard {
+                            match marker.kind {
+                                BoundaryKind::TrackStarted | BoundaryKind::TrackChanged => {
+                                    let _ = sink.add(EngineEvent::TrackStarted { file_id });
+                                }
+                                BoundaryKind::TrackEnded => {
+                                    let _ = sink.add(EngineEvent::TrackEnded { file_id });
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            // 2. State & Telemetry updates
+            let is_playing = CALLBACK_IS_PLAYING.load(Ordering::Acquire);
+            let is_buffering = {
+                let state = PLAYER_STATE.lock().unwrap();
+                state.buffering
+            };
+
+            if is_playing != last_playing || is_buffering != last_buffering {
+                last_playing = is_playing;
+                last_buffering = is_buffering;
+                if let Ok(guard) = EVENT_SINK.lock() {
+                    if let Some(ref sink) = *guard {
+                        let _ = sink.add(EngineEvent::PlaybackState {
+                            is_playing,
+                            is_buffering,
+                        });
+                    }
+                }
+            }
+
+            if tick_count.is_multiple_of(2) {
+                let (pos_ms, dur_ms, buf_ms) = {
+                    let state = PLAYER_STATE.lock().unwrap();
+                    let pos = if TRACK_ENDED_FLAG.load(Ordering::Acquire) {
+                        state.duration_ms
+                    } else {
+                        state.position_ms
+                    };
+                    (pos, state.duration_ms, state.buffered_ms)
+                };
+
+                let in_flight = crate::cloud::media_source::fetches_in_flight() as u32;
+                let bytes_fetched = crate::cloud::media_source::bytes_fetched() as u64;
+                let gr_db = crate::dsp::LIMITER_GR_MILLIDB.load(Ordering::Relaxed);
+                let clipped = crate::dsp::LIMITER_CLIPPED_SAMPLES.load(Ordering::Relaxed);
+
+                if let Ok(guard) = EVENT_SINK.lock() {
+                    if let Some(ref sink) = *guard {
+                        if is_playing {
+                            let _ = sink.add(EngineEvent::PositionUpdate {
+                                position_ms: pos_ms,
+                                duration_ms: dur_ms,
+                            });
+                        }
+                        let _ = sink.add(EngineEvent::BufferTelemetry {
+                            buffered_ms: buf_ms,
+                            fetches_in_flight: in_flight,
+                            bytes_fetched,
+                        });
+                        let _ = sink.add(EngineEvent::LimiterTelemetry {
+                            gr_millidb: gr_db,
+                            clipped_samples: clipped,
+                        });
+                    }
+                }
+            }
+        }
+    });
 
     // Opening a source means a container probe and, for a cloud track, a
     // network round trip — anywhere from a moment to a couple of seconds.
@@ -804,9 +590,10 @@ pub fn init_engine() {
     thread::spawn(move || {
         while let Ok(cmd) = load_rx.recv() {
             let generation = LOAD_GENERATION.load(Ordering::SeqCst);
+            let is_next = matches!(cmd, DecoderCmd::SetNextTrack(_) | DecoderCmd::SetNextCloud { .. });
 
             let opened = match cmd {
-                DecoderCmd::Play(path) => {
+                DecoderCmd::Play(path) | DecoderCmd::SetNextTrack(path) => {
                     let ext = std::path::Path::new(&path)
                         .extension()
                         .and_then(|e| e.to_str())
@@ -821,6 +608,13 @@ pub fn init_engine() {
                     }
                 }
                 DecoderCmd::PlayCloud {
+                    file_id,
+                    url,
+                    auth_token,
+                    total_size,
+                    cache_dir,
+                    ext,
+                } | DecoderCmd::SetNextCloud {
                     file_id,
                     url,
                     auth_token,
@@ -844,6 +638,13 @@ pub fn init_engine() {
                 },
                 _ => None,
             };
+
+            if is_next {
+                if let Some((id, track)) = opened {
+                    let _ = next_loaded_tx.send((id, Box::new(track)));
+                }
+                continue;
+            }
 
             // A newer request landed while this one was opening. The user is
             // waiting on that one, so this result is dead weight.
@@ -882,6 +683,8 @@ pub fn init_engine() {
         let mut pending_out: Option<Vec<f32>> = None;
         let mut current_resampler: Option<(u32, u32, rubato::Async<f64>)> = None;
         let mut resample_in_buf: Vec<f64> = Vec::new();
+        let mut next_track: Option<(String, Box<OpenedTrack>)> = None;
+        let mut seek_target_frame: Option<u64> = None;
 
         /// Consecutive failed reads before a track is given up on. Enough to
         /// ride out a dropped connection, few enough that a genuinely broken
@@ -890,6 +693,11 @@ pub fn init_engine() {
         let mut read_failures: u32 = 0;
 
         loop {
+            // Check for pre-loaded next track staged for gapless transition
+            if let Ok((id, opened)) = next_loaded_rx.try_recv() {
+                next_track = Some((id, opened));
+            }
+
             // Drain everything queued so a burst can be collapsed: dragging
             // the slider emits a seek per frame and only the last one is a
             // destination worth paying a network round trip for.
@@ -911,7 +719,8 @@ pub fn init_engine() {
                 match cmd {
                     // Play and PlayCloud are handled by the loader thread;
                     // they never reach here.
-                    DecoderCmd::Play(_) | DecoderCmd::PlayCloud { .. } => {}
+                    DecoderCmd::Play(_) | DecoderCmd::PlayCloud { .. }
+                    | DecoderCmd::SetNextTrack(_) | DecoderCmd::SetNextCloud { .. } => {}
                     DecoderCmd::Pause => {
                         PLAYER_STATE.lock().unwrap().is_playing = false;
                         CALLBACK_IS_PLAYING.store(false, Ordering::Release);
@@ -929,11 +738,22 @@ pub fn init_engine() {
                             thread::sleep(Duration::from_millis(SEEK_FADE_MS as u64 + 5));
                         }
 
+                        next_track = None;
                         pending_out = None;
                         resample_in_buf.clear();
                         if let Some((_, _, ref mut resampler)) = current_resampler {
                             resampler.reset();
                         }
+
+                        let cur_sr = {
+                            let state = PLAYER_STATE.lock().unwrap();
+                            if state.target_sample_rate > 0 {
+                                state.target_sample_rate
+                            } else {
+                                48000
+                            }
+                        };
+                        seek_target_frame = Some((ms as u64 * cur_sr as u64) / 1000);
 
                         {
                             let mut state = PLAYER_STATE.lock().unwrap();
@@ -953,7 +773,7 @@ pub fn init_engine() {
                         if let (Some(format), Some(t)) = (current_format.as_mut(), tb) {
                             let ts = (ms as u64 * t.denom as u64) / (1000 * t.numer as u64);
                             let _ = format.seek(
-                                symphonia::core::formats::SeekMode::Coarse,
+                                symphonia::core::formats::SeekMode::Accurate,
                                 symphonia::core::formats::SeekTo::TimeStamp {
                                     ts,
                                     track_id: current_track_id,
@@ -969,6 +789,8 @@ pub fn init_engine() {
                         }
                     }
                     DecoderCmd::Stop => {
+                        next_track = None;
+                        seek_target_frame = None;
                         current_format = None;
                         current_decoder = None;
                         pending_out = None;
@@ -1015,6 +837,8 @@ pub fn init_engine() {
                     pending_out = None;
                     resample_in_buf.clear();
                     current_resampler = None;
+                    next_track = None;
+                    seek_target_frame = None;
 
                     let mut state = PLAYER_STATE.lock().unwrap();
                     state.flush_requested = true;
@@ -1129,6 +953,28 @@ pub fn init_engine() {
                             
                             // DOWNMIX TO STEREO via ITU-R BS.775
                             let mut samples = downmix_to_stereo(sample_buf.samples(), channels);
+
+                            // Frame-exact seek trimming: discard leading pre-roll frames before seek target
+                            if let Some(target_frame) = seek_target_frame {
+                                if let Some(t) = tb {
+                                    let cur_sr = PLAYER_STATE.lock().unwrap().source_sample_rate.max(1);
+                                    let packet_frame = (packet.ts() * t.numer as u64 * cur_sr as u64) / t.denom as u64;
+                                    if packet_frame < target_frame {
+                                        let frames_to_skip = (target_frame - packet_frame) as usize;
+                                        let packet_frames = samples.len() / 2;
+                                        if frames_to_skip < packet_frames {
+                                            samples.drain(0..(frames_to_skip * 2));
+                                            seek_target_frame = None;
+                                        } else {
+                                            samples.clear();
+                                        }
+                                    } else {
+                                        seek_target_frame = None;
+                                    }
+                                } else {
+                                    seek_target_frame = None;
+                                }
+                            }
                             
                             // High-quality Sinc Resampling via rubato 256-sinc
                             if track_sr != target_sr && target_sr > 0 {
@@ -1276,18 +1122,60 @@ pub fn init_engine() {
                         }
                     }
 
-                    // PUSH TRACK ENDED BOUNDARY MARKER:
-                    let marker = BoundaryMarker::track_ended(decoder_frames_pushed, &current_track_id_str);
-                    let _ = boundary_producer.push(marker);
+                    // Check if next track is staged for gapless transition
+                    let cur_sr = PLAYER_STATE.lock().unwrap().source_sample_rate;
+                    if let Some((next_id, next_opened)) = next_track.take() {
+                        if next_opened.sample_rate == cur_sr {
+                            // TRUE GAPLESS TRANSITION:
+                            // Push TrackChanged marker at current pushed frame count.
+                            let _ = boundary_producer.push(BoundaryMarker::track_changed(
+                                decoder_frames_pushed,
+                                &next_id,
+                            ));
 
-                    // CRITICAL: DO NOT set is_playing = false!
-                    // The real-time audio callback will play all queued audio frames and then signal TrackEnded.
-                    let mut state = PLAYER_STATE.lock().unwrap();
-                    state.buffering = false;
-                    state.buffered_ms = 0;
-                    drop(state);
-                    current_format = None;
-                    current_decoder = None;
+                            tb = next_opened.time_base;
+                            current_track_id = next_opened.track_id;
+                            current_decoder = Some(next_opened.decoder);
+                            current_format = Some(next_opened.format);
+                            current_track_id_str = next_id.clone();
+                            pending_out = None;
+                            resample_in_buf.clear();
+                            current_resampler = None;
+                            seek_target_frame = None;
+
+                            let mut state = PLAYER_STATE.lock().unwrap();
+                            state.duration_ms = next_opened.duration_ms;
+                            state.current_track_id = next_id;
+                            state.source_codec = next_opened.codec;
+                            state.source_sample_rate = next_opened.sample_rate;
+                            state.source_bits = next_opened.bits_per_sample;
+                            state.source_channels = next_opened.channels;
+                            state.decoded_ms = 0;
+                            drop(state);
+
+                            continue;
+                        } else {
+                            let marker = BoundaryMarker::track_ended(decoder_frames_pushed, &current_track_id_str);
+                            let _ = boundary_producer.push(marker);
+                            let mut state = PLAYER_STATE.lock().unwrap();
+                            state.buffering = false;
+                            state.buffered_ms = 0;
+                            drop(state);
+                            current_format = None;
+                            current_decoder = None;
+                        }
+                    } else {
+                        // Standard EOF: drain all buffered audio with TrackEnded
+                        let marker = BoundaryMarker::track_ended(decoder_frames_pushed, &current_track_id_str);
+                        let _ = boundary_producer.push(marker);
+
+                        let mut state = PLAYER_STATE.lock().unwrap();
+                        state.buffering = false;
+                        state.buffered_ms = 0;
+                        drop(state);
+                        current_format = None;
+                        current_decoder = None;
+                    }
                 }
             }
         }
@@ -1299,11 +1187,12 @@ pub fn init_engine() {
 fn open_output_stream(sample_rate: Option<u32>) {
     *ACTIVE_STREAM.lock().unwrap() = None;
 
-    let (consumer, boundary_consumer) = {
+    let (consumer, boundary_consumer, triggered_producer) = {
         let mut c_guard = AUDIO_CONSUMER.lock().unwrap();
         let mut b_guard = BOUNDARY_CONSUMER.lock().unwrap();
+        let mut t_guard = TRIGGERED_PRODUCER.lock().unwrap();
         match (c_guard.take(), b_guard.take()) {
-            (Some(c), Some(b)) => (c, b),
+            (Some(c), Some(b)) => (c, b, t_guard.take()),
             _ => return,
         }
     };
@@ -1311,37 +1200,16 @@ fn open_output_stream(sample_rate: Option<u32>) {
     fn make_callback(
         consumer: rtrb::Consumer<f32>,
         boundary_consumer: rtrb::Consumer<BoundaryMarker>,
+        triggered_producer: Option<rtrb::Producer<BoundaryMarker>>,
     ) -> PlayerCallback {
-        let mut dsp = DspPipelineV2::new(48000.0);
-        let snap = DSP_TRIPLE_BUFFER.read_current();
-        dsp.eq_enabled = snap.eq_enabled;
-        if snap.is_parametric {
-            dsp.install_parameters(
-                &snap.specs[..snap.spec_count],
-                snap.preamp_db,
-                0.0,
-                1.0,
-                snap.balance,
-                snap.mono,
-            );
-        } else {
-            dsp.update_graphic_gains(
-                &snap.graphic_gains,
-                snap.preamp_db,
-                0.0,
-                1.0,
-                snap.balance,
-                snap.mono,
-            );
-        }
-        PlayerCallback {
-            consumer: Some(consumer),
-            boundary_consumer: Some(boundary_consumer),
-            dsp,
-            fade_gain: 0.0,
-            duck: 1.0,
-            last: (0.0, 0.0),
-        }
+        let mut renderer = crate::renderer::OutputRenderer::new(
+            48000.0,
+            Some(consumer),
+            Some(boundary_consumer),
+            triggered_producer,
+        );
+        renderer.fade_gain = 0.0;
+        PlayerCallback { renderer }
     }
 
     let mut builder = AudioStreamBuilder::default()
@@ -1359,7 +1227,7 @@ fn open_output_stream(sample_rate: Option<u32>) {
     }
 
     let opened = builder
-        .set_callback(make_callback(consumer, boundary_consumer))
+        .set_callback(make_callback(consumer, boundary_consumer, triggered_producer))
         .open_stream();
 
     let opened = match opened {
@@ -1372,11 +1240,12 @@ fn open_output_stream(sample_rate: Option<u32>) {
                 "[bitdrop] exclusive stream at {:?} unavailable ({e:?}); falling back to shared",
                 sample_rate
             );
-            let (consumer, boundary_consumer) = {
+            let (consumer, boundary_consumer, triggered_producer) = {
                 let mut c_guard = AUDIO_CONSUMER.lock().unwrap();
                 let mut b_guard = BOUNDARY_CONSUMER.lock().unwrap();
+                let mut t_guard = TRIGGERED_PRODUCER.lock().unwrap();
                 match (c_guard.take(), b_guard.take()) {
-                    (Some(c), Some(b)) => (c, b),
+                    (Some(c), Some(b)) => (c, b, t_guard.take()),
                     _ => return,
                 }
             };
@@ -1392,7 +1261,7 @@ fn open_output_stream(sample_rate: Option<u32>) {
                 }
             }
             shared_builder
-                .set_callback(make_callback(consumer, boundary_consumer))
+                .set_callback(make_callback(consumer, boundary_consumer, triggered_producer))
                 .open_stream()
                 .map_err(|e| eprintln!("[bitdrop] no audio output: {e:?}"))
                 .ok()
@@ -1511,6 +1380,41 @@ pub fn engine_play_cloud(
         cache_dir,
         ext,
     });
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_set_next_track(path: String) {
+    if let Some(sender) = LOAD_SENDER.lock().unwrap().as_ref() {
+        let _ = sender.send(DecoderCmd::SetNextTrack(path));
+    }
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_set_next_cloud(
+    file_id: String,
+    url: String,
+    auth_token: Option<String>,
+    total_size: u64,
+    cache_dir: String,
+    ext: String,
+) {
+    if let Some(sender) = LOAD_SENDER.lock().unwrap().as_ref() {
+        let _ = sender.send(DecoderCmd::SetNextCloud {
+            file_id,
+            url,
+            auth_token,
+            total_size,
+            cache_dir,
+            ext,
+        });
+    }
+}
+
+#[flutter_rust_bridge::frb]
+pub fn engine_events_stream(sink: crate::frb_generated::StreamSink<EngineEvent>) -> Result<(), String> {
+    let mut guard = EVENT_SINK.lock().map_err(|e| e.to_string())?;
+    *guard = Some(sink);
+    Ok(())
 }
 
 #[flutter_rust_bridge::frb(sync)]
@@ -2071,4 +1975,187 @@ mod tests {
         eprintln!(" Status          : PASS (100% Track Completion Verified)");
         eprintln!("=======================================================\n");
     }
+
+    #[test]
+    fn test_gapless_album_boundary() {
+        // Golden Test 5: True Gapless Playback & Seamless Track Transition
+        // Verifies zero dropped samples, zero padding zeros, and phase continuity
+        // across the album track boundary.
+        use crate::renderer::OutputRenderer;
+
+        let sample_rate = 48000.0;
+        let total_frames = 96000; // 2 seconds
+        let boundary_frame = 48000; // exactly 1 second
+
+        // Continuous reference 440 Hz sine wave
+        let freq = 440.0;
+        let mut reference = Vec::with_capacity(total_frames);
+        for n in 0..total_frames {
+            let t = (n as f64) / sample_rate;
+            let val = (2.0 * std::f64::consts::PI * freq * t).sin() as f32;
+            reference.push((val, val)); // Stereo: identical L & R
+        }
+
+        // Split into Track 1 and Track 2
+        let track1_frames = &reference[..boundary_frame];
+        let track2_frames = &reference[boundary_frame..];
+
+        // Reset global atomic engine state for test isolation
+        CALLBACK_IS_PLAYING.store(true, Ordering::SeqCst);
+        CALLBACK_GATE_OUTPUT.store(false, Ordering::SeqCst);
+        CALLBACK_FLUSH_REQUESTED.store(false, Ordering::SeqCst);
+        CALLBACK_FADE_TARGET.store(1.0f32.to_bits(), Ordering::SeqCst);
+        CALLBACK_FADE_STEP.store(1.0f32.to_bits(), Ordering::SeqCst);
+        CALLBACK_FRAMES_PLAYED.store(0, Ordering::SeqCst);
+        TRACK_ENDED_FLAG.store(false, Ordering::SeqCst);
+
+        // Setup ring buffers
+        let (mut audio_prod, audio_cons) = rtrb::RingBuffer::<f32>::new(16384);
+        let (mut boundary_prod, boundary_cons) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+        let (triggered_prod, mut triggered_cons) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+
+        let mut renderer = OutputRenderer::new(
+            sample_rate,
+            Some(audio_cons),
+            Some(boundary_cons),
+            Some(triggered_prod),
+        );
+        renderer.dsp.eq_enabled = false; // Bit-exact bypass mode
+
+        // Push Track 1 start boundary marker
+        boundary_prod.push(BoundaryMarker::track_started(0, "track_1")).expect("Push start");
+
+        let mut track1_pushed = 0;
+        let mut track2_pushed = 0;
+        let mut track_changed_pushed = false;
+        let mut track_ended_pushed = false;
+
+        let mut rendered_frames: Vec<(f32, f32)> = Vec::with_capacity(total_frames);
+        let mut render_buf = [0.0f32; 512]; // 256 stereo frames per callback
+
+        let mut iterations = 0;
+        while iterations < 2_000_000 && rendered_frames.len() < total_frames {
+            iterations += 1;
+
+            // --- PRODUCER (DECODER) STEP ---
+            // 1. Push Track 1
+            if track1_pushed < track1_frames.len() {
+                let avail = audio_prod.slots() / 2;
+                let to_push = avail.min(track1_frames.len() - track1_pushed).min(512);
+                if to_push > 0 {
+                    if let Ok(mut chunk) = audio_prod.write_chunk(to_push * 2) {
+                        let (s1, s2) = chunk.as_mut_slices();
+                        let mut p = 0;
+                        for i in 0..to_push {
+                            let (l, r) = track1_frames[track1_pushed + i];
+                            if p < s1.len() {
+                                s1[p] = l;
+                                s1[p + 1] = r;
+                            } else {
+                                let idx = p - s1.len();
+                                s2[idx] = l;
+                                s2[idx + 1] = r;
+                            }
+                            p += 2;
+                        }
+                        chunk.commit_all();
+                        track1_pushed += to_push;
+                    }
+                }
+            } else if !track_changed_pushed {
+                // Gapless boundary! Track 1 finished pushing, immediately stage Track 2 boundary marker
+                boundary_prod.push(BoundaryMarker::track_changed(boundary_frame as u64, "track_2")).expect("Push changed");
+                track_changed_pushed = true;
+            }
+
+            // 2. Seamlessly push Track 2 into the SAME audio ring buffer
+            if track_changed_pushed && track2_pushed < track2_frames.len() {
+                let avail = audio_prod.slots() / 2;
+                let to_push = avail.min(track2_frames.len() - track2_pushed).min(512);
+                if to_push > 0 {
+                    if let Ok(mut chunk) = audio_prod.write_chunk(to_push * 2) {
+                        let (s1, s2) = chunk.as_mut_slices();
+                        let mut p = 0;
+                        for i in 0..to_push {
+                            let (l, r) = track2_frames[track2_pushed + i];
+                            if p < s1.len() {
+                                s1[p] = l;
+                                s1[p + 1] = r;
+                            } else {
+                                let idx = p - s1.len();
+                                s2[idx] = l;
+                                s2[idx + 1] = r;
+                            }
+                            p += 2;
+                        }
+                        chunk.commit_all();
+                        track2_pushed += to_push;
+                    }
+                }
+            } else if track_changed_pushed && track2_pushed >= track2_frames.len() && !track_ended_pushed {
+                // EOF of Track 2: push track ended marker
+                boundary_prod.push(BoundaryMarker::track_ended(total_frames as u64, "track_2")).expect("Push ended");
+                track_ended_pushed = true;
+            }
+
+            // --- CONSUMER (AUDIO CALLBACK) STEP ---
+            let frames_left = total_frames - rendered_frames.len();
+            let avail_frames = renderer.consumer.as_ref().map(|c| c.slots() / 2).unwrap_or(0);
+            let frames_to_render = frames_left.min(avail_frames).min(256);
+
+            if frames_to_render > 0 {
+                let out_slice = &mut render_buf[..frames_to_render * 2];
+                renderer.render_interleaved(out_slice, 2);
+
+                for i in 0..frames_to_render {
+                    rendered_frames.push((out_slice[i * 2], out_slice[i * 2 + 1]));
+                }
+            }
+        }
+
+        assert_eq!(rendered_frames.len(), total_frames, "Rendered frames count must match reference exactly");
+
+        // Collect all triggered boundary events
+        let mut triggered_events = Vec::new();
+        while let Ok(m) = triggered_cons.pop() {
+            triggered_events.push(m);
+        }
+
+        assert_eq!(triggered_events.len(), 3, "All 3 boundary markers must be triggered");
+        assert_eq!(triggered_events[0].kind, BoundaryKind::TrackStarted);
+        assert_eq!(triggered_events[0].file_id_str(), "track_1");
+        assert_eq!(triggered_events[0].trigger_at_frame, 0);
+
+        assert_eq!(triggered_events[1].kind, BoundaryKind::TrackChanged);
+        assert_eq!(triggered_events[1].file_id_str(), "track_2");
+        assert_eq!(triggered_events[1].trigger_at_frame, boundary_frame as u64);
+
+        assert_eq!(triggered_events[2].kind, BoundaryKind::TrackEnded);
+        assert_eq!(triggered_events[2].file_id_str(), "track_2");
+        assert_eq!(triggered_events[2].trigger_at_frame, total_frames as u64);
+
+        // Verify sample continuity across boundary (frame 47995 .. 48005)
+        for i in (boundary_frame - 5)..(boundary_frame + 5) {
+            let ref_frame = reference[i];
+            let rend_frame = rendered_frames[i];
+            assert!((rend_frame.0 - ref_frame.0).abs() < 1e-4, "Frame {} L channel discontinuity: ref {} != rend {}", i, ref_frame.0, rend_frame.0);
+            assert!((rend_frame.1 - ref_frame.1).abs() < 1e-4, "Frame {} R channel discontinuity: ref {} != rend {}", i, ref_frame.1, rend_frame.1);
+        }
+
+        // Verify 1st derivative (slope) continuity across boundary
+        let slope_ref = reference[boundary_frame].0 - reference[boundary_frame - 1].0;
+        let slope_rend = rendered_frames[boundary_frame].0 - rendered_frames[boundary_frame - 1].0;
+        assert!((slope_rend - slope_ref).abs() < 1e-4, "Derivative discontinuity across gapless boundary: ref slope {} != rend slope {}", slope_ref, slope_rend);
+
+        eprintln!("=======================================================");
+        eprintln!("        Golden Test 5: Gapless Boundary Verified       ");
+        eprintln!("=======================================================");
+        eprintln!(" Total Rendered Frames: {}", rendered_frames.len());
+        eprintln!(" Boundary Frame       : {}", boundary_frame);
+        eprintln!(" Discontinuity Delta  : < 1e-4 (Continuous Phase & Slope)");
+        eprintln!(" Events Dispatched    : Started -> Changed -> Ended (3/3)");
+        eprintln!(" Status               : PASS (True Gapless Playback Verified)");
+        eprintln!("=======================================================\n");
+    }
 }
+

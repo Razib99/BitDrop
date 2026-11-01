@@ -7,10 +7,12 @@ import '../dsp.dart';
 import '../frb_generated.dart';
 import '../lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
+part 'audio_engine.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `open_media_source`, `ramp_step`, `request_load`, `set_ramp`, `stream_opens`
-// These types are ignored because they are not used by any `pub` functions: `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DSP_TRIPLE_BUFFER`, `DecoderCmd`, `LOAD_SENDER`, `OpenedTrack`, `PLAYER_STATE`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `default`, `deref`, `deref`, `deref`, `deref`, `deref`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
+// These functions are ignored because they are not marked as `pub`: `open_media_source`, `request_load`, `set_ramp`, `stream_opens`
+// These types are ignored because they are not used by any `pub` functions: `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DSP_TRIPLE_BUFFER`, `DecoderCmd`, `EVENT_SINK`, `LOAD_SENDER`, `OpenedTrack`, `PLAYER_STATE`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `default`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Enables hardware Flush-to-Zero (FTZ) and Denormals-are-Zero (DAZ) mode.
 /// On ARM64 (Android), this sets bits 24 (FZ) and 19 (DN) of FPCR.
@@ -18,6 +20,11 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// Prevents catastrophic CPU denormal microcode exceptions during filter decays and fades.
 Future<void> enableHardwareFlushToZero() =>
     RustLib.instance.api.crateApiAudioEngineEnableHardwareFlushToZero();
+
+/// Per-frame gain change that walks a ramp of `ms` at `sample_rate`.
+Future<double> rampStep({required int ms, required int sampleRate}) =>
+    RustLib.instance.api
+        .crateApiAudioEngineRampStep(ms: ms, sampleRate: sampleRate);
 
 /// Publishes the current EQ and DSP configuration into the lock-free Triple Buffer.
 Future<void> publishDspConfig({required PlayerState state}) =>
@@ -49,6 +56,27 @@ void enginePlayCloud(
         totalSize: totalSize,
         cacheDir: cacheDir,
         ext: ext);
+
+void engineSetNextTrack({required String path}) =>
+    RustLib.instance.api.crateApiAudioEngineEngineSetNextTrack(path: path);
+
+void engineSetNextCloud(
+        {required String fileId,
+        required String url,
+        String? authToken,
+        required BigInt totalSize,
+        required String cacheDir,
+        required String ext}) =>
+    RustLib.instance.api.crateApiAudioEngineEngineSetNextCloud(
+        fileId: fileId,
+        url: url,
+        authToken: authToken,
+        totalSize: totalSize,
+        cacheDir: cacheDir,
+        ext: ext);
+
+Stream<EngineEvent> engineEventsStream() =>
+    RustLib.instance.api.crateApiAudioEngineEngineEventsStream();
 
 void enginePause() => RustLib.instance.api.crateApiAudioEngineEnginePause();
 
@@ -165,6 +193,35 @@ class EngineBufferState {
           fetchesInFlight == other.fetchesInFlight &&
           bytesFetched == other.bytesFetched &&
           streamOpens == other.streamOpens;
+}
+
+@freezed
+sealed class EngineEvent with _$EngineEvent {
+  const EngineEvent._();
+
+  const factory EngineEvent.playbackState({
+    required bool isPlaying,
+    required bool isBuffering,
+  }) = EngineEvent_PlaybackState;
+  const factory EngineEvent.trackStarted({
+    required String fileId,
+  }) = EngineEvent_TrackStarted;
+  const factory EngineEvent.trackEnded({
+    required String fileId,
+  }) = EngineEvent_TrackEnded;
+  const factory EngineEvent.positionUpdate({
+    required int positionMs,
+    required int durationMs,
+  }) = EngineEvent_PositionUpdate;
+  const factory EngineEvent.bufferTelemetry({
+    required int bufferedMs,
+    required int fetchesInFlight,
+    required BigInt bytesFetched,
+  }) = EngineEvent_BufferTelemetry;
+  const factory EngineEvent.limiterTelemetry({
+    required int grMillidb,
+    required BigInt clippedSamples,
+  }) = EngineEvent_LimiterTelemetry;
 }
 
 /// What the engine is really doing with the samples right now.

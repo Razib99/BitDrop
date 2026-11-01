@@ -77,6 +77,7 @@ impl Default for DspConfigSnapshot {
 pub enum BoundaryKind {
     TrackStarted,
     TrackEnded,
+    TrackChanged,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -109,6 +110,19 @@ impl BoundaryMarker {
         Self {
             trigger_at_frame,
             kind: BoundaryKind::TrackStarted,
+            file_id: id,
+            file_id_len: len,
+        }
+    }
+
+    pub fn track_changed(trigger_at_frame: u64, file_id_str: &str) -> Self {
+        let mut id = [0u8; 64];
+        let bytes = file_id_str.as_bytes();
+        let len = bytes.len().min(64);
+        id[..len].copy_from_slice(&bytes[..len]);
+        Self {
+            trigger_at_frame,
+            kind: BoundaryKind::TrackChanged,
             file_id: id,
             file_id_len: len,
         }
