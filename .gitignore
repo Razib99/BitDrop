@@ -15,12 +15,11 @@ key.properties
 # --- Local music library (not source) --------------------------------------
 Music/
 
-# --- Build output ----------------------------------------------------------
+# --- Build binaries & output -----------------------------------------------
+*.apk
+*.aab
 app/build/
-spike-audio/.gradle/
-spike-audio/app/build/
 spike-drive/target/
-spike_ffi/build/
 **/target/
 .dart_tool/
 

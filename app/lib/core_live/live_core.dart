@@ -143,9 +143,6 @@ class LiveBitDropCore implements BitDropCore {
 
     refreshStorage();
     _loadFavoritesAndPinned();
-    if (!kIsWeb && Directory('/home/razib/Desktop/BitDrop/Music').existsSync()) {
-      _scanRealMusic();
-    }
 
     _outputProbe.start();
     _outputProbeSub =
@@ -298,51 +295,6 @@ class LiveBitDropCore implements BitDropCore {
     } catch (_) {}
     _recomputeSignalPath();
   }
-  
-  Future<void> _scanRealMusic() async {
-    try {
-      final metas = rust_simple.scanDirectory(path: '/home/razib/Desktop/BitDrop/Music');
-      if (metas.isEmpty) return;
-      
-      int duration = 0;
-      int size = 0;
-      
-      for (final m in metas) {
-        final t = Track(
-          id: m.path,
-          title: m.title.isNotEmpty ? m.title : m.path.split('/').last,
-          artist: m.artist.isNotEmpty ? m.artist : 'Unknown Artist',
-          albumTitle: m.album,
-          albumId: 'real-music',
-          durationMs: m.durationMs,
-          sizeBytes: 50000000,
-          format: AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: m.sampleRate),
-          availability: Availability.cached,
-          artwork: Artwork(seed: 42, dominantColor: 0xFF4A90E2, uri: m.path),
-          trackNumber: 1,
-        );
-        _realTracks[t.id] = t;
-        duration += m.durationMs;
-      }
-      
-      _realAlbum = Album(
-        id: 'real-music',
-        title: 'Real Music Folder',
-        artist: 'Various Artists',
-        artistId: 'various',
-        trackCount: _realTracks.length,
-        durationMs: duration,
-        sizeBytes: size,
-        format: const AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100),
-        availability: Availability.cached,
-          artwork: Artwork(seed: 42, dominantColor: 0xFF4A90E2, uri: _realTracks.values.firstOrNull?.id),
-        mixedFormats: true,
-      );
-    } catch (e) {
-      debugPrint('[library] local scan failed: $e');
-    }
-  }
-
 
   // Intercepted streams
   final _playback = BehaviorSubject<PlaybackState>.seeded(const IdleState());

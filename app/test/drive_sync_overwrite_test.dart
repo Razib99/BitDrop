@@ -118,7 +118,7 @@ void main() {
       testCloud.onFileReplaced?.call('old_drive_id', 'new_drive_id');
 
       // Allow async save to flush
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await Future<void>.delayed(const Duration(milliseconds: 150));
 
       // Verify favorites file was updated on disk with new_drive_id (located in parent of chunkCacheDir)
       final favFile = File('${tempDir.path}/favorites.json');
@@ -136,7 +136,7 @@ void main() {
 
       // Now simulate track deleted completely from Drive (pruned)
       testCloud.onFilesPruned?.call(['new_drive_id']);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await Future<void>.delayed(const Duration(milliseconds: 150));
 
       final favAfterPrune = favFile.readAsStringSync();
       expect(favAfterPrune.contains('new_drive_id'), isFalse);
