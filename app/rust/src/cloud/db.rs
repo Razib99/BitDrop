@@ -576,6 +576,22 @@ impl MetadataDb {
         rows.collect()
     }
 
+    /// Retrieve a single track by its file_id.
+    pub fn get_track(&self, file_id: &str) -> Result<Option<CloudTrackRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT file_id, name, folder_path, title, artist, album,
+                    album_artist, genre, year, track_number, disc_number,
+                    duration_ms, sample_rate, channels, bits_per_sample,
+                    size_bytes, tags_read, artwork_path
+             FROM tracks WHERE file_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![file_id], Self::row_to_cloud_track)?;
+        match rows.next() {
+            Some(res) => res.map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// Pending unscanned files.
     pub fn pending_tag_reads(&self, limit: u32) -> Result<Vec<String>> {
         let mut stmt = self

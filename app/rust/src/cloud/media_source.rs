@@ -43,12 +43,90 @@ impl PositionalIo for File {
 }
 
 pub const CHUNK_SIZE: u64 = 2 * 1024 * 1024; // 2 MB logical chunk unit
+pub const DEFAULT_LOOKAHEAD_SECS: u64 = 30; // 30-second rolling runway lookahead
 
 /// How many byte-range fetches are in flight right now.
 pub static FETCHES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 
 /// Total bytes pulled from the network this session.
 pub static BYTES_FETCHED: AtomicUsize = AtomicUsize::new(0);
+
+/// Exponential moving average of measured network download throughput in bytes/second.
+/// Initialized to 5 MB/s (typical fast mobile broadband).
+pub static MEASURED_THROUGHPUT_BPS: AtomicU64 = AtomicU64::new(5_000_000);
+
+pub fn update_measured_throughput(sample_bps: u64) {
+    if sample_bps == 0 {
+        return;
+    }
+    let old = MEASURED_THROUGHPUT_BPS.load(Ordering::Relaxed);
+    let updated = ((old * 3) + sample_bps) / 4;
+    MEASURED_THROUGHPUT_BPS.store(updated, Ordering::Relaxed);
+}
+
+pub fn measured_throughput_bps() -> u64 {
+    MEASURED_THROUGHPUT_BPS.load(Ordering::Relaxed)
+}
+
+pub fn set_measured_throughput_bps(bps: u64) {
+    MEASURED_THROUGHPUT_BPS.store(bps, Ordering::Relaxed);
+}
+
+/// Dynamic concurrency limit based on network throughput:
+/// - Slow / cellular (< 2 MB/s): 2 concurrent fetches
+/// - Standard broadband (2 - 8 MB/s): 3 concurrent fetches
+/// - High-speed Wi-Fi / gigabit (> 8 MB/s): 4 concurrent fetches
+pub fn current_concurrency_limit() -> usize {
+    let bps = MEASURED_THROUGHPUT_BPS.load(Ordering::Relaxed);
+    if bps < 2_000_000 {
+        2
+    } else if bps < 8_000_000 {
+        3
+    } else {
+        4
+    }
+}
+
+/// Context necessary for fetching chunks over HTTP byte ranges.
+#[derive(Clone, Debug)]
+pub struct FetchContext {
+    pub url: String,
+    pub auth_token: Option<String>,
+    pub index_path: PathBuf,
+}
+
+/// Computes the nominal byte rate for a track based on SQLite metadata or duration/size heuristic.
+pub fn calculate_nominal_byte_rate(
+    file_id: &str,
+    total_size: u64,
+    db: Option<&Arc<parking_lot::Mutex<crate::cloud::db::MetadataDb>>>,
+) -> u64 {
+    let track_opt = if let Some(custom_db) = db {
+        custom_db.lock().get_track(file_id).ok().flatten()
+    } else {
+        crate::api::cloud_library::with_db(|d| d.get_track(file_id).map_err(anyhow::Error::from))
+            .ok()
+            .flatten()
+    };
+
+    let rate = if let Some(track) = track_opt {
+        if track.duration_ms > 0 {
+            (total_size * 1000) / (track.duration_ms as u64)
+        } else if track.sample_rate > 0 && track.bits_per_sample > 0 {
+            let channels = track.channels.max(1) as u64;
+            let bytes_per_sample = track.bits_per_sample.div_ceil(8) as u64;
+            let raw_bps = (track.sample_rate as u64) * channels * bytes_per_sample;
+            (raw_bps as f64 * 0.65) as u64
+        } else {
+            total_size / 240
+        }
+    } else {
+        total_size / 240
+    };
+
+    // Clamp between 64 KB/s and 10 MB/s
+    rate.clamp(64_000, 10_000_000)
+}
 
 use std::collections::HashMap;
 
@@ -154,6 +232,10 @@ pub struct SparseTrackCache {
     pub active_generation: AtomicU64,
     pub failed: AtomicBool,
     pub db: Option<Arc<parking_lot::Mutex<crate::cloud::db::MetadataDb>>>,
+    pub nominal_byte_rate: AtomicU64,
+    pub lookahead_secs: AtomicU64,
+    pub current_position: AtomicU64,
+    pub fetch_ctx: parking_lot::Mutex<Option<FetchContext>>,
 }
 
 impl SparseTrackCache {
@@ -195,6 +277,8 @@ impl SparseTrackCache {
             failed.push(AtomicBool::new(false));
         }
 
+        let nominal_rate = calculate_nominal_byte_rate(file_id, total_size, db.as_ref());
+
         let cache = Arc::new(Self {
             file_id: file_id.to_string(),
             file,
@@ -207,6 +291,10 @@ impl SparseTrackCache {
             active_generation: AtomicU64::new(1),
             failed: AtomicBool::new(false),
             db,
+            nominal_byte_rate: AtomicU64::new(nominal_rate),
+            lookahead_secs: AtomicU64::new(DEFAULT_LOOKAHEAD_SECS),
+            current_position: AtomicU64::new(0),
+            fetch_ctx: parking_lot::Mutex::new(None),
         });
 
         // 1. Query SQLite for cached chunks belonging to this file_id
@@ -331,78 +419,78 @@ impl SparseTrackCache {
             });
         }
     }
-}
 
-pub struct CloudMediaSource {
-    file_id: String,
-    url: String,
-    auth_token: Option<String>,
-    position: u64,
-    generation: u64,
-    cache: Arc<SparseTrackCache>,
-    index_path: PathBuf,
-}
-
-impl CloudMediaSource {
-    pub fn new(
-        file_id: String,
-        url: String,
-        auth_token: Option<String>,
-        total_size: u64,
-        cache_dir: PathBuf,
-    ) -> Result<Self> {
-        fs::create_dir_all(&cache_dir)?;
-        let sparse_path = cache_dir.join(format!("{}.sparse", file_id));
-        let index_path = cache_dir.join(format!("{}.idx", file_id));
-
-        let cache = SparseTrackCache::new_with_db(&file_id, &sparse_path, &index_path, total_size, None)?;
-
-        // Populate initial seek-bar telemetry from already cached chunks
-        {
-            let mut existing = Vec::new();
-            for (idx, written) in cache.chunk_written_bytes.iter().enumerate() {
-                let chunk_len = ((total_size - (idx as u64 * CHUNK_SIZE)).min(CHUNK_SIZE)) as u32;
-                if written.load(Ordering::Relaxed) >= chunk_len {
-                    existing.push(idx as u64);
-                }
-            }
-            let mut guard = CACHED.lock();
-            guard.insert(file_id.clone(), (total_size, existing));
-        }
-
-        set_active_cache(Arc::clone(&cache));
-
-        Ok(Self {
-            file_id,
-            url,
-            auth_token,
-            position: 0,
-            generation: 1,
-            cache,
-            index_path,
-        })
+    pub fn set_fetch_context(&self, ctx: FetchContext) {
+        let mut guard = self.fetch_ctx.lock();
+        *guard = Some(ctx);
     }
 
-    fn trigger_chunk_fetch(&self, chunk_idx: usize) {
-        if chunk_idx >= self.cache.chunk_written_bytes.len() {
+    pub fn schedule_read_ahead(self: &Arc<Self>) {
+        let total_chunks = self.chunk_written_bytes.len();
+        if total_chunks == 0 {
+            return;
+        }
+
+        let current_pos = self.current_position.load(Ordering::Relaxed);
+        let byte_rate = self.nominal_byte_rate.load(Ordering::Relaxed);
+        let lookahead = self.lookahead_secs.load(Ordering::Relaxed);
+
+        let runway_bytes = (byte_rate * lookahead).max(2 * CHUNK_SIZE);
+        let target_byte = (current_pos + runway_bytes).min(self.total_size);
+
+        let current_chunk = (current_pos / CHUNK_SIZE) as usize;
+        let target_chunk = if target_byte > 0 {
+            ((target_byte - 1) / CHUNK_SIZE) as usize
+        } else {
+            0
+        };
+        let end_chunk = target_chunk.min(total_chunks.saturating_sub(1));
+
+        let max_concurrency = current_concurrency_limit();
+
+        for idx in current_chunk..=end_chunk {
+            if FETCHES_IN_FLIGHT.load(Ordering::Relaxed) >= max_concurrency {
+                break;
+            }
+
+            let chunk_start = idx as u64 * CHUNK_SIZE;
+            let chunk_len = ((self.total_size - chunk_start).min(CHUNK_SIZE)) as u32;
+            let written = self.chunk_written_bytes[idx].load(Ordering::Acquire);
+
+            if written < chunk_len && !self.chunk_fetching[idx].load(Ordering::Relaxed) {
+                self.trigger_chunk_fetch(idx);
+            }
+        }
+    }
+
+    pub fn trigger_chunk_fetch(self: &Arc<Self>, chunk_idx: usize) {
+        if chunk_idx >= self.chunk_written_bytes.len() {
             return;
         }
 
         // Atomic check-and-set: prevent duplicate in-flight fetches for the same chunk
-        if self.cache.chunk_fetching[chunk_idx].swap(true, Ordering::SeqCst) {
+        if self.chunk_fetching[chunk_idx].swap(true, Ordering::SeqCst) {
             return; // Already being fetched
         }
 
         let chunk_start = chunk_idx as u64 * CHUNK_SIZE;
-        let chunk_len = ((self.cache.total_size - chunk_start).min(CHUNK_SIZE)) as u32;
+        let chunk_len = ((self.total_size - chunk_start).min(CHUNK_SIZE)) as u32;
         let chunk_end = chunk_start + chunk_len as u64 - 1;
 
-        let cache = Arc::clone(&self.cache);
-        let url = self.url.clone();
-        let token = self.auth_token.clone();
+        let (url, token, index_path) = {
+            let guard = self.fetch_ctx.lock();
+            match guard.as_ref() {
+                Some(ctx) => (ctx.url.clone(), ctx.auth_token.clone(), ctx.index_path.clone()),
+                None => {
+                    self.chunk_fetching[chunk_idx].store(false, Ordering::Release);
+                    return;
+                }
+            }
+        };
+
+        let cache = Arc::clone(self);
         let file_id = self.file_id.clone();
-        let index_path = self.index_path.clone();
-        let generation = self.generation;
+        let generation = self.active_generation.load(Ordering::Relaxed);
 
         GLOBAL_IO_RT.spawn(async move {
             FETCHES_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
@@ -415,10 +503,11 @@ impl CloudMediaSource {
 
             let mut current_token = token;
             let mut final_res: Result<()> = Ok(());
+            let chunk_fetch_start = std::time::Instant::now();
 
             for attempt in 0..=3 {
                 if cache.active_generation.load(Ordering::Relaxed) != generation {
-                    // Superseded by newer track request
+                    // Superseded by newer track request or seek
                     FETCHES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
                     cache.chunk_fetching[chunk_idx].store(false, Ordering::Release);
                     return;
@@ -520,6 +609,13 @@ impl CloudMediaSource {
                             cache.chunk_failed[chunk_idx].store(false, Ordering::Release);
                             cache.failed.store(false, Ordering::Release);
 
+                            // Measure throughput from elapsed time and bytes
+                            let elapsed = chunk_fetch_start.elapsed();
+                            if elapsed.as_millis() > 30 && written_in_chunk > 0 {
+                                let bps = (written_in_chunk as u64 * 1000) / (elapsed.as_millis().max(1) as u64);
+                                update_measured_throughput(bps);
+                            }
+
                             // Compute CRC32 checksum from disk to verify write integrity
                             let mut hasher = crc32fast::Hasher::new();
                             let mut verify_buf = vec![0u8; chunk_len as usize];
@@ -552,7 +648,7 @@ impl CloudMediaSource {
                                     chunks.push(chunk_idx as u64);
                                 }
                             }
-                            // Append chunk completion to index file
+                            // Append chunk completion to index file if path exists
                             if let Ok(mut idx_file) = OpenOptions::new().create(true).append(true).open(&index_path) {
                                 use std::io::Write;
                                 let _ = writeln!(idx_file, "{}", chunk_idx);
@@ -583,7 +679,94 @@ impl CloudMediaSource {
             cache.chunk_fetching[chunk_idx].store(false, Ordering::Release);
             FETCHES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
             cache.data_arrived.notify_all();
+
+            // Refill the 30s runway pipeline immediately
+            cache.schedule_read_ahead();
         });
+    }
+}
+
+pub struct CloudMediaSource {
+    file_id: String,
+    position: u64,
+    generation: u64,
+    cache: Arc<SparseTrackCache>,
+}
+
+impl CloudMediaSource {
+    pub fn new(
+        file_id: String,
+        url: String,
+        auth_token: Option<String>,
+        total_size: u64,
+        cache_dir: PathBuf,
+    ) -> Result<Self> {
+        fs::create_dir_all(&cache_dir)?;
+        let sparse_path = cache_dir.join(format!("{}.sparse", file_id));
+        let index_path = cache_dir.join(format!("{}.idx", file_id));
+
+        let cache = SparseTrackCache::new_with_db(&file_id, &sparse_path, &index_path, total_size, None)?;
+
+        cache.set_fetch_context(FetchContext {
+            url,
+            auth_token,
+            index_path,
+        });
+
+        // Populate initial seek-bar telemetry from already cached chunks
+        {
+            let mut existing = Vec::new();
+            for (idx, written) in cache.chunk_written_bytes.iter().enumerate() {
+                let chunk_len = ((total_size - (idx as u64 * CHUNK_SIZE)).min(CHUNK_SIZE)) as u32;
+                if written.load(Ordering::Relaxed) >= chunk_len {
+                    existing.push(idx as u64);
+                }
+            }
+            let mut guard = CACHED.lock();
+            guard.insert(file_id.clone(), (total_size, existing));
+        }
+
+        set_active_cache(Arc::clone(&cache));
+
+        // Proactively schedule initial 30s runway chunks immediately
+        cache.schedule_read_ahead();
+
+        Ok(Self {
+            file_id,
+            position: 0,
+            generation: 1,
+            cache,
+        })
+    }
+
+    pub fn cache(&self) -> &Arc<SparseTrackCache> {
+        &self.cache
+    }
+
+    pub fn nominal_byte_rate(&self) -> u64 {
+        self.cache.nominal_byte_rate.load(Ordering::Relaxed)
+    }
+
+    pub fn set_nominal_byte_rate(&self, rate: u64) {
+        self.cache.nominal_byte_rate.store(rate, Ordering::Relaxed);
+        self.cache.schedule_read_ahead();
+    }
+
+    pub fn lookahead_secs(&self) -> u64 {
+        self.cache.lookahead_secs.load(Ordering::Relaxed)
+    }
+
+    pub fn set_lookahead_secs(&self, secs: u64) {
+        self.cache.lookahead_secs.store(secs, Ordering::Relaxed);
+        self.cache.schedule_read_ahead();
+    }
+
+    pub fn schedule_read_ahead(&self) {
+        self.cache.schedule_read_ahead();
+    }
+
+    pub fn trigger_chunk_fetch(&self, chunk_idx: usize) {
+        self.cache.trigger_chunk_fetch(chunk_idx);
     }
 
     #[inline]
@@ -593,8 +776,9 @@ impl CloudMediaSource {
             return Ok(());
         }
 
-        // Trigger fetch of current chunk
-        self.trigger_chunk_fetch(chunk_idx);
+        // Trigger fetch of current chunk and fill rolling runway
+        self.cache.trigger_chunk_fetch(chunk_idx);
+        self.cache.schedule_read_ahead();
 
         // Slow path: park thread on Condvar until the requested slice arrives
         let mut guard = self.cache.sync_mutex.lock();
@@ -618,6 +802,8 @@ impl Read for CloudMediaSource {
             return Ok(0); // EOF
         }
 
+        self.cache.current_position.store(self.position, Ordering::Relaxed);
+
         let chunk_idx = (self.position / CHUNK_SIZE) as usize;
         let chunk_offset = (self.position % CHUNK_SIZE) as u32;
         let chunk_total_len = ((self.cache.total_size - (chunk_idx as u64 * CHUNK_SIZE)).min(CHUNK_SIZE)) as u32;
@@ -631,15 +817,11 @@ impl Read for CloudMediaSource {
         // Positional zero-seek read directly from unified kernel page cache
         let bytes_read = self.cache.file.read_at(&mut buf[..to_read], self.position)?;
         self.position += bytes_read as u64;
+        self.cache.current_position.store(self.position, Ordering::Relaxed);
         self.cache.touch_chunk(&self.file_id, chunk_idx as u32);
 
-        // Proactive N+1 chunk prefetch when decode cursor crosses 50% of the active chunk
-        if chunk_offset > (CHUNK_SIZE as u32 / 2)
-            && chunk_idx + 1 < self.cache.chunk_written_bytes.len()
-            && self.cache.chunk_written_bytes[chunk_idx + 1].load(Ordering::Relaxed) == 0
-        {
-            self.trigger_chunk_fetch(chunk_idx + 1);
-        }
+        // Continuous rolling 30-second read-ahead scheduler
+        self.cache.schedule_read_ahead();
 
         Ok(bytes_read)
     }
@@ -660,7 +842,19 @@ impl Seek for CloudMediaSource {
             ));
         }
 
-        self.position = cmp::min(new_pos as u64, self.cache.total_size);
+        let new_pos = cmp::min(new_pos as u64, self.cache.total_size);
+        let old_chunk = (self.position / CHUNK_SIZE) as usize;
+        let new_chunk = (new_pos / CHUNK_SIZE) as usize;
+
+        self.position = new_pos;
+        self.cache.current_position.store(new_pos, Ordering::Relaxed);
+
+        if (new_chunk as isize - old_chunk as isize).abs() > 2 {
+            // Large seek: bump generation to cancel distant in-flight fetches
+            self.generation = self.cache.active_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        }
+
+        self.cache.schedule_read_ahead();
         Ok(self.position)
     }
 }
@@ -821,6 +1015,132 @@ mod tests {
         let mut hasher = crc32fast::Hasher::new();
         hasher.update(&chunk_data);
         assert_eq!(chunk_rec.crc32, hasher.finalize());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_bitrate_aware_nominal_rate_calculation() {
+        let db = Arc::new(parking_lot::Mutex::new(MetadataDb::new_in_memory().unwrap()));
+
+        // Case A: Track with known duration (240s, 276 MB hi-res FLAC)
+        db.lock()
+            .conn
+            .execute(
+                "INSERT INTO tracks (file_id, name, folder_path, title, artist, album, album_artist, genre, year, track_number, disc_number, duration_ms, sample_rate, channels, bits_per_sample, size_bytes, tags_read, artwork_path)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                rusqlite::params![
+                    "hires_track", "test.flac", "/music", "HiRes Test", "Artist", "Album", "Artist", "Jazz", 2024, 1, 1, 240_000, 192_000, 2, 24, 276_480_000i64, 1, ""
+                ],
+            )
+            .unwrap();
+
+        let rate_hires = calculate_nominal_byte_rate("hires_track", 276_480_000, Some(&db));
+        // Expecting 276_480_000 * 1000 / 240_000 = 1_152_000 B/s
+        assert_eq!(rate_hires, 1_152_000);
+
+        // Case B: Track with unknown duration (duration_ms = 0), but known 192kHz 24-bit stereo
+        db.lock()
+            .conn
+            .execute(
+                "INSERT INTO tracks (file_id, name, folder_path, title, artist, album, album_artist, genre, year, track_number, disc_number, duration_ms, sample_rate, channels, bits_per_sample, size_bytes, tags_read, artwork_path)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                rusqlite::params![
+                    "hires_nodur", "nodur.flac", "/music", "NoDur Test", "Artist", "Album", "Artist", "Classical", 2024, 2, 1, 0, 192_000, 2, 24, 276_480_000i64, 1, ""
+                ],
+            )
+            .unwrap();
+
+        let rate_nodur = calculate_nominal_byte_rate("hires_nodur", 276_480_000, Some(&db));
+        // raw = 192000 * 2 * 3 = 1_152_000 * 0.65 = 748_800 B/s
+        assert_eq!(rate_nodur, 748_800);
+
+        // Case C: Untagged / not in DB (fallback total_size / 240)
+        let rate_untagged = calculate_nominal_byte_rate("unknown_file", 240_000_000, Some(&db));
+        assert_eq!(rate_untagged, 1_000_000);
+    }
+
+    #[test]
+    fn test_throughput_concurrency_scaling() {
+        // Slow throughput: < 2 MB/s
+        set_measured_throughput_bps(1_500_000);
+        assert_eq!(current_concurrency_limit(), 2);
+
+        // Standard throughput: 5 MB/s
+        set_measured_throughput_bps(5_000_000);
+        assert_eq!(current_concurrency_limit(), 3);
+
+        // High throughput: 12 MB/s
+        set_measured_throughput_bps(12_000_000);
+        assert_eq!(current_concurrency_limit(), 4);
+
+        // Test EMA smoothing:
+        set_measured_throughput_bps(4_000_000);
+        update_measured_throughput(8_000_000);
+        // (4_000_000 * 3 + 8_000_000) / 4 = 5_000_000
+        assert_eq!(measured_throughput_bps(), 5_000_000);
+    }
+
+    #[test]
+    fn test_bitrate_aware_30s_rolling_read_ahead_scheduler() {
+        let temp_dir = std::env::temp_dir().join(format!("bitdrop_test_sched_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let db = Arc::new(parking_lot::Mutex::new(MetadataDb::new_in_memory().unwrap()));
+        let file_id = "test_sched_track";
+        let sparse_path = temp_dir.join(format!("{}.sparse", file_id));
+        let index_path = temp_dir.join(format!("{}.idx", file_id));
+        let total_size = 60 * 1024 * 1024; // 60 MB (30 chunks of 2 MB)
+
+        let cache = SparseTrackCache::new_with_db(
+            file_id,
+            &sparse_path,
+            &index_path,
+            total_size,
+            Some(Arc::clone(&db)),
+        )
+        .unwrap();
+
+        assert_eq!(cache.chunk_written_bytes.len(), 30);
+
+        // 1. CD Quality (16/44.1): ~110 KB/s rate. Lookahead = 30s.
+        // Runway bytes = (110_000 * 30).max(4 MB) = 4 MB (chunks 0 and 1)
+        cache.nominal_byte_rate.store(110_000, Ordering::Relaxed);
+        cache.lookahead_secs.store(30, Ordering::Relaxed);
+        cache.current_position.store(0, Ordering::Relaxed);
+
+        // Runway check math
+        let runway = (110_000u64 * 30).max(2 * CHUNK_SIZE);
+        assert_eq!(runway, 4 * 1024 * 1024);
+        let end_chunk = ((runway - 1) / CHUNK_SIZE) as usize;
+        assert_eq!(
+            end_chunk, 1,
+            "CD audio 30s runway should require only chunks 0..=1"
+        );
+
+        // 2. Hi-Res 24/192: ~1,152,000 B/s (~1.15 MB/s). Lookahead = 30s.
+        // Runway bytes = 1,152_000 * 30 = 34,560,000 bytes (~34.5 MB).
+        cache.nominal_byte_rate.store(1_152_000, Ordering::Relaxed);
+        let hires_runway = (1_152_000u64 * 30).max(2 * CHUNK_SIZE);
+        let hires_end_chunk = ((hires_runway - 1) / CHUNK_SIZE) as usize;
+        assert_eq!(
+            hires_end_chunk, 16,
+            "Hi-Res audio 30s runway requires chunks 0..=16"
+        );
+
+        // 3. Advancing position shifts the rolling runway forward
+        // Seek to 20 MB (chunk 10)
+        cache
+            .current_position
+            .store(20 * 1024 * 1024, Ordering::Relaxed);
+        let pos = cache.current_position.load(Ordering::Relaxed);
+        let target_byte = (pos + hires_runway).min(total_size);
+        let target_end_chunk = ((target_byte - 1) / CHUNK_SIZE) as usize;
+        assert_eq!(
+            target_end_chunk, 26,
+            "Position at chunk 10 shifts rolling runway to chunk 26"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
