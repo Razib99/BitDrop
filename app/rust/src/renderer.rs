@@ -1,11 +1,17 @@
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 use crate::api::audio_engine::{
     enable_hardware_flush_to_zero, ramp_step,
     CALLBACK_FADE_STEP, CALLBACK_FADE_TARGET, CALLBACK_FLUSH_REQUESTED,
     CALLBACK_FRAMES_PLAYED, CALLBACK_GATE_OUTPUT, CALLBACK_IS_PLAYING,
     DSP_TRIPLE_BUFFER, TRACK_ENDED_FLAG, DUCK_MS,
 };
-use crate::dsp::{BoundaryKind, BoundaryMarker, DspPipelineV2};
+use crate::dsp::{
+    BoundaryKind, BoundaryMarker, DspPipelineV2,
+    VISUALIZER_CLIPPING, VISUALIZER_HEAD, VISUALIZER_PEAK_L_MILLIDB,
+    VISUALIZER_PEAK_R_MILLIDB, VISUALIZER_RING_SIZE, VISUALIZER_SAMPLES,
+};
+
+pub static ENGINE_UNDERRUNS: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RenderAction {
@@ -116,6 +122,8 @@ impl OutputRenderer {
 
         if want <= 0.0 && self.fade_gain <= 0.0 {
             out_slice.fill(0.0);
+            VISUALIZER_PEAK_L_MILLIDB.store(-90000, Ordering::Relaxed);
+            VISUALIZER_PEAK_R_MILLIDB.store(-90000, Ordering::Relaxed);
             return RenderAction::Continue;
         }
 
@@ -125,11 +133,15 @@ impl OutputRenderer {
         let samples_to_read = samples_needed.min(avail_samples);
         let frames_to_read = samples_to_read / 2;
 
+        let mut block_max_l: f32 = 0.0;
+        let mut block_max_r: f32 = 0.0;
+
         if frames_to_read > 0 {
             if let Ok(chunk) = consumer.read_chunk(frames_to_read * 2) {
                 let (s1, s2) = chunk.as_slices();
                 let mut read_idx = 0;
                 let s1_len = s1.len();
+                let mut vis_head = VISUALIZER_HEAD.load(Ordering::Relaxed);
 
                 for i in 0..frames_to_read {
                     let (mut l, mut r) = if read_idx + 1 < s1_len {
@@ -155,14 +167,33 @@ impl OutputRenderer {
 
                     self.last = (l, r);
                     let g = self.fade_gain * self.duck;
-                    out_slice[i * channels] = l * g;
+                    let rendered_l = l * g;
+                    let rendered_r = r * g;
+
+                    out_slice[i * channels] = rendered_l;
                     if channels > 1 {
-                        out_slice[i * channels + 1] = r * g;
+                        out_slice[i * channels + 1] = rendered_r;
                     }
                     for c in 2..channels {
                         out_slice[i * channels + c] = 0.0;
                     }
+
+                    // Track peaks for visualizer
+                    let abs_l = rendered_l.abs();
+                    let abs_r = rendered_r.abs();
+                    if abs_l > block_max_l {
+                        block_max_l = abs_l;
+                    }
+                    if abs_r > block_max_r {
+                        block_max_r = abs_r;
+                    }
+
+                    // Record mono sample for visualizer FFT
+                    let mono = (rendered_l + rendered_r) * 0.5;
+                    VISUALIZER_SAMPLES[vis_head].store(mono.to_bits(), Ordering::Relaxed);
+                    vis_head = (vis_head + 1) % VISUALIZER_RING_SIZE;
                 }
+                VISUALIZER_HEAD.store(vis_head, Ordering::Release);
                 chunk.commit_all();
             }
 
@@ -216,7 +247,49 @@ impl OutputRenderer {
             }
         }
 
+        // Export decayed peak meters and clipping to visualizer atomics
+        let cur_l_db = if block_max_l > 1e-5 {
+            20.0 * block_max_l.log10()
+        } else {
+            -90.0
+        };
+        let cur_r_db = if block_max_r > 1e-5 {
+            20.0 * block_max_r.log10()
+        } else {
+            -90.0
+        };
+
+        let prev_l_db = (VISUALIZER_PEAK_L_MILLIDB.load(Ordering::Relaxed) as f32) / 1000.0;
+        let prev_r_db = (VISUALIZER_PEAK_R_MILLIDB.load(Ordering::Relaxed) as f32) / 1000.0;
+
+        let new_l_db = if cur_l_db >= prev_l_db {
+            cur_l_db
+        } else {
+            prev_l_db - 1.5
+        };
+        let new_r_db = if cur_r_db >= prev_r_db {
+            cur_r_db
+        } else {
+            prev_r_db - 1.5
+        };
+
+        VISUALIZER_PEAK_L_MILLIDB.store(
+            (new_l_db.clamp(-90.0, 6.0) * 1000.0) as i32,
+            Ordering::Relaxed,
+        );
+        VISUALIZER_PEAK_R_MILLIDB.store(
+            (new_r_db.clamp(-90.0, 6.0) * 1000.0) as i32,
+            Ordering::Relaxed,
+        );
+
+        if block_max_l >= 0.999 || block_max_r >= 0.999 {
+            VISUALIZER_CLIPPING.store(true, Ordering::Relaxed);
+        }
+
         // Underrun concealment: if fewer frames were available than needed, decay last sample to silence smoothly
+        if frames_to_read < frames_needed && is_playing && !gated {
+            ENGINE_UNDERRUNS.fetch_add(1, Ordering::Relaxed);
+        }
         for i in frames_to_read..frames_needed {
             self.duck = (self.duck - duck_step).max(0.0);
             let g = self.fade_gain * self.duck;

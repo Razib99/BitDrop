@@ -122,6 +122,10 @@ Future<CacheStats> cloudCacheGetStats(
     RustLib.instance.api.crateApiCloudLibraryCloudCacheGetStats(
         pinnedFileIds: pinnedFileIds, activeFileId: activeFileId);
 
+/// Helper for diagnostics snapshot: queries total cached bytes across all files.
+Future<BigInt> getTotalCacheBytes() =>
+    RustLib.instance.api.crateApiCloudLibraryGetTotalCacheBytes();
+
 /// Prunes unpinned chunks down to the configured limit, preserving pinned tracks and active playback.
 Future<BigInt> cloudCachePruneNow(
         {required String chunkDir,

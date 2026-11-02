@@ -14,9 +14,9 @@ void main() {
 
   group('PersistenceCodec Roundtrips', () {
     test('EqState roundtrip serialization and deserialization', () {
-      final initial = EqState(
+      const initial = EqState(
         mode: EqMode.parametric,
-        bands: const [
+        bands: [
           EqBand(
             id: 1,
             type: BiquadType.peak,
@@ -36,7 +36,7 @@ void main() {
         ],
         preampDb: -3.5,
         bypass: false,
-        graphicGains: const [1.0, 2.0, 3.0, 0, 0, -1.0, -2.0, -3.0, 0, 1.5],
+        graphicGains: [1.0, 2.0, 3.0, 0, 0, -1.0, -2.0, -3.0, 0, 1.5],
         bassDb: 2.0,
         trebleDb: -1.0,
         balance: -0.2,
@@ -140,7 +140,7 @@ void main() {
     });
 
     test('DeviceProfile list roundtrip serialization and deserialization', () {
-      final initial = const [
+      const initial = [
         DeviceProfile(
           deviceId: 'dev-usb-1',
           deviceName: 'FiiO KA17',

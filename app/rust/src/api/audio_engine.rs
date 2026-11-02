@@ -19,8 +19,8 @@ use crate::cloud::media_source::CloudMediaSource;
 use rubato::Resampler;
 pub use crate::dsp::{
     downmix_to_stereo, BoundaryKind, BoundaryMarker, DspConfigSnapshot, DspPipelineV2, EqBandSpec,
-    TripleBuffer, EQ_HIGH_PASS, EQ_HIGH_SHELF, EQ_LOW_PASS, EQ_LOW_SHELF, EQ_PEAK, ISO_10_BAND,
-    MAX_EQ_BANDS,
+    TripleBuffer, VisualizerFrameData, EQ_HIGH_PASS, EQ_HIGH_SHELF, EQ_LOW_PASS, EQ_LOW_SHELF,
+    EQ_PEAK, ISO_10_BAND, MAX_EQ_BANDS,
 };
 
 /// Capacity for the lock-free audio ring buffer: 768,000 floats (~3MB memory),
@@ -39,6 +39,7 @@ pub static CALLBACK_FADE_STEP: AtomicU32 = AtomicU32::new(0);
 pub static CALLBACK_FRAMES_PLAYED: AtomicU64 = AtomicU64::new(0);
 pub static DECODER_FRAMES_PUSHED: AtomicU64 = AtomicU64::new(0);
 pub static TRACK_ENDED_FLAG: AtomicBool = AtomicBool::new(false);
+pub static DECODE_LOAD_PERMILLE: AtomicU32 = AtomicU32::new(0);
 
 lazy_static::lazy_static! {
     /// Lock-free Triple Buffer for zero-allocation, wait-free DSP snapshots.
@@ -1593,6 +1594,91 @@ pub fn engine_buffer_state() -> EngineBufferState {
     }
 }
 
+/// Comprehensive engine telemetry snapshot backed by measured hardware and network data.
+#[derive(Clone, Debug, Default)]
+pub struct EngineDiagnosticsData {
+    pub buffer_ahead_seconds: f64,
+    pub pcm_fill_percent: f64,
+    pub underrun_count: u32,
+    pub speed_mbps: f64,
+    pub active_range_requests: u32,
+    pub requests_per_minute: u32,
+    pub request_budget_per_minute: u32,
+    pub cache_hit_rate: f64,
+    pub cache_size_bytes: u64,
+    pub current_file_cached_percent: u32,
+    pub decode_load_percent: f64,
+    pub time_to_first_byte_ms: u32,
+    pub bytes_downloaded: u64,
+    pub last_error: Option<String>,
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_get_visualizer_frame() -> VisualizerFrameData {
+    let is_playing = CALLBACK_IS_PLAYING.load(Ordering::Acquire);
+    crate::dsp::compute_visualizer_frame(is_playing)
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_get_diagnostics() -> EngineDiagnosticsData {
+    let state = PLAYER_STATE.lock().unwrap();
+    let buffer_ahead_seconds = state.buffered_ms as f64 / 1000.0;
+    let sr = if state.target_sample_rate > 0 {
+        state.target_sample_rate as f64
+    } else {
+        48000.0
+    };
+    let queued_samples = (buffer_ahead_seconds * sr * 2.0) as usize;
+    let pcm_fill_percent = ((queued_samples as f64 / RING_BUFFER_CAPACITY as f64) * 100.0).clamp(0.0, 100.0);
+
+    let underrun_count = crate::renderer::ENGINE_UNDERRUNS.load(Ordering::Relaxed);
+    let speed_mbps = crate::cloud::media_source::measured_throughput_bps() as f64 / 1_000_000.0;
+    let active_range_requests = crate::cloud::media_source::fetches_in_flight() as u32;
+    let requests_per_minute = crate::cloud::media_source::requests_per_minute();
+    let request_budget_per_minute = 12000;
+    let cache_hit_rate = crate::cloud::media_source::cache_hit_rate();
+    let bytes_downloaded = crate::cloud::media_source::bytes_fetched() as u64;
+    let time_to_first_byte_ms = crate::cloud::media_source::last_ttfb_ms();
+    let cache_size_bytes = crate::api::cloud_library::get_total_cache_bytes();
+
+    let current_file_cached_percent = if state.duration_ms > 0 && !state.current_track_id.is_empty() {
+        let (total_bytes, ranges) = crate::cloud::media_source::cached_byte_ranges(Some(&state.current_track_id));
+        if total_bytes > 0 {
+            let cached_sum: u64 = ranges.iter().map(|(s, e)| e.saturating_sub(*s)).sum();
+            ((cached_sum * 100) / total_bytes).min(100) as u32
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    let decode_load_percent = DECODE_LOAD_PERMILLE.load(Ordering::Relaxed) as f64 / 10.0;
+
+    let last_error = if state.buffering && active_range_requests == 0 {
+        Some("Network stalled waiting for chunks".to_string())
+    } else {
+        None
+    };
+
+    EngineDiagnosticsData {
+        buffer_ahead_seconds,
+        pcm_fill_percent,
+        underrun_count,
+        speed_mbps,
+        active_range_requests,
+        requests_per_minute,
+        request_budget_per_minute,
+        cache_hit_rate,
+        cache_size_bytes,
+        current_file_cached_percent,
+        decode_load_percent,
+        time_to_first_byte_ms,
+        bytes_downloaded,
+        last_error,
+    }
+}
+
 #[cfg(target_os = "android")]
 fn stream_opens() -> u32 {
     STREAM_RESTARTS.load(Ordering::Relaxed) as u32
@@ -2156,6 +2242,29 @@ mod tests {
         eprintln!(" Events Dispatched    : Started -> Changed -> Ended (3/3)");
         eprintln!(" Status               : PASS (True Gapless Playback Verified)");
         eprintln!("=======================================================\n");
+    }
+
+    #[test]
+    fn test_engine_diagnostics_aggregation() {
+        {
+            let mut state = PLAYER_STATE.lock().unwrap();
+            state.buffered_ms = 4500;
+            state.target_sample_rate = 48000;
+            state.duration_ms = 240000;
+            state.current_track_id = "diag_track".to_string();
+            state.buffering = false;
+        }
+
+        let diag = engine_get_diagnostics();
+        assert!((diag.buffer_ahead_seconds - 4.5).abs() < 1e-4);
+        assert!(diag.pcm_fill_percent >= 0.0 && diag.pcm_fill_percent <= 100.0);
+        assert_eq!(diag.request_budget_per_minute, 12000);
+        assert!(diag.cache_hit_rate >= 0.0 && diag.cache_hit_rate <= 1.0);
+        assert!(diag.speed_mbps >= 0.0);
+        assert!(diag.decode_load_percent >= 0.0 && diag.decode_load_percent <= 100.0);
+
+        let vis = engine_get_visualizer_frame();
+        assert_eq!(vis.spectrum.len(), crate::dsp::VISUALIZER_BANDS);
     }
 }
 

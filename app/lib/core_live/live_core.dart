@@ -82,6 +82,10 @@ class LiveBitDropCore implements BitDropCore {
   StreamSubscription<EqState>? _eqSub;
   StreamSubscription<audio_svc.PlaybackState>? _playbackSub;
   Timer? _uiPositionTimer;
+  Timer? _visualizerTimer;
+  Timer? _diagnosticsTimer;
+  final List<double> _throughputHistory = [];
+  final List<double> _bufferHistory = [];
 
   LiveBitDropCore(
     this._audioHandler, {
@@ -146,6 +150,9 @@ class LiveBitDropCore implements BitDropCore {
     _loadFavoritesAndPinned();
     _loadSettingsAndEq();
 
+    _diagnostics = BehaviorSubject<DiagnosticsSnapshot>.seeded(_computeDiagnostics());
+    _diagnosticsTimer = Timer.periodic(const Duration(seconds: 1), (_) => _pollDiagnostics());
+
     _outputProbe.start();
     _outputProbeSub =
         _outputProbe.stream.listen((_) => _recomputeSignalPath());
@@ -189,8 +196,10 @@ class LiveBitDropCore implements BitDropCore {
 
       if (isPlaying) {
         _startUiPositionTimer();
+        _startVisualizerTimer();
       } else {
         _stopUiPositionTimer();
+        _stopVisualizerTimer();
       }
 
       _position.add(PositionInfo(
@@ -418,8 +427,12 @@ class LiveBitDropCore implements BitDropCore {
       ));
     }
   }
-  @override Stream<DiagnosticsSnapshot> get diagnostics => _mockCore.diagnostics;
-  @override Stream<VisualizerFrame> get visualizer => _mockCore.visualizer;
+
+  final _visualizer = BehaviorSubject<VisualizerFrame>.seeded(VisualizerFrame.silent);
+  @override Stream<VisualizerFrame> get visualizer => _visualizer.stream;
+
+  late final BehaviorSubject<DiagnosticsSnapshot> _diagnostics;
+  @override Stream<DiagnosticsSnapshot> get diagnostics => _diagnostics.stream;
   final _deviceProfiles = BehaviorSubject<List<DeviceProfile>>.seeded(const [
     DeviceProfile(
       deviceId: 'dev-titanx',
@@ -1698,9 +1711,88 @@ class LiveBitDropCore implements BitDropCore {
     _uiPositionTimer = null;
   }
 
+  void _startVisualizerTimer() {
+    _visualizerTimer?.cancel();
+    _visualizerTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
+      try {
+        final frame = rust.engineGetVisualizerFrame();
+        _visualizer.add(VisualizerFrame(
+          spectrum: frame.spectrum.map((v) => v.toDouble()).toList(),
+          peakLeftDb: frame.peakLeftDb.toDouble(),
+          peakRightDb: frame.peakRightDb.toDouble(),
+          clipping: frame.clipping,
+        ));
+      } catch (_) {}
+    });
+  }
+
+  void _stopVisualizerTimer() {
+    _visualizerTimer?.cancel();
+    _visualizerTimer = null;
+    _visualizer.add(VisualizerFrame.silent);
+  }
+
+  void _pollDiagnostics() {
+    try {
+      final snap = _computeDiagnostics();
+      _diagnostics.add(snap);
+    } catch (_) {}
+  }
+
+  DiagnosticsSnapshot _computeDiagnostics() {
+    final track = _nowPlaying.value?.track;
+    final source = track?.format ??
+        const AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 96000);
+    final signal = _signalPath.value;
+    final device = _outputProbe.current?.name ?? 'System Audio';
+
+    rust.EngineDiagnosticsData? engDiag;
+    try {
+      engDiag = rust.engineGetDiagnostics();
+    } catch (_) {}
+
+    final speedMbps = engDiag?.speedMbps ?? 0.0;
+    final bufferAheadSec = engDiag?.bufferAheadSeconds ??
+        (_position.valueOrNull?.bufferAheadMs ?? 0) / 1000.0;
+
+    _throughputHistory.add(speedMbps);
+    _bufferHistory.add(bufferAheadSec);
+    if (_throughputHistory.length > 40) _throughputHistory.removeAt(0);
+    if (_bufferHistory.length > 40) _bufferHistory.removeAt(0);
+
+    return DiagnosticsSnapshot(
+      tier: signal.tier == OutputTier.unknown
+          ? OutputTier.bitPerfect
+          : signal.tier,
+      requested: source,
+      actual: signal.actual.sampleRate > 0 ? signal.actual : source,
+      deviceName: device,
+      bufferAheadSeconds: bufferAheadSec,
+      pcmFillPercent: engDiag?.pcmFillPercent ?? 0.0,
+      underrunCount: engDiag?.underrunCount ?? 0,
+      speedMbps: speedMbps,
+      activeRangeRequests: engDiag?.activeRangeRequests ?? 0,
+      requestsPerMinute: engDiag?.requestsPerMinute ?? 0,
+      requestBudgetPerMinute: engDiag?.requestBudgetPerMinute ?? 12000,
+      cacheHitRate: engDiag?.cacheHitRate ?? 1.0,
+      cacheSizeBytes: engDiag != null
+          ? engDiag.cacheSizeBytes.toInt()
+          : (_storage.valueOrNull?.cacheBytes ?? 0),
+      currentFileCachedPercent: engDiag?.currentFileCachedPercent ?? 0,
+      decodeLoadPercent: engDiag?.decodeLoadPercent ?? 0.0,
+      timeToFirstByteMs: engDiag?.timeToFirstByteMs ?? 0,
+      bytesDownloaded: engDiag?.bytesDownloaded.toInt() ?? 0,
+      lastError: engDiag?.lastError,
+      throughputHistory: List.of(_throughputHistory),
+      bufferHistory: List.of(_bufferHistory),
+    );
+  }
+
   @override
   void dispose() {
     _uiPositionTimer?.cancel();
+    _visualizerTimer?.cancel();
+    _diagnosticsTimer?.cancel();
     _cloudStatusSub?.cancel();
     _outputProbeSub?.cancel();
     _eqSub?.cancel();
@@ -1714,6 +1806,8 @@ class LiveBitDropCore implements BitDropCore {
     _eq.close();
     _settings.close();
     _deviceProfiles.close();
+    _visualizer.close();
+    _diagnostics.close();
     _cloud?.dispose();
     _outputProbe.dispose();
     _signalPath.close();

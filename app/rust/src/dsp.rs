@@ -12,7 +12,7 @@
 //! - TPDF dither with inline PRNG for integer quantization.
 //! - Bit-exact neutral bypass verified by SHA-256.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 pub const EQ_PEAK: u8 = 0;
 pub const EQ_LOW_SHELF: u8 = 1;
@@ -28,9 +28,31 @@ pub const BUTTERWORTH_Q: f64 = std::f64::consts::FRAC_1_SQRT_2; // 1.0 / sqrt(2)
 pub const OCTAVE_PEAK_Q: f64 = std::f64::consts::SQRT_2; // sqrt(2)
 pub const SUBSONIC_FREQ: f64 = 18.0;
 
+/// Ring buffer capacity for the lock-free visualizer FFT.
+pub const VISUALIZER_RING_SIZE: usize = 512;
+pub const VISUALIZER_BANDS: usize = 32;
+
 /// Atomic metrics exported to UI and diagnostic systems.
 pub static LIMITER_GR_MILLIDB: AtomicU32 = AtomicU32::new(0);
 pub static LIMITER_CLIPPED_SAMPLES: AtomicU64 = AtomicU64::new(0);
+
+pub static VISUALIZER_PEAK_L_MILLIDB: AtomicI32 = AtomicI32::new(-90000);
+pub static VISUALIZER_PEAK_R_MILLIDB: AtomicI32 = AtomicI32::new(-90000);
+pub static VISUALIZER_CLIPPING: AtomicBool = AtomicBool::new(false);
+pub static VISUALIZER_HEAD: AtomicUsize = AtomicUsize::new(0);
+
+#[allow(clippy::declare_interior_mutable_const)]
+const VISUALIZER_INIT_ATOM: AtomicU32 = AtomicU32::new(0);
+pub static VISUALIZER_SAMPLES: [AtomicU32; VISUALIZER_RING_SIZE] =
+    [VISUALIZER_INIT_ATOM; VISUALIZER_RING_SIZE];
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VisualizerFrameData {
+    pub spectrum: Vec<f32>,
+    pub peak_left_db: f32,
+    pub peak_right_db: f32,
+    pub clipping: bool,
+}
 
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub struct EqBandSpec {
@@ -879,6 +901,135 @@ impl DspPipelineV2 {
     }
 }
 
+#[inline]
+fn reverse_bits_9(i: usize) -> usize {
+    ((i as u16).reverse_bits() >> 7) as usize
+}
+
+/// Computes a 512-point Cooley-Tukey Radix-2 Real FFT with Hann windowing,
+/// returning 32 logarithmically spaced magnitude bars normalized to [0.0, 1.0].
+pub fn compute_fft_32_bands(samples: &[f32; VISUALIZER_RING_SIZE]) -> Vec<f32> {
+    let mut re = [0.0f32; 512];
+    let mut im = [0.0f32; 512];
+
+    // Check for silence to skip calculation
+    let mut max_abs = 0.0f32;
+    for &s in samples.iter() {
+        if s.abs() > max_abs {
+            max_abs = s.abs();
+        }
+    }
+    if max_abs < 1e-5 {
+        return vec![0.0f32; VISUALIZER_BANDS];
+    }
+
+    // Apply Hann window and bit-reversal permutation
+    const N: f32 = 512.0;
+    for (i, &sample) in samples.iter().enumerate() {
+        let w = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * (i as f32) / N).cos());
+        let rev = reverse_bits_9(i);
+        re[rev] = sample * w;
+        im[rev] = 0.0;
+    }
+
+    // Cooley-Tukey Radix-2 in-place FFT
+    let mut len = 2;
+    while len <= 512 {
+        let half = len / 2;
+        let angle = -2.0 * std::f32::consts::PI / (len as f32);
+        let (sin_step, cos_step) = angle.sin_cos();
+        let mut k = 0;
+        while k < 512 {
+            let mut cur_cos = 1.0f32;
+            let mut cur_sin = 0.0f32;
+            for j in 0..half {
+                let u_re = re[k + j];
+                let u_im = im[k + j];
+                let v_re = re[k + j + half] * cur_cos - im[k + j + half] * cur_sin;
+                let v_im = re[k + j + half] * cur_sin + im[k + j + half] * cur_cos;
+                re[k + j] = u_re + v_re;
+                im[k + j] = u_im + v_im;
+                re[k + j + half] = u_re - v_re;
+                im[k + j + half] = u_im - v_im;
+                let next_cos = cur_cos * cos_step - cur_sin * sin_step;
+                let next_sin = cur_cos * sin_step + cur_sin * cos_step;
+                cur_cos = next_cos;
+                cur_sin = next_sin;
+            }
+            k += len;
+        }
+        len <<= 1;
+    }
+
+    // Calculate magnitudes for positive frequencies 1..256
+    let mut mags = [0.0f32; 256];
+    for (k, mag) in mags.iter_mut().enumerate().skip(1) {
+        *mag = (re[k] * re[k] + im[k] * im[k]).sqrt() / 256.0;
+    }
+
+    // Group into 32 log-spaced frequency bands
+    let mut bands = vec![0.0f32; VISUALIZER_BANDS];
+    for (b, band) in bands.iter_mut().enumerate() {
+        let norm_start = (b as f32 / VISUALIZER_BANDS as f32).powf(2.2);
+        let norm_end = ((b + 1) as f32 / VISUALIZER_BANDS as f32).powf(2.2);
+        let start_bin = (1.0 + 254.0 * norm_start).floor() as usize;
+        let end_bin = (1.0 + 254.0 * norm_end).ceil() as usize;
+        let end_bin = end_bin.max(start_bin + 1).min(256);
+
+        let mut sum = 0.0f32;
+        let count = (end_bin - start_bin).max(1);
+        for &m in mags[start_bin..end_bin].iter() {
+            sum += m;
+        }
+        let avg_mag = sum / (count as f32);
+
+        // Map magnitude to perceptual dB scale [-60 dBFS .. 0 dBFS] -> [0.0 .. 1.0]
+        let db = 20.0 * (avg_mag + 1e-5).log10();
+        // High frequency tilt compensation to balance pink noise distribution
+        let tilt = 0.25 * (b as f32 / (VISUALIZER_BANDS - 1) as f32);
+        let val = ((db + 60.0) / 60.0 + tilt).clamp(0.0, 1.0);
+        *band = val;
+    }
+
+    bands
+}
+
+/// Reads visualizer ring buffer and returns the latest VisualizerFrameData.
+pub fn compute_visualizer_frame(is_playing: bool) -> VisualizerFrameData {
+    let peak_left_db = (VISUALIZER_PEAK_L_MILLIDB.load(Ordering::Relaxed) as f32) / 1000.0;
+    let peak_right_db = (VISUALIZER_PEAK_R_MILLIDB.load(Ordering::Relaxed) as f32) / 1000.0;
+    let clipping = VISUALIZER_CLIPPING.swap(false, Ordering::Relaxed)
+        || peak_left_db >= -0.01
+        || peak_right_db >= -0.01;
+
+    if !is_playing {
+        return VisualizerFrameData {
+            spectrum: vec![0.0f32; VISUALIZER_BANDS],
+            peak_left_db: -90.0,
+            peak_right_db: -90.0,
+            clipping: false,
+        };
+    }
+
+    // Read 512 samples in sequential chronological order from the ring buffer
+    let head = VISUALIZER_HEAD.load(Ordering::Acquire);
+    let mut ordered = [0.0f32; VISUALIZER_RING_SIZE];
+    for (i, out_sample) in ordered.iter_mut().enumerate() {
+        let ring_idx = (head + i) % VISUALIZER_RING_SIZE;
+        let bits = VISUALIZER_SAMPLES[ring_idx].load(Ordering::Relaxed);
+        *out_sample = f32::from_bits(bits);
+    }
+
+    let spectrum = compute_fft_32_bands(&ordered);
+
+    VisualizerFrameData {
+        spectrum,
+        peak_left_db,
+        peak_right_db,
+        clipping,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1225,4 +1376,65 @@ mod tests {
         assert!(total_reads > 0);
         eprintln!("Triple buffer concurrent test passed: {} snapshots consumed", total_reads);
     }
+
+    #[test]
+    fn test_512_fft_spectrum_and_peaks() {
+        // 1. Silence test
+        let silence = [0.0f32; VISUALIZER_RING_SIZE];
+        let bands = compute_fft_32_bands(&silence);
+        assert_eq!(bands.len(), VISUALIZER_BANDS);
+        for &b in &bands {
+            assert_eq!(b, 0.0f32);
+        }
+
+        // 2. 1 kHz Sine wave at 48 kHz
+        let mut sine = [0.0f32; VISUALIZER_RING_SIZE];
+        for (i, sample) in sine.iter_mut().enumerate() {
+            let t = i as f32 / 48000.0;
+            *sample = (2.0 * std::f32::consts::PI * 1000.0 * t).sin() * 0.8;
+        }
+        let bands = compute_fft_32_bands(&sine);
+        assert_eq!(bands.len(), VISUALIZER_BANDS);
+
+        // All bands must be within [0.0, 1.0]
+        for (i, &b) in bands.iter().enumerate() {
+            assert!(
+                (0.0..=1.0).contains(&b),
+                "Band {} value {} out of range [0.0, 1.0]",
+                i,
+                b
+            );
+        }
+
+        // Maximum magnitude should be near ~1kHz (around band 10-18)
+        let (max_band, &max_val) = bands
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap();
+        assert!(max_val > 0.5, "Peak at 1kHz should be substantial: {}", max_val);
+        assert!(
+            (6..=15).contains(&max_band),
+            "1kHz peak at unexpected band {}",
+            max_band
+        );
+
+        // 3. Visualizer frame integration
+        VISUALIZER_PEAK_L_MILLIDB.store(-6020, Ordering::Relaxed); // -6.02 dBFS
+        VISUALIZER_PEAK_R_MILLIDB.store(-12040, Ordering::Relaxed); // -12.04 dBFS
+        VISUALIZER_CLIPPING.store(false, Ordering::Relaxed);
+
+        let frame = compute_visualizer_frame(true);
+        assert_eq!(frame.spectrum.len(), VISUALIZER_BANDS);
+        assert!((frame.peak_left_db - (-6.02)).abs() < 0.05);
+        assert!((frame.peak_right_db - (-12.04)).abs() < 0.05);
+        assert!(!frame.clipping);
+
+        // Silence when not playing
+        let silent_frame = compute_visualizer_frame(false);
+        assert_eq!(silent_frame.peak_left_db, -90.0);
+        assert_eq!(silent_frame.peak_right_db, -90.0);
+        assert_eq!(silent_frame.spectrum, vec![0.0f32; VISUALIZER_BANDS]);
+    }
 }
+

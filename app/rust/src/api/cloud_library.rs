@@ -1123,6 +1123,16 @@ pub fn cloud_cache_get_stats(
     })
 }
 
+/// Helper for diagnostics snapshot: queries total cached bytes across all files.
+pub fn get_total_cache_bytes() -> u64 {
+    with_db(|db| {
+        db.get_cache_stats(&[])
+            .map(|s| s.total_bytes)
+            .map_err(anyhow::Error::from)
+    })
+    .unwrap_or(0)
+}
+
 /// Prunes unpinned chunks down to the configured limit, preserving pinned tracks and active playback.
 pub fn cloud_cache_prune_now(
     chunk_dir: String,

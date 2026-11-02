@@ -33,3 +33,34 @@ class EqBandSpec {
           gainDb == other.gainDb &&
           q == other.q;
 }
+
+class VisualizerFrameData {
+  final Float32List spectrum;
+  final double peakLeftDb;
+  final double peakRightDb;
+  final bool clipping;
+
+  const VisualizerFrameData({
+    required this.spectrum,
+    required this.peakLeftDb,
+    required this.peakRightDb,
+    required this.clipping,
+  });
+
+  @override
+  int get hashCode =>
+      spectrum.hashCode ^
+      peakLeftDb.hashCode ^
+      peakRightDb.hashCode ^
+      clipping.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VisualizerFrameData &&
+          runtimeType == other.runtimeType &&
+          spectrum == other.spectrum &&
+          peakLeftDb == other.peakLeftDb &&
+          peakRightDb == other.peakRightDb &&
+          clipping == other.clipping;
+}

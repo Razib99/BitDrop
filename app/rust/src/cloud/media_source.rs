@@ -51,9 +51,63 @@ pub static FETCHES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 /// Total bytes pulled from the network this session.
 pub static BYTES_FETCHED: AtomicUsize = AtomicUsize::new(0);
 
+/// Cache hit and miss telemetry counters.
+pub static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+pub static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+
+/// Time to first byte for the most recent chunk request.
+pub static LAST_TTFB_MS: AtomicU32 = AtomicU32::new(0);
+
+/// Rolling minute request count and minute timestamp.
+pub static REQUESTS_LAST_MINUTE: AtomicU32 = AtomicU32::new(0);
+pub static LAST_REQUEST_MINUTE_TS: AtomicU64 = AtomicU64::new(0);
+
 /// Exponential moving average of measured network download throughput in bytes/second.
 /// Initialized to 5 MB/s (typical fast mobile broadband).
 pub static MEASURED_THROUGHPUT_BPS: AtomicU64 = AtomicU64::new(5_000_000);
+
+pub fn cache_hit_rate() -> f64 {
+    let hits = CACHE_HITS.load(Ordering::Relaxed);
+    let misses = CACHE_MISSES.load(Ordering::Relaxed);
+    let total = hits + misses;
+    if total == 0 {
+        1.0
+    } else {
+        hits as f64 / total as f64
+    }
+}
+
+pub fn last_ttfb_ms() -> u32 {
+    LAST_TTFB_MS.load(Ordering::Relaxed)
+}
+
+pub fn requests_per_minute() -> u32 {
+    let current_minute = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 60)
+        .unwrap_or(0);
+    let last_minute = LAST_REQUEST_MINUTE_TS.load(Ordering::Relaxed);
+    if current_minute == last_minute {
+        REQUESTS_LAST_MINUTE.load(Ordering::Relaxed)
+    } else {
+        0
+    }
+}
+
+pub fn record_network_request(ttfb_ms: u32) {
+    LAST_TTFB_MS.store(ttfb_ms, Ordering::Relaxed);
+    let current_minute = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 60)
+        .unwrap_or(0);
+    let last_minute = LAST_REQUEST_MINUTE_TS.load(Ordering::Relaxed);
+    if current_minute != last_minute {
+        LAST_REQUEST_MINUTE_TS.store(current_minute, Ordering::Relaxed);
+        REQUESTS_LAST_MINUTE.store(1, Ordering::Relaxed);
+    } else {
+        REQUESTS_LAST_MINUTE.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 pub fn update_measured_throughput(sample_bps: u64) {
     if sample_bps == 0 {
@@ -558,6 +612,9 @@ impl SparseTrackCache {
                             }
                         }
 
+                        let ttfb = chunk_fetch_start.elapsed().as_millis() as u32;
+                        record_network_request(ttfb);
+
                         let mut stream = response.bytes_stream();
                         let mut written_in_chunk: u32 = 0;
                         let mut stream_err = None;
@@ -803,8 +860,10 @@ impl CloudMediaSource {
     fn ensure_bytes_available(&self, chunk_idx: usize, needed_end: u32) -> io::Result<()> {
         // Fast path (Lock-free): requested slice already written to disk / page cache
         if self.cache.chunk_written_bytes[chunk_idx].load(Ordering::Acquire) >= needed_end {
+            CACHE_HITS.fetch_add(1, Ordering::Relaxed);
             return Ok(());
         }
+        CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
 
         // Trigger fetch of current chunk and fill rolling runway
         self.cache.trigger_chunk_fetch(chunk_idx);

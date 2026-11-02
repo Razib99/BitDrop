@@ -12,7 +12,7 @@ part 'audio_engine.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `open_media_source`, `request_load`, `set_ramp`, `stream_opens`
 // These types are ignored because they are not used by any `pub` functions: `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DSP_TRIPLE_BUFFER`, `DecoderCmd`, `EVENT_SINK`, `LOAD_SENDER`, `OpenedTrack`, `PLAYER_STATE`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `default`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `default`, `default`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Enables hardware Flush-to-Zero (FTZ) and Denormals-are-Zero (DAZ) mode.
 /// On ARM64 (Android), this sets bits 24 (FZ) and 19 (DN) of FPCR.
@@ -112,6 +112,12 @@ EngineOutputState engineOutputState() =>
 EngineBufferState engineBufferState() =>
     RustLib.instance.api.crateApiAudioEngineEngineBufferState();
 
+VisualizerFrameData engineGetVisualizerFrame() =>
+    RustLib.instance.api.crateApiAudioEngineEngineGetVisualizerFrame();
+
+EngineDiagnosticsData engineGetDiagnostics() =>
+    RustLib.instance.api.crateApiAudioEngineEngineGetDiagnostics();
+
 int engineGetPosition() =>
     RustLib.instance.api.crateApiAudioEngineEngineGetPosition();
 
@@ -193,6 +199,78 @@ class EngineBufferState {
           fetchesInFlight == other.fetchesInFlight &&
           bytesFetched == other.bytesFetched &&
           streamOpens == other.streamOpens;
+}
+
+/// Comprehensive engine telemetry snapshot backed by measured hardware and network data.
+class EngineDiagnosticsData {
+  final double bufferAheadSeconds;
+  final double pcmFillPercent;
+  final int underrunCount;
+  final double speedMbps;
+  final int activeRangeRequests;
+  final int requestsPerMinute;
+  final int requestBudgetPerMinute;
+  final double cacheHitRate;
+  final BigInt cacheSizeBytes;
+  final int currentFileCachedPercent;
+  final double decodeLoadPercent;
+  final int timeToFirstByteMs;
+  final BigInt bytesDownloaded;
+  final String? lastError;
+
+  const EngineDiagnosticsData({
+    required this.bufferAheadSeconds,
+    required this.pcmFillPercent,
+    required this.underrunCount,
+    required this.speedMbps,
+    required this.activeRangeRequests,
+    required this.requestsPerMinute,
+    required this.requestBudgetPerMinute,
+    required this.cacheHitRate,
+    required this.cacheSizeBytes,
+    required this.currentFileCachedPercent,
+    required this.decodeLoadPercent,
+    required this.timeToFirstByteMs,
+    required this.bytesDownloaded,
+    this.lastError,
+  });
+
+  @override
+  int get hashCode =>
+      bufferAheadSeconds.hashCode ^
+      pcmFillPercent.hashCode ^
+      underrunCount.hashCode ^
+      speedMbps.hashCode ^
+      activeRangeRequests.hashCode ^
+      requestsPerMinute.hashCode ^
+      requestBudgetPerMinute.hashCode ^
+      cacheHitRate.hashCode ^
+      cacheSizeBytes.hashCode ^
+      currentFileCachedPercent.hashCode ^
+      decodeLoadPercent.hashCode ^
+      timeToFirstByteMs.hashCode ^
+      bytesDownloaded.hashCode ^
+      lastError.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is EngineDiagnosticsData &&
+          runtimeType == other.runtimeType &&
+          bufferAheadSeconds == other.bufferAheadSeconds &&
+          pcmFillPercent == other.pcmFillPercent &&
+          underrunCount == other.underrunCount &&
+          speedMbps == other.speedMbps &&
+          activeRangeRequests == other.activeRangeRequests &&
+          requestsPerMinute == other.requestsPerMinute &&
+          requestBudgetPerMinute == other.requestBudgetPerMinute &&
+          cacheHitRate == other.cacheHitRate &&
+          cacheSizeBytes == other.cacheSizeBytes &&
+          currentFileCachedPercent == other.currentFileCachedPercent &&
+          decodeLoadPercent == other.decodeLoadPercent &&
+          timeToFirstByteMs == other.timeToFirstByteMs &&
+          bytesDownloaded == other.bytesDownloaded &&
+          lastError == other.lastError;
 }
 
 @freezed

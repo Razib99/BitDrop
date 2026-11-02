@@ -63,6 +63,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   EngineBufferState dco_decode_engine_buffer_state(dynamic raw);
 
   @protected
+  EngineDiagnosticsData dco_decode_engine_diagnostics_data(dynamic raw);
+
+  @protected
   EngineEvent dco_decode_engine_event(dynamic raw);
 
   @protected
@@ -76,6 +79,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   F32Array10 dco_decode_f_32_array_10(dynamic raw);
+
+  @protected
+  double dco_decode_f_64(dynamic raw);
 
   @protected
   KeyValuePair dco_decode_key_value_pair(dynamic raw);
@@ -156,6 +162,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void dco_decode_unit(dynamic raw);
 
   @protected
+  VisualizerFrameData dco_decode_visualizer_frame_data(dynamic raw);
+
+  @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
@@ -197,6 +206,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  EngineDiagnosticsData sse_decode_engine_diagnostics_data(
+      SseDeserializer deserializer);
+
+  @protected
   EngineEvent sse_decode_engine_event(SseDeserializer deserializer);
 
   @protected
@@ -211,6 +224,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   F32Array10 sse_decode_f_32_array_10(SseDeserializer deserializer);
+
+  @protected
+  double sse_decode_f_64(SseDeserializer deserializer);
 
   @protected
   KeyValuePair sse_decode_key_value_pair(SseDeserializer deserializer);
@@ -297,6 +313,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  VisualizerFrameData sse_decode_visualizer_frame_data(
+      SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
@@ -343,6 +363,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       EngineBufferState self, SseSerializer serializer);
 
   @protected
+  void sse_encode_engine_diagnostics_data(
+      EngineDiagnosticsData self, SseSerializer serializer);
+
+  @protected
   void sse_encode_engine_event(EngineEvent self, SseSerializer serializer);
 
   @protected
@@ -357,6 +381,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_f_32_array_10(F32Array10 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_f_64(double self, SseSerializer serializer);
 
   @protected
   void sse_encode_key_value_pair(KeyValuePair self, SseSerializer serializer);
@@ -448,6 +475,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_visualizer_frame_data(
+      VisualizerFrameData self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
