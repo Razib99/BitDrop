@@ -86,6 +86,24 @@ pub struct CachedChunkRecord {
     pub last_accessed_ts: i64,
 }
 
+/// Result of an evicted chunk from the LRU cache pruner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvictedChunk {
+    pub file_id: String,
+    pub chunk_idx: u32,
+    pub byte_offset: u64,
+    pub byte_len: u32,
+}
+
+/// Aggregated cache usage statistics for storage budgeting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheStatsRecord {
+    pub total_bytes: u64,
+    pub pinned_bytes: u64,
+    pub unpinned_bytes: u64,
+    pub chunk_count: u32,
+}
+
 pub struct MetadataDb {
     pub conn: Connection,
 }
@@ -277,6 +295,23 @@ impl MetadataDb {
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_cached_chunks_file
              ON cached_chunks(file_id)",
+            [],
+        )?;
+
+        // 7. Pinned tracks table for protecting downloaded/pinned audio from LRU eviction (Phase 5.3)
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS pinned_tracks (
+                file_id TEXT PRIMARY KEY
+            )",
+            [],
+        )?;
+
+        // 8. Key-value table for persistent settings like cache limit
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS app_kv (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )",
             [],
         )?;
 
@@ -831,10 +866,192 @@ impl MetadataDb {
         Ok(total.unwrap_or(0).max(0) as u64)
     }
 
+    /// Syncs pinned track file_ids in SQLite atomically.
+    pub fn sync_pinned_tracks(&mut self, pinned_ids: &[String]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM pinned_tracks", [])?;
+        {
+            let mut stmt = tx.prepare_cached("INSERT OR IGNORE INTO pinned_tracks (file_id) VALUES (?1)")?;
+            for id in pinned_ids {
+                stmt.execute(params![id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Checks if a file is marked pinned in SQLite.
+    pub fn is_track_pinned(&self, file_id: &str) -> Result<bool> {
+        let count: u32 = self.conn.query_row(
+            "SELECT COUNT(*) FROM pinned_tracks WHERE file_id = ?1",
+            params![file_id],
+            |r| r.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Returns all pinned file_ids.
+    pub fn get_pinned_tracks(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT file_id FROM pinned_tracks")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect()
+    }
+
+    /// Stores a persistent key-value configuration pair.
+    pub fn set_kv(&self, key: &str, val: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO app_kv (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, val],
+        )?;
+        Ok(())
+    }
+
+    /// Reads a persistent key-value configuration pair.
+    pub fn get_kv(&self, key: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT value FROM app_kv WHERE key = ?1")?;
+        let mut rows = stmt.query_map(params![key], |r| r.get::<_, String>(0))?;
+        match rows.next() {
+            Some(res) => res.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Returns the number of cached chunks for a given file_id.
+    pub fn count_cached_chunks_for_file(&self, file_id: &str) -> Result<u32> {
+        let count: u32 = self.conn.query_row(
+            "SELECT COUNT(*) FROM cached_chunks WHERE file_id = ?1",
+            params![file_id],
+            |r| r.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// Aggregates total, pinned, and unpinned cache bytes.
+    pub fn get_cache_stats(&self, extra_pinned_ids: &[String]) -> Result<CacheStatsRecord> {
+        let mut pinned_set: std::collections::HashSet<String> = self.get_pinned_tracks()?.into_iter().collect();
+        for id in extra_pinned_ids {
+            pinned_set.insert(id.clone());
+        }
+
+        let mut stmt = self.conn.prepare(
+            "SELECT file_id, SUM(byte_len), COUNT(*) FROM cached_chunks GROUP BY file_id",
+        )?;
+
+        let mut total_bytes = 0u64;
+        let mut pinned_bytes = 0u64;
+        let mut unpinned_bytes = 0u64;
+        let mut chunk_count = 0u32;
+
+        let rows = stmt.query_map([], |r| {
+            let file_id: String = r.get(0)?;
+            let bytes: i64 = r.get(1)?;
+            let count: u32 = r.get(2)?;
+            Ok((file_id, bytes.max(0) as u64, count))
+        })?;
+
+        for row in rows {
+            let (file_id, bytes, count) = row?;
+            total_bytes += bytes;
+            chunk_count += count;
+            if pinned_set.contains(&file_id) {
+                pinned_bytes += bytes;
+            } else {
+                unpinned_bytes += bytes;
+            }
+        }
+
+        Ok(CacheStatsRecord {
+            total_bytes,
+            pinned_bytes,
+            unpinned_bytes,
+            chunk_count,
+        })
+    }
+
+    /// Prunes least-recently-accessed unpinned chunks until unpinned bytes are at or below `limit_bytes`.
+    /// Pinned tracks and the active_file_id are 100% protected and NEVER evicted.
+    pub fn prune_lru_chunks(
+        &mut self,
+        limit_bytes: u64,
+        extra_pinned_ids: &[String],
+        active_file_id: Option<&str>,
+    ) -> Result<Vec<EvictedChunk>> {
+        let stats = self.get_cache_stats(extra_pinned_ids)?;
+        if stats.unpinned_bytes <= limit_bytes {
+            return Ok(Vec::new());
+        }
+
+        let mut pinned_set: std::collections::HashSet<String> = self.get_pinned_tracks()?.into_iter().collect();
+        for id in extra_pinned_ids {
+            pinned_set.insert(id.clone());
+        }
+
+        let excess = stats.unpinned_bytes - limit_bytes;
+        let cushion = (limit_bytes / 10).min(50 * 1024 * 1024);
+        let target_to_free = excess.saturating_add(cushion);
+
+        let mut to_evict = Vec::new();
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT file_id, chunk_idx, byte_offset, byte_len
+                 FROM cached_chunks
+                 ORDER BY last_accessed_ts ASC",
+            )?;
+
+            let mut freed = 0u64;
+
+            let rows = stmt.query_map([], |r| {
+                Ok(EvictedChunk {
+                    file_id: r.get(0)?,
+                    chunk_idx: r.get(1)?,
+                    byte_offset: r.get::<_, i64>(2)? as u64,
+                    byte_len: r.get::<_, i64>(3)? as u32,
+                })
+            })?;
+
+            for item in rows {
+                let chunk = item?;
+                if pinned_set.contains(&chunk.file_id) {
+                    continue;
+                }
+                if let Some(active) = active_file_id {
+                    if chunk.file_id == active {
+                        continue;
+                    }
+                }
+
+                freed += chunk.byte_len as u64;
+                to_evict.push(chunk);
+
+                if freed >= target_to_free {
+                    break;
+                }
+            }
+        }
+
+        if !to_evict.is_empty() {
+            let tx = self.conn.transaction()?;
+            {
+                let mut del_stmt = tx.prepare_cached(
+                    "DELETE FROM cached_chunks WHERE file_id = ?1 AND chunk_idx = ?2",
+                )?;
+                for chunk in &to_evict {
+                    del_stmt.execute(params![&chunk.file_id, chunk.chunk_idx])?;
+                }
+            }
+            tx.commit()?;
+        }
+
+        Ok(to_evict)
+    }
+
     pub fn clear(&self) -> Result<()> {
         self.conn.execute("DELETE FROM tracks", [])?;
         self.conn.execute("DELETE FROM albums_summary", [])?;
         self.conn.execute("DELETE FROM cached_chunks", [])?;
+        self.conn.execute("DELETE FROM pinned_tracks", [])?;
+        self.conn.execute("DELETE FROM app_kv", [])?;
         Ok(())
     }
 }
@@ -1053,4 +1270,173 @@ mod tests {
         assert_eq!(db.get_cached_chunks("flac_track_1").unwrap().len(), 0);
         assert_eq!(db.total_cached_bytes().unwrap(), 0);
     }
+
+    #[test]
+    fn test_lru_cache_pruning_respects_limit_and_protects_pinned() {
+        let mut db = MetadataDb::new_in_memory().expect("in-memory db failed");
+
+        // 1. Test KV store for cache limit
+        db.set_kv("cache_limit_bytes", "2147483648").unwrap();
+        assert_eq!(
+            db.get_kv("cache_limit_bytes").unwrap(),
+            Some("2147483648".to_string())
+        );
+
+        // 2. Test pinned tracks sync and queries
+        let pinned_list = vec!["track_pinned_1".to_string(), "track_pinned_2".to_string()];
+        db.sync_pinned_tracks(&pinned_list).unwrap();
+        assert!(db.is_track_pinned("track_pinned_1").unwrap());
+        assert!(db.is_track_pinned("track_pinned_2").unwrap());
+        assert!(!db.is_track_pinned("track_unpinned_3").unwrap());
+        let all_pinned = db.get_pinned_tracks().unwrap();
+        assert_eq!(all_pinned.len(), 2);
+        assert!(all_pinned.contains(&"track_pinned_1".to_string()));
+        assert!(all_pinned.contains(&"track_pinned_2".to_string()));
+
+        // 3. Insert chunk records across multiple tracks
+        // Track A: unpinned, oldest (ts = 100), 2 chunks * 2 MB = 4 MB
+        db.record_cached_chunk(&CachedChunkRecord {
+            file_id: "track_A".to_string(),
+            chunk_idx: 0,
+            byte_offset: 0,
+            byte_len: 2 * 1024 * 1024,
+            crc32: 0x11,
+            file_mtime: 100,
+            last_accessed_ts: 100,
+        }).unwrap();
+        db.record_cached_chunk(&CachedChunkRecord {
+            file_id: "track_A".to_string(),
+            chunk_idx: 1,
+            byte_offset: 2 * 1024 * 1024,
+            byte_len: 2 * 1024 * 1024,
+            crc32: 0x12,
+            file_mtime: 100,
+            last_accessed_ts: 101,
+        }).unwrap();
+
+        // Track B: unpinned, middle (ts = 200), 2 chunks * 2 MB = 4 MB
+        db.record_cached_chunk(&CachedChunkRecord {
+            file_id: "track_B".to_string(),
+            chunk_idx: 0,
+            byte_offset: 0,
+            byte_len: 2 * 1024 * 1024,
+            crc32: 0x21,
+            file_mtime: 200,
+            last_accessed_ts: 200,
+        }).unwrap();
+        db.record_cached_chunk(&CachedChunkRecord {
+            file_id: "track_B".to_string(),
+            chunk_idx: 1,
+            byte_offset: 2 * 1024 * 1024,
+            byte_len: 2 * 1024 * 1024,
+            crc32: 0x22,
+            file_mtime: 200,
+            last_accessed_ts: 201,
+        }).unwrap();
+
+        // Track C: unpinned, newer (ts = 300), 2 chunks * 2 MB = 4 MB
+        db.record_cached_chunk(&CachedChunkRecord {
+            file_id: "track_C".to_string(),
+            chunk_idx: 0,
+            byte_offset: 0,
+            byte_len: 2 * 1024 * 1024,
+            crc32: 0x31,
+            file_mtime: 300,
+            last_accessed_ts: 300,
+        }).unwrap();
+        db.record_cached_chunk(&CachedChunkRecord {
+            file_id: "track_C".to_string(),
+            chunk_idx: 1,
+            byte_offset: 2 * 1024 * 1024,
+            byte_len: 2 * 1024 * 1024,
+            crc32: 0x32,
+            file_mtime: 300,
+            last_accessed_ts: 301,
+        }).unwrap();
+
+        // Track P: pinned (in pinned list), ts = 50 (even older than A!), 2 chunks * 2 MB = 4 MB
+        db.record_cached_chunk(&CachedChunkRecord {
+            file_id: "track_pinned_1".to_string(),
+            chunk_idx: 0,
+            byte_offset: 0,
+            byte_len: 2 * 1024 * 1024,
+            crc32: 0x41,
+            file_mtime: 50,
+            last_accessed_ts: 50,
+        }).unwrap();
+        db.record_cached_chunk(&CachedChunkRecord {
+            file_id: "track_pinned_1".to_string(),
+            chunk_idx: 1,
+            byte_offset: 2 * 1024 * 1024,
+            byte_len: 2 * 1024 * 1024,
+            crc32: 0x42,
+            file_mtime: 50,
+            last_accessed_ts: 51,
+        }).unwrap();
+
+        // Track Active: currently playing, ts = 60, 2 chunks * 2 MB = 4 MB
+        db.record_cached_chunk(&CachedChunkRecord {
+            file_id: "track_active".to_string(),
+            chunk_idx: 0,
+            byte_offset: 0,
+            byte_len: 2 * 1024 * 1024,
+            crc32: 0x51,
+            file_mtime: 60,
+            last_accessed_ts: 60,
+        }).unwrap();
+        db.record_cached_chunk(&CachedChunkRecord {
+            file_id: "track_active".to_string(),
+            chunk_idx: 1,
+            byte_offset: 2 * 1024 * 1024,
+            byte_len: 2 * 1024 * 1024,
+            crc32: 0x52,
+            file_mtime: 60,
+            last_accessed_ts: 61,
+        }).unwrap();
+
+        // Verify total stats before pruning
+        let stats = db.get_cache_stats(&["track_pinned_1".to_string()]).unwrap();
+        assert_eq!(stats.total_bytes, 20 * 1024 * 1024);
+        assert_eq!(stats.pinned_bytes, 4 * 1024 * 1024);
+        // Unpinned includes track_A (4M) + track_B (4M) + track_C (4M) + track_active (4M) = 16M
+        assert_eq!(stats.unpinned_bytes, 16 * 1024 * 1024);
+        assert_eq!(stats.chunk_count, 10);
+
+        // 4. Prune LRU chunks down to limit = 6 MB
+        // Unpinned is 16 MB. Excess = 10 MB. With cushion ((6M/10)=600KB), target_to_free = 10.6 MB (6 chunks = 12 MB).
+        // Protected: track_pinned_1 (pinned) and track_active (active).
+        // Eviction order (last_accessed_ts ASC):
+        // track_A (100, 101), track_B (200, 201), track_C (300, 301)
+        let evicted = db.prune_lru_chunks(
+            6 * 1024 * 1024,
+            &["track_pinned_1".to_string()],
+            Some("track_active"),
+        ).unwrap();
+
+        assert!(!evicted.is_empty());
+        // Verify evicted chunks are all from unpinned tracks (A, B, C), and NEVER from track_pinned_1 or track_active
+        for c in &evicted {
+            assert_ne!(c.file_id, "track_pinned_1", "Pinned tracks must never be evicted");
+            assert_ne!(c.file_id, "track_active", "Active track must never be evicted");
+        }
+
+        // track_A was oldest unpinned: its chunks must have been evicted first
+        assert_eq!(evicted[0].file_id, "track_A");
+        assert_eq!(evicted[0].chunk_idx, 0);
+        assert_eq!(evicted[1].file_id, "track_A");
+        assert_eq!(evicted[1].chunk_idx, 1);
+
+        // Verify track_A chunks are completely gone from DB
+        assert_eq!(db.count_cached_chunks_for_file("track_A").unwrap(), 0);
+
+        // Pinned track and active track must still have all chunks intact!
+        assert_eq!(db.count_cached_chunks_for_file("track_pinned_1").unwrap(), 2);
+        assert_eq!(db.count_cached_chunks_for_file("track_active").unwrap(), 2);
+
+        // Verify stats after pruning: unpinned bytes are at or below limit
+        let stats_after = db.get_cache_stats(&["track_pinned_1".to_string()]).unwrap();
+        assert!(stats_after.unpinned_bytes <= 6 * 1024 * 1024);
+        assert_eq!(stats_after.pinned_bytes, 4 * 1024 * 1024);
+    }
 }
+

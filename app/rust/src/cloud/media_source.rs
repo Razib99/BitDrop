@@ -653,6 +653,36 @@ impl SparseTrackCache {
                                 use std::io::Write;
                                 let _ = writeln!(idx_file, "{}", chunk_idx);
                             }
+
+                            // Automatic background LRU cache pruning if unpinned usage exceeds configured budget
+                            let limit = crate::api::cloud_library::cloud_cache_get_limit();
+                            if limit > 0 {
+                                let fid = file_id.clone();
+                                let idx_p = index_path.clone();
+                                if let Some(db_arc) = &cache.db {
+                                    let mut db = db_arc.lock();
+                                    if let Ok(stats) = db.get_cache_stats(&[]) {
+                                        if stats.unpinned_bytes > limit {
+                                            if let Ok(evicted) = db.prune_lru_chunks(limit, &[], Some(&fid)) {
+                                                if let Some(parent) = idx_p.parent() {
+                                                    apply_chunk_evictions(parent, &evicted, &db);
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    let _ = crate::api::cloud_library::with_db_mut(|db| {
+                                        let stats = db.get_cache_stats(&[])?;
+                                        if stats.unpinned_bytes > limit {
+                                            let evicted = db.prune_lru_chunks(limit, &[], Some(&fid))?;
+                                            if let Some(parent) = idx_p.parent() {
+                                                apply_chunk_evictions(parent, &evicted, db);
+                                            }
+                                        }
+                                        Ok(())
+                                    });
+                                }
+                            }
                         }
 
                         final_res = Ok(());
@@ -873,6 +903,61 @@ impl Drop for CloudMediaSource {
     fn drop(&mut self) {
         self.cache.active_generation.fetch_add(1, Ordering::SeqCst);
         self.cache.data_arrived.notify_all();
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn deallocate_chunk_range(file: &std::fs::File, offset: u64, len: u64) {
+    use std::os::unix::io::AsRawFd;
+    // FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE = 0x02 | 0x01 = 0x03
+    unsafe {
+        libc::fallocate(file.as_raw_fd(), 3, offset as libc::off_t, len as libc::off_t);
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+pub fn deallocate_chunk_range(_file: &std::fs::File, _offset: u64, _len: u64) {
+    // Non-Linux platforms: hole punching is platform-specific
+}
+
+/// Evicts chunks from physical disk and active cache. On Linux/Android, punches holes in sparse files.
+/// When all chunks of a file are evicted, deletes the .sparse and .idx files completely.
+pub fn apply_chunk_evictions<P: AsRef<Path>>(
+    chunk_dir: P,
+    evicted: &[crate::cloud::db::EvictedChunk],
+    db: &crate::cloud::db::MetadataDb,
+) {
+    let dir = chunk_dir.as_ref();
+    for chunk in evicted {
+        let sparse_path = dir.join(format!("{}.sparse", chunk.file_id));
+        if sparse_path.exists() {
+            if let Ok(file) = OpenOptions::new().write(true).open(&sparse_path) {
+                deallocate_chunk_range(&file, chunk.byte_offset, chunk.byte_len as u64);
+            }
+        }
+
+        // Check if all chunks for this track are gone
+        if db.count_cached_chunks_for_file(&chunk.file_id).unwrap_or(0) == 0 {
+            let _ = std::fs::remove_file(&sparse_path);
+            let idx_path = dir.join(format!("{}.idx", chunk.file_id));
+            let _ = std::fs::remove_file(idx_path);
+        }
+
+        // Update in-memory telemetry
+        let mut guard = CACHED.lock();
+        if let Some((_, ref mut chunks)) = guard.get_mut(&chunk.file_id) {
+            chunks.retain(|&idx| idx != chunk.chunk_idx as u64);
+        }
+
+        // Update active cache if it matches
+        if let Some(active) = ACTIVE_CACHE.lock().as_ref() {
+            if active.file_id == chunk.file_id {
+                let idx = chunk.chunk_idx as usize;
+                if idx < active.chunk_written_bytes.len() {
+                    active.chunk_written_bytes[idx].store(0, Ordering::Release);
+                }
+            }
+        }
     }
 }
 
@@ -1144,4 +1229,42 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
+
+    #[test]
+    fn test_apply_chunk_evictions_sparse_file_cleanup() {
+        let temp_dir = std::env::temp_dir().join(format!("bitdrop_test_evict_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let db = MetadataDb::new_in_memory().unwrap();
+
+        // Create dummy sparse and idx files for track_A
+        let sparse_a = temp_dir.join("track_A.sparse");
+        let idx_a = temp_dir.join("track_A.idx");
+        fs::write(&sparse_a, vec![0u8; 4 * 1024 * 1024]).unwrap();
+        fs::write(&idx_a, b"idx_data").unwrap();
+
+        assert!(sparse_a.exists());
+        assert!(idx_a.exists());
+
+        // Eviction record for track_A chunk 0
+        let evictions = vec![
+            crate::cloud::db::EvictedChunk {
+                file_id: "track_A".to_string(),
+                chunk_idx: 0,
+                byte_offset: 0,
+                byte_len: 2 * 1024 * 1024,
+            },
+        ];
+
+        // Since count_cached_chunks_for_file("track_A") is 0 in db,
+        // apply_chunk_evictions should delete both sparse and idx files.
+        apply_chunk_evictions(&temp_dir, &evictions, &db);
+
+        assert!(!sparse_a.exists(), "Sparse file should be deleted when 0 chunks remain");
+        assert!(!idx_a.exists(), "Index file should be deleted when 0 chunks remain");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
 }
+

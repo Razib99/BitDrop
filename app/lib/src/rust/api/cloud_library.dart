@@ -6,9 +6,10 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `fetch_online_cover_art`, `parse_filename_metadata`, `parse_index_number`, `parse_track_and_title`, `parse_year`, `sanitize_filename`, `url_encode`, `with_db_mut`, `with_db`
+// These functions are ignored because they are not marked as `pub`: `fetch_online_cover_art`, `parse_filename_metadata`, `parse_index_number`, `parse_track_and_title`, `parse_year`, `sanitize_filename`, `url_encode`
+// These functions are ignored because they have generic arguments: `with_db_mut`, `with_db`
 // These types are ignored because they are not used by any `pub` functions: `CACHE_DIR`, `DB`, `HTTP_CLIENT`, `RATE_LIMITER`, `RT`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Opens (or creates) the library database. Safe to call repeatedly.
 Future<void> cloudLibraryOpen(
@@ -101,6 +102,36 @@ Future<CacheUsage> cacheUsage(
     RustLib.instance.api.crateApiCloudLibraryCacheUsage(
         chunkDirs: chunkDirs, artworkDir: artworkDir);
 
+/// Sets the unpinned cache limit in bytes and persists to SQLite.
+Future<void> cloudCacheSetLimit({required BigInt limitBytes}) =>
+    RustLib.instance.api
+        .crateApiCloudLibraryCloudCacheSetLimit(limitBytes: limitBytes);
+
+/// Returns the current unpinned cache limit in bytes.
+Future<BigInt> cloudCacheGetLimit() =>
+    RustLib.instance.api.crateApiCloudLibraryCloudCacheGetLimit();
+
+/// Syncs the pinned track list into SQLite for LRU eviction protection.
+Future<void> cloudCacheSyncPinned({required List<String> pinnedFileIds}) =>
+    RustLib.instance.api
+        .crateApiCloudLibraryCloudCacheSyncPinned(pinnedFileIds: pinnedFileIds);
+
+/// Returns aggregated cache statistics: total, pinned, unpinned, and chunk count.
+Future<CacheStats> cloudCacheGetStats(
+        {required List<String> pinnedFileIds, String? activeFileId}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudCacheGetStats(
+        pinnedFileIds: pinnedFileIds, activeFileId: activeFileId);
+
+/// Prunes unpinned chunks down to the configured limit, preserving pinned tracks and active playback.
+Future<BigInt> cloudCachePruneNow(
+        {required String chunkDir,
+        required List<String> pinnedFileIds,
+        String? activeFileId}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudCachePruneNow(
+        chunkDir: chunkDir,
+        pinnedFileIds: pinnedFileIds,
+        activeFileId: activeFileId);
+
 /// Deletes every cached audio chunk and returns the bytes reclaimed.
 ///
 /// Only the streamed audio goes: artwork and the library index stay, so the
@@ -157,6 +188,41 @@ class AlbumSummary {
           trackCount == other.trackCount &&
           maxSampleRate == other.maxSampleRate &&
           maxBitDepth == other.maxBitDepth;
+}
+
+class CacheStats {
+  final BigInt totalBytes;
+  final BigInt pinnedBytes;
+  final BigInt unpinnedBytes;
+  final int chunkCount;
+  final BigInt cacheLimitBytes;
+
+  const CacheStats({
+    required this.totalBytes,
+    required this.pinnedBytes,
+    required this.unpinnedBytes,
+    required this.chunkCount,
+    required this.cacheLimitBytes,
+  });
+
+  @override
+  int get hashCode =>
+      totalBytes.hashCode ^
+      pinnedBytes.hashCode ^
+      unpinnedBytes.hashCode ^
+      chunkCount.hashCode ^
+      cacheLimitBytes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CacheStats &&
+          runtimeType == other.runtimeType &&
+          totalBytes == other.totalBytes &&
+          pinnedBytes == other.pinnedBytes &&
+          unpinnedBytes == other.unpinnedBytes &&
+          chunkCount == other.chunkCount &&
+          cacheLimitBytes == other.cacheLimitBytes;
 }
 
 /// What the streamed-audio cache is using, and what a clear would reclaim.

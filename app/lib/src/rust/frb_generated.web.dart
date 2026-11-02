@@ -47,6 +47,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
+  CacheStats dco_decode_cache_stats(dynamic raw);
+
+  @protected
   CacheUsage dco_decode_cache_usage(dynamic raw);
 
   @protected
@@ -169,6 +172,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  CacheStats sse_decode_cache_stats(SseDeserializer deserializer);
 
   @protected
   CacheUsage sse_decode_cache_usage(SseDeserializer deserializer);
@@ -305,6 +311,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cache_stats(CacheStats self, SseSerializer serializer);
 
   @protected
   void sse_encode_cache_usage(CacheUsage self, SseSerializer serializer);

@@ -6,6 +6,7 @@
 //! on the Dart side and the parsing off the UI thread.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -158,6 +159,11 @@ pub fn with_db_mut<T>(f: impl FnOnce(&mut MetadataDb) -> anyhow::Result<T>) -> R
 /// Opens (or creates) the library database. Safe to call repeatedly.
 pub fn cloud_library_open(db_path: String, cache_dir: String) -> Result<(), String> {
     let db = MetadataDb::new(&db_path).map_err(|e| e.to_string())?;
+    if let Ok(Some(saved_limit)) = db.get_kv("cache_limit_bytes") {
+        if let Ok(limit) = saved_limit.parse::<u64>() {
+            CACHE_LIMIT_BYTES.store(limit, Ordering::Relaxed);
+        }
+    }
     *DB.lock().map_err(|e| e.to_string())? = Some(db);
     std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
     *CACHE_DIR.lock().map_err(|e| e.to_string())? = Some(cache_dir);
@@ -1063,6 +1069,80 @@ pub fn cache_usage(chunk_dirs: Vec<String>, artwork_dir: String) -> CacheUsage {
     }
 }
 
+/// Configured unpinned cache limit in bytes. Defaults to 2 GB (2 * 1024 * 1024 * 1024).
+pub static CACHE_LIMIT_BYTES: AtomicU64 = AtomicU64::new(2 * 1024 * 1024 * 1024);
+
+#[derive(Debug, Clone)]
+pub struct CacheStats {
+    pub total_bytes: u64,
+    pub pinned_bytes: u64,
+    pub unpinned_bytes: u64,
+    pub chunk_count: u32,
+    pub cache_limit_bytes: u64,
+}
+
+/// Sets the unpinned cache limit in bytes and persists to SQLite.
+pub fn cloud_cache_set_limit(limit_bytes: u64) -> Result<(), String> {
+    CACHE_LIMIT_BYTES.store(limit_bytes, Ordering::Relaxed);
+    let _ = with_db_mut(|db| {
+        db.set_kv("cache_limit_bytes", &limit_bytes.to_string())
+            .map_err(anyhow::Error::from)
+    });
+    Ok(())
+}
+
+/// Returns the current unpinned cache limit in bytes.
+pub fn cloud_cache_get_limit() -> u64 {
+    CACHE_LIMIT_BYTES.load(Ordering::Relaxed)
+}
+
+/// Syncs the pinned track list into SQLite for LRU eviction protection.
+pub fn cloud_cache_sync_pinned(pinned_file_ids: Vec<String>) -> Result<(), String> {
+    with_db_mut(|db| {
+        db.sync_pinned_tracks(&pinned_file_ids)
+            .map_err(anyhow::Error::from)
+    })
+}
+
+/// Returns aggregated cache statistics: total, pinned, unpinned, and chunk count.
+pub fn cloud_cache_get_stats(
+    pinned_file_ids: Vec<String>,
+    active_file_id: Option<String>,
+) -> Result<CacheStats, String> {
+    let _ = active_file_id;
+    let rec = with_db(|db| {
+        db.get_cache_stats(&pinned_file_ids)
+            .map_err(anyhow::Error::from)
+    })?;
+    Ok(CacheStats {
+        total_bytes: rec.total_bytes,
+        pinned_bytes: rec.pinned_bytes,
+        unpinned_bytes: rec.unpinned_bytes,
+        chunk_count: rec.chunk_count,
+        cache_limit_bytes: cloud_cache_get_limit(),
+    })
+}
+
+/// Prunes unpinned chunks down to the configured limit, preserving pinned tracks and active playback.
+pub fn cloud_cache_prune_now(
+    chunk_dir: String,
+    pinned_file_ids: Vec<String>,
+    active_file_id: Option<String>,
+) -> Result<u64, String> {
+    let limit = cloud_cache_get_limit();
+    let dir = std::path::PathBuf::from(chunk_dir);
+    with_db_mut(|db| {
+        let evicted = db
+            .prune_lru_chunks(limit, &pinned_file_ids, active_file_id.as_deref())
+            .map_err(anyhow::Error::from)?;
+        let freed_bytes: u64 = evicted.iter().map(|c| c.byte_len as u64).sum();
+        if !evicted.is_empty() {
+            crate::cloud::media_source::apply_chunk_evictions(&dir, &evicted, db);
+        }
+        Ok(freed_bytes)
+    })
+}
+
 /// Deletes every cached audio chunk and returns the bytes reclaimed.
 ///
 /// Only the streamed audio goes: artwork and the library index stay, so the
@@ -1091,6 +1171,12 @@ pub fn clear_audio_cache(chunk_dirs: Vec<String>) -> u64 {
             }
         }
     }
+
+    let _ = with_db_mut(|db| {
+        let pinned = db.get_pinned_tracks().unwrap_or_default();
+        let _ = db.prune_lru_chunks(0, &pinned, None);
+        Ok(())
+    });
 
     crate::cloud::media_source::forget_cached_ranges();
     freed

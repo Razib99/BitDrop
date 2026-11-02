@@ -326,12 +326,15 @@ class LiveBitDropCore implements BitDropCore {
     cacheBytes: 0,
     freeBytes: 0,
     totalBytes: 0,
-    cacheLimitBytes: 0,
+    cacheLimitBytes: 2 * 1024 * 1024 * 1024,
   );
 
   /// Tracks with at least one chunk on disk, for the Sources copy.
   int _cachedTrackCount = 0;
   int get cachedTrackCount => _cachedTrackCount;
+
+  /// User-configurable unpinned cache limit (default 2 GB).
+  int _cacheLimitBytes = 2 * 1024 * 1024 * 1024;
 
   /// Re-measures the on-disk cache.
   ///
@@ -348,16 +351,67 @@ class LiveBitDropCore implements BitDropCore {
         artworkDir: _artworkCacheDir ?? '',
       );
       _cachedTrackCount = usage.trackCount;
+
+      int pinnedBytes = 0;
+      int cacheBytes = usage.audioBytes.toInt();
+      int cacheLimitBytes = _cacheLimitBytes;
+
+      try {
+        final stats = await rust_cache.cloudCacheGetStats(
+          pinnedFileIds: _pinnedTrackIds.toList(),
+          activeFileId: _nowPlaying.value?.track.id,
+        );
+        pinnedBytes = stats.pinnedBytes.toInt();
+        cacheBytes = stats.unpinnedBytes.toInt();
+        cacheLimitBytes = stats.cacheLimitBytes.toInt();
+        _cacheLimitBytes = cacheLimitBytes;
+      } catch (_) {}
+
+      final pinnedItems = <PinnedItem>[];
+      for (final trackId in _pinnedTrackIds) {
+        final t = _lookupTrack(trackId);
+        if (t != null) {
+          pinnedItems.add(PinnedItem(
+            id: t.id,
+            title: t.title,
+            subtitle: t.artist,
+            sizeBytes: t.sizeBytes,
+            kind: 'Track',
+          ));
+        }
+      }
+      for (final albumId in _pinnedAlbumIds) {
+        final a = _cloudAlbums.where((a) => a.id == albumId).firstOrNull ??
+            (_realAlbum?.id == albumId ? _realAlbum : null);
+        if (a != null) {
+          pinnedItems.add(PinnedItem(
+            id: a.id,
+            title: a.title,
+            subtitle: '${a.artist} · ${a.trackCount} tracks',
+            sizeBytes: a.sizeBytes,
+            kind: 'Album',
+          ));
+        }
+      }
+
       _storage.add(StorageState(
-        pinnedBytes: 0,
-        cacheBytes: usage.audioBytes.toInt(),
+        pinnedBytes: pinnedBytes,
+        cacheBytes: cacheBytes,
         freeBytes: 0,
         totalBytes: 0,
-        cacheLimitBytes: 0,
+        cacheLimitBytes: cacheLimitBytes,
         artworkBytes: usage.artworkBytes.toInt(),
+        pinned: pinnedItems,
       ));
     } catch (e) {
       debugPrint('[storage] could not measure cache: $e');
+      _storage.add(StorageState(
+        pinnedBytes: 0,
+        cacheBytes: 0,
+        freeBytes: 0,
+        totalBytes: 0,
+        cacheLimitBytes: _cacheLimitBytes,
+      ));
     }
   }
   @override Stream<DiagnosticsSnapshot> get diagnostics => _mockCore.diagnostics;
@@ -419,6 +473,9 @@ class LiveBitDropCore implements BitDropCore {
           }
         }
       }
+      await rust_cache.cloudCacheSyncPinned(
+        pinnedFileIds: _pinnedTrackIds.toList(),
+      );
     } catch (e) {
       debugPrint('[core] failed to read pinned: $e');
     }
@@ -436,14 +493,22 @@ class LiveBitDropCore implements BitDropCore {
 
   Future<void> _savePinned() async {
     final file = _pinnedFile;
-    if (file == null) return;
+    if (file != null) {
+      try {
+        await file.writeAsString(jsonEncode({
+          'tracks': _pinnedTrackIds.toList(),
+          'albums': _pinnedAlbumIds.toList(),
+        }));
+      } catch (e) {
+        debugPrint('[core] failed to write pinned: $e');
+      }
+    }
     try {
-      await file.writeAsString(jsonEncode({
-        'tracks': _pinnedTrackIds.toList(),
-        'albums': _pinnedAlbumIds.toList(),
-      }));
+      await rust_cache.cloudCacheSyncPinned(
+        pinnedFileIds: _pinnedTrackIds.toList(),
+      );
     } catch (e) {
-      debugPrint('[core] failed to write pinned: $e');
+      debugPrint('[core] failed to sync pinned to rust: $e');
     }
   }
 
@@ -1283,6 +1348,22 @@ class LiveBitDropCore implements BitDropCore {
         unawaited(_cloud.scan());
       }
       await _mockCore.send(cmd);
+    } else if (cmd is SetCacheLimit) {
+      _cacheLimitBytes = cmd.bytes;
+      try {
+        await rust_cache.cloudCacheSetLimit(limitBytes: BigInt.from(cmd.bytes));
+        if (_chunkCacheDir != null) {
+          await rust_cache.cloudCachePruneNow(
+            chunkDir: _chunkCacheDir,
+            pinnedFileIds: _pinnedTrackIds.toList(),
+            activeFileId: _nowPlaying.value?.track.id,
+          );
+        }
+      } catch (e) {
+        debugPrint('[storage] failed to set cache limit: $e');
+      }
+      await _mockCore.send(cmd);
+      await refreshStorage();
     } else {
       await _mockCore.send(cmd);
     }

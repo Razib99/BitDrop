@@ -207,6 +207,12 @@ void main() {
       expect(sparse2.existsSync(), isFalse);
       expect(idx2.existsSync(), isFalse);
     });
+
+    test('SetCacheLimit updates limit and reflects in storage state', () async {
+      await liveCore.send(const SetCacheLimit(4 * 1000000000));
+      final s = await liveCore.storage.first;
+      expect(s.cacheLimitBytes, 4 * 1000000000);
+    });
   });
 
   group('Scroll Retention Widget Tests', () {
