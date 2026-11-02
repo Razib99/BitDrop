@@ -16,6 +16,7 @@ import '../core_mock/mock_core.dart';
 import 'audio_handler.dart';
 import 'cloud_library.dart';
 import 'output_device.dart';
+import 'parametric_eq_parser.dart';
 import 'persistence_codec.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
 import '../src/rust/api/cloud_library.dart' as rust_cache;
@@ -407,24 +408,28 @@ class LiveBitDropCore implements BitDropCore {
         }
       }
 
-      _storage.add(StorageState(
-        pinnedBytes: pinnedBytes,
-        cacheBytes: cacheBytes,
-        freeBytes: 0,
-        totalBytes: 0,
-        cacheLimitBytes: cacheLimitBytes,
-        artworkBytes: usage.artworkBytes.toInt(),
-        pinned: pinnedItems,
-      ));
+      if (!_storage.isClosed) {
+        _storage.add(StorageState(
+          pinnedBytes: pinnedBytes,
+          cacheBytes: cacheBytes,
+          freeBytes: 0,
+          totalBytes: 0,
+          cacheLimitBytes: cacheLimitBytes,
+          artworkBytes: usage.artworkBytes.toInt(),
+          pinned: pinnedItems,
+        ));
+      }
     } catch (e) {
       debugPrint('[storage] could not measure cache: $e');
-      _storage.add(StorageState(
-        pinnedBytes: 0,
-        cacheBytes: 0,
-        freeBytes: 0,
-        totalBytes: 0,
-        cacheLimitBytes: _cacheLimitBytes,
-      ));
+      if (!_storage.isClosed) {
+        _storage.add(StorageState(
+          pinnedBytes: 0,
+          cacheBytes: 0,
+          freeBytes: 0,
+          totalBytes: 0,
+          cacheLimitBytes: _cacheLimitBytes,
+        ));
+      }
     }
   }
 
@@ -1056,7 +1061,18 @@ class LiveBitDropCore implements BitDropCore {
       folders: allFolders.take(8).toList(),
     );
   }
-  @override Future<List<AutoEqProfile>> searchAutoEq(String model) => _mockCore.searchAutoEq(model);
+  @override
+  Future<List<AutoEqProfile>> searchAutoEq(String model) async {
+    try {
+      final rows = await rust_cache.cloudDbSearchAutoeq(query: model);
+      if (rows.isNotEmpty) {
+        return rows.map(ParametricEqParser.toAutoEqProfile).toList();
+      }
+    } catch (e) {
+      debugPrint('[autoeq] searchAutoEq error: $e');
+    }
+    return _mockCore.searchAutoEq(model);
+  }
 
   File? get _recentSearchesFile {
     if (_chunkCacheDir == null) return null;
@@ -1527,13 +1543,57 @@ class LiveBitDropCore implements BitDropCore {
       unawaited(_saveEqState());
       await _mockCore.send(cmd);
     } else if (cmd is ApplyAutoEqProfile) {
-      await _mockCore.send(cmd);
-      _eq.add(_mockCore.eqValue);
-      unawaited(_saveEqState());
+      try {
+        final profileData =
+            await rust_cache.cloudDbGetAutoeqProfile(id: cmd.profileId);
+        if (profileData != null) {
+          final profile = ParametricEqParser.toAutoEqProfile(profileData);
+          final updated = _eq.value.copyWith(
+            mode: EqMode.parametric,
+            bands: profile.bands,
+            preampDb: profile.suggestedPreampDb,
+            bypass: false,
+            presetName: '${profile.model} AutoEQ',
+          );
+          _eq.add(updated);
+          unawaited(_saveEqState());
+        } else {
+          await _mockCore.send(cmd);
+          _eq.add(_mockCore.eqValue);
+          unawaited(_saveEqState());
+          return;
+        }
+      } catch (e) {
+        debugPrint('[autoeq] failed to apply profile ${cmd.profileId}: $e');
+        await _mockCore.send(cmd);
+        _eq.add(_mockCore.eqValue);
+        unawaited(_saveEqState());
+        return;
+      }
+      try {
+        await _mockCore.send(cmd);
+      } catch (_) {}
     } else if (cmd is ImportParametricEq) {
-      await _mockCore.send(cmd);
-      _eq.add(_mockCore.eqValue);
-      unawaited(_saveEqState());
+      final parsed = ParametricEqParser.parse(cmd.text);
+      if (parsed.bands.isNotEmpty) {
+        final updated = _eq.value.copyWith(
+          mode: EqMode.parametric,
+          bands: parsed.bands,
+          preampDb: parsed.preampDb ?? _eq.value.preampDb,
+          bypass: false,
+          presetName: 'Imported preset',
+        );
+        _eq.add(updated);
+        unawaited(_saveEqState());
+      } else {
+        await _mockCore.send(cmd);
+        _eq.add(_mockCore.eqValue);
+        unawaited(_saveEqState());
+        return;
+      }
+      try {
+        await _mockCore.send(cmd);
+      } catch (_) {}
     } else {
       await _mockCore.send(cmd);
     }

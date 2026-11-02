@@ -1188,6 +1188,70 @@ pub fn cloud_db_list_kv_prefix(prefix: String) -> Result<Vec<KeyValuePair>, Stri
     })
 }
 
+/// AutoEQ headphone/IEM target frequency response profile.
+#[derive(Debug, Clone)]
+pub struct AutoEqProfileData {
+    pub id: String,
+    pub model: String,
+    pub brand: String,
+    pub source: String,
+    pub target: String,
+    pub suggested_preamp_db: f64,
+    pub bands_json: String,
+}
+
+impl From<crate::cloud::db::AutoEqProfileRow> for AutoEqProfileData {
+    fn from(r: crate::cloud::db::AutoEqProfileRow) -> Self {
+        Self {
+            id: r.id,
+            model: r.model,
+            brand: r.brand,
+            source: r.source,
+            target: r.target,
+            suggested_preamp_db: r.suggested_preamp_db,
+            bands_json: r.bands_json,
+        }
+    }
+}
+
+impl From<AutoEqProfileData> for crate::cloud::db::AutoEqProfileRow {
+    fn from(d: AutoEqProfileData) -> Self {
+        Self {
+            id: d.id,
+            model: d.model,
+            brand: d.brand,
+            source: d.source,
+            target: d.target,
+            suggested_preamp_db: d.suggested_preamp_db,
+            bands_json: d.bands_json,
+        }
+    }
+}
+
+/// Searches the persistent AutoEQ database for headphone/IEM profiles matching a query.
+pub fn cloud_db_search_autoeq(query: String) -> Result<Vec<AutoEqProfileData>, String> {
+    with_db(|db| {
+        let rows = db.search_autoeq_profiles(&query).map_err(anyhow::Error::from)?;
+        Ok(rows.into_iter().map(AutoEqProfileData::from).collect())
+    })
+}
+
+/// Retrieves a single AutoEQ profile by ID from SQLite.
+pub fn cloud_db_get_autoeq_profile(id: String) -> Result<Option<AutoEqProfileData>, String> {
+    with_db(|db| {
+        let row = db.get_autoeq_profile(&id).map_err(anyhow::Error::from)?;
+        Ok(row.map(AutoEqProfileData::from))
+    })
+}
+
+/// Inserts or updates an AutoEQ profile in SQLite.
+pub fn cloud_db_insert_autoeq_profile(profile: AutoEqProfileData) -> Result<(), String> {
+    with_db(|db| {
+        let row = crate::cloud::db::AutoEqProfileRow::from(profile);
+        db.insert_autoeq_profile(&row).map_err(anyhow::Error::from)
+    })
+}
+
 /// Deletes every cached audio chunk and returns the bytes reclaimed.
 ///
 /// Only the streamed audio goes: artwork and the library index stay, so the

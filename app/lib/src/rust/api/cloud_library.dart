@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 // These functions are ignored because they are not marked as `pub`: `fetch_online_cover_art`, `parse_filename_metadata`, `parse_index_number`, `parse_track_and_title`, `parse_year`, `sanitize_filename`, `url_encode`
 // These functions are ignored because they have generic arguments: `with_db_mut`, `with_db`
 // These types are ignored because they are not used by any `pub` functions: `CACHE_DIR`, `DB`, `HTTP_CLIENT`, `RATE_LIMITER`, `RT`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Opens (or creates) the library database. Safe to call repeatedly.
 Future<void> cloudLibraryOpen(
@@ -154,6 +154,19 @@ Future<List<KeyValuePair>> cloudDbListKvPrefix({required String prefix}) =>
     RustLib.instance.api
         .crateApiCloudLibraryCloudDbListKvPrefix(prefix: prefix);
 
+/// Searches the persistent AutoEQ database for headphone/IEM profiles matching a query.
+Future<List<AutoEqProfileData>> cloudDbSearchAutoeq({required String query}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudDbSearchAutoeq(query: query);
+
+/// Retrieves a single AutoEQ profile by ID from SQLite.
+Future<AutoEqProfileData?> cloudDbGetAutoeqProfile({required String id}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudDbGetAutoeqProfile(id: id);
+
+/// Inserts or updates an AutoEQ profile in SQLite.
+Future<void> cloudDbInsertAutoeqProfile({required AutoEqProfileData profile}) =>
+    RustLib.instance.api
+        .crateApiCloudLibraryCloudDbInsertAutoeqProfile(profile: profile);
+
 /// Deletes every cached audio chunk and returns the bytes reclaimed.
 ///
 /// Only the streamed audio goes: artwork and the library index stay, so the
@@ -210,6 +223,50 @@ class AlbumSummary {
           trackCount == other.trackCount &&
           maxSampleRate == other.maxSampleRate &&
           maxBitDepth == other.maxBitDepth;
+}
+
+/// AutoEQ headphone/IEM target frequency response profile.
+class AutoEqProfileData {
+  final String id;
+  final String model;
+  final String brand;
+  final String source;
+  final String target;
+  final double suggestedPreampDb;
+  final String bandsJson;
+
+  const AutoEqProfileData({
+    required this.id,
+    required this.model,
+    required this.brand,
+    required this.source,
+    required this.target,
+    required this.suggestedPreampDb,
+    required this.bandsJson,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      model.hashCode ^
+      brand.hashCode ^
+      source.hashCode ^
+      target.hashCode ^
+      suggestedPreampDb.hashCode ^
+      bandsJson.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AutoEqProfileData &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          model == other.model &&
+          brand == other.brand &&
+          source == other.source &&
+          target == other.target &&
+          suggestedPreampDb == other.suggestedPreampDb &&
+          bandsJson == other.bandsJson;
 }
 
 class CacheStats {

@@ -36,7 +36,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AlbumSummary dco_decode_album_summary(dynamic raw);
 
   @protected
+  AutoEqProfileData dco_decode_auto_eq_profile_data(dynamic raw);
+
+  @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  AutoEqProfileData dco_decode_box_autoadd_auto_eq_profile_data(dynamic raw);
 
   @protected
   PlayerState dco_decode_box_autoadd_player_state(dynamic raw);
@@ -93,6 +99,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<AlbumSummary> dco_decode_list_album_summary(dynamic raw);
 
   @protected
+  List<AutoEqProfileData> dco_decode_list_auto_eq_profile_data(dynamic raw);
+
+  @protected
   List<CachedRangeMs> dco_decode_list_cached_range_ms(dynamic raw);
 
   @protected
@@ -127,6 +136,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  AutoEqProfileData? dco_decode_opt_box_autoadd_auto_eq_profile_data(
+      dynamic raw);
 
   @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
@@ -178,7 +191,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AlbumSummary sse_decode_album_summary(SseDeserializer deserializer);
 
   @protected
+  AutoEqProfileData sse_decode_auto_eq_profile_data(
+      SseDeserializer deserializer);
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  AutoEqProfileData sse_decode_box_autoadd_auto_eq_profile_data(
+      SseDeserializer deserializer);
 
   @protected
   PlayerState sse_decode_box_autoadd_player_state(SseDeserializer deserializer);
@@ -239,6 +260,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  List<AutoEqProfileData> sse_decode_list_auto_eq_profile_data(
+      SseDeserializer deserializer);
+
+  @protected
   List<CachedRangeMs> sse_decode_list_cached_range_ms(
       SseDeserializer deserializer);
 
@@ -277,6 +302,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  AutoEqProfileData? sse_decode_opt_box_autoadd_auto_eq_profile_data(
+      SseDeserializer deserializer);
 
   @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
@@ -334,7 +363,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_album_summary(AlbumSummary self, SseSerializer serializer);
 
   @protected
+  void sse_encode_auto_eq_profile_data(
+      AutoEqProfileData self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_auto_eq_profile_data(
+      AutoEqProfileData self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_player_state(
@@ -396,6 +433,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<AlbumSummary> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_auto_eq_profile_data(
+      List<AutoEqProfileData> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_cached_range_ms(
       List<CachedRangeMs> self, SseSerializer serializer);
 
@@ -440,6 +481,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_auto_eq_profile_data(
+      AutoEqProfileData? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
