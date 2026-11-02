@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 // These functions are ignored because they are not marked as `pub`: `fetch_online_cover_art`, `parse_filename_metadata`, `parse_index_number`, `parse_track_and_title`, `parse_year`, `sanitize_filename`, `url_encode`
 // These functions are ignored because they have generic arguments: `with_db_mut`, `with_db`
 // These types are ignored because they are not used by any `pub` functions: `CACHE_DIR`, `DB`, `HTTP_CLIENT`, `RATE_LIMITER`, `RT`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Opens (or creates) the library database. Safe to call repeatedly.
 Future<void> cloudLibraryOpen(
@@ -131,6 +131,24 @@ Future<BigInt> cloudCachePruneNow(
         chunkDir: chunkDir,
         pinnedFileIds: pinnedFileIds,
         activeFileId: activeFileId);
+
+/// Stores a persistent key-value configuration pair in SQLite.
+Future<void> cloudDbSetKv({required String key, required String value}) =>
+    RustLib.instance.api
+        .crateApiCloudLibraryCloudDbSetKv(key: key, value: value);
+
+/// Reads a persistent key-value configuration pair from SQLite.
+Future<String?> cloudDbGetKv({required String key}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudDbGetKv(key: key);
+
+/// Deletes a persistent key-value configuration pair from SQLite.
+Future<void> cloudDbDeleteKv({required String key}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudDbDeleteKv(key: key);
+
+/// Lists all key-value configuration pairs with keys matching the prefix.
+Future<List<KeyValuePair>> cloudDbListKvPrefix({required String prefix}) =>
+    RustLib.instance.api
+        .crateApiCloudLibraryCloudDbListKvPrefix(prefix: prefix);
 
 /// Deletes every cached audio chunk and returns the bytes reclaimed.
 ///
@@ -345,6 +363,27 @@ class CloudTrack {
           sizeBytes == other.sizeBytes &&
           tagsRead == other.tagsRead &&
           artworkPath == other.artworkPath;
+}
+
+class KeyValuePair {
+  final String key;
+  final String value;
+
+  const KeyValuePair({
+    required this.key,
+    required this.value,
+  });
+
+  @override
+  int get hashCode => key.hashCode ^ value.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is KeyValuePair &&
+          runtimeType == other.runtimeType &&
+          key == other.key &&
+          value == other.value;
 }
 
 /// A file that was replaced due to re-upload with identical folder and name.

@@ -80,6 +80,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   F32Array10 dco_decode_f_32_array_10(dynamic raw);
 
   @protected
+  KeyValuePair dco_decode_key_value_pair(dynamic raw);
+
+  @protected
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
@@ -93,6 +96,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<EqBandSpec> dco_decode_list_eq_band_spec(dynamic raw);
+
+  @protected
+  List<KeyValuePair> dco_decode_list_key_value_pair(dynamic raw);
 
   @protected
   List<double> dco_decode_list_prim_f_32_loose(dynamic raw);
@@ -209,6 +215,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   F32Array10 sse_decode_f_32_array_10(SseDeserializer deserializer);
 
   @protected
+  KeyValuePair sse_decode_key_value_pair(SseDeserializer deserializer);
+
+  @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
@@ -224,6 +233,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<EqBandSpec> sse_decode_list_eq_band_spec(SseDeserializer deserializer);
+
+  @protected
+  List<KeyValuePair> sse_decode_list_key_value_pair(
+      SseDeserializer deserializer);
 
   @protected
   List<double> sse_decode_list_prim_f_32_loose(SseDeserializer deserializer);
@@ -348,6 +361,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_f_32_array_10(F32Array10 self, SseSerializer serializer);
 
   @protected
+  void sse_encode_key_value_pair(KeyValuePair self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
@@ -365,6 +381,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_eq_band_spec(
       List<EqBandSpec> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_key_value_pair(
+      List<KeyValuePair> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_f_32_loose(

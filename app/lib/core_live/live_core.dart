@@ -16,6 +16,7 @@ import '../core_mock/mock_core.dart';
 import 'audio_handler.dart';
 import 'cloud_library.dart';
 import 'output_device.dart';
+import 'persistence_codec.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
 import '../src/rust/api/cloud_library.dart' as rust_cache;
 import '../src/rust/api/simple.dart' as rust_simple;
@@ -143,6 +144,7 @@ class LiveBitDropCore implements BitDropCore {
 
     refreshStorage();
     _loadFavoritesAndPinned();
+    _loadSettingsAndEq();
 
     _outputProbe.start();
     _outputProbeSub =
@@ -221,11 +223,11 @@ class LiveBitDropCore implements BitDropCore {
       _pushEqToEngine();
     });
 
-    _eqSub = _mockCore.eq.listen(_pushEqToEngine);
+    _eqSub = _eq.listen(_pushEqToEngine);
   }
 
   void _pushEqToEngine([EqState? state]) {
-    final eqState = state ?? _mockCore.eqValue;
+    final eqState = state ?? _eq.value;
 
     // Element 11 (index 10): effective preamp including ReplayGain
     double effectivePreamp = eqState.preampDb;
@@ -317,7 +319,9 @@ class LiveBitDropCore implements BitDropCore {
   final _syncStatus = BehaviorSubject<SyncStatus>.seeded(SyncStatus.idle);
   @override Stream<SyncStatus> get syncStatus => _syncStatus.stream;
   @override Stream<List<AppBanner>> get banners => _mockCore.banners;
-  @override Stream<EqState> get eq => _mockCore.eq;
+  final _eq = BehaviorSubject<EqState>.seeded(PersistenceCodec.defaultEqState());
+  @override Stream<EqState> get eq => _eq.stream;
+  EqState get eqValue => _eq.value;
   final _storage = BehaviorSubject<StorageState>.seeded(_emptyStorage);
   @override Stream<StorageState> get storage => _storage.stream;
 
@@ -416,8 +420,16 @@ class LiveBitDropCore implements BitDropCore {
   }
   @override Stream<DiagnosticsSnapshot> get diagnostics => _mockCore.diagnostics;
   @override Stream<VisualizerFrame> get visualizer => _mockCore.visualizer;
-  @override Stream<List<DeviceProfile>> get deviceProfiles => _mockCore.deviceProfiles;
-  @override Stream<AppSettings> get settings => _mockCore.settings;
+  final _deviceProfiles = BehaviorSubject<List<DeviceProfile>>.seeded(const [
+    DeviceProfile(
+      deviceId: 'dev-titanx',
+      deviceName: 'DUNU Titan X',
+      replayGain: ReplayGainMode.off,
+    ),
+  ]);
+  @override Stream<List<DeviceProfile>> get deviceProfiles => _deviceProfiles.stream;
+  final _settings = BehaviorSubject<AppSettings>.seeded(const AppSettings());
+  @override Stream<AppSettings> get settings => _settings.stream;
 
   // Delegated queries
   
@@ -509,6 +521,68 @@ class LiveBitDropCore implements BitDropCore {
       );
     } catch (e) {
       debugPrint('[core] failed to sync pinned to rust: $e');
+    }
+  }
+
+  Future<void> _loadSettingsAndEq() async {
+    try {
+      final eqJson = await rust_cache.cloudDbGetKv(key: 'eq_state');
+      if (eqJson != null && eqJson.isNotEmpty) {
+        final loadedEq = PersistenceCodec.deserializeEqState(eqJson);
+        _eq.add(loadedEq);
+        _pushEqToEngine(loadedEq);
+      }
+    } catch (e) {
+      debugPrint('[persistence] failed to restore eq state: $e');
+    }
+
+    try {
+      final settingsJson = await rust_cache.cloudDbGetKv(key: 'app_settings');
+      if (settingsJson != null && settingsJson.isNotEmpty) {
+        final loadedSettings = PersistenceCodec.deserializeAppSettings(settingsJson);
+        _settings.add(loadedSettings);
+      }
+    } catch (e) {
+      debugPrint('[persistence] failed to restore app settings: $e');
+    }
+
+    try {
+      final profilesJson = await rust_cache.cloudDbGetKv(key: 'device_profiles');
+      if (profilesJson != null && profilesJson.isNotEmpty) {
+        final loadedProfiles = PersistenceCodec.deserializeDeviceProfiles(profilesJson);
+        if (loadedProfiles.isNotEmpty) {
+          _deviceProfiles.add(loadedProfiles);
+        }
+      }
+    } catch (e) {
+      debugPrint('[persistence] failed to restore device profiles: $e');
+    }
+  }
+
+  Future<void> _saveEqState() async {
+    try {
+      final json = PersistenceCodec.serializeEqState(_eq.value);
+      await rust_cache.cloudDbSetKv(key: 'eq_state', value: json);
+    } catch (e) {
+      debugPrint('[persistence] failed to save eq state: $e');
+    }
+  }
+
+  Future<void> _saveSettings() async {
+    try {
+      final json = PersistenceCodec.serializeAppSettings(_settings.value);
+      await rust_cache.cloudDbSetKv(key: 'app_settings', value: json);
+    } catch (e) {
+      debugPrint('[persistence] failed to save app settings: $e');
+    }
+  }
+
+  Future<void> _saveDeviceProfiles() async {
+    try {
+      final json = PersistenceCodec.serializeDeviceProfiles(_deviceProfiles.value);
+      await rust_cache.cloudDbSetKv(key: 'device_profiles', value: json);
+    } catch (e) {
+      debugPrint('[persistence] failed to save device profiles: $e');
     }
   }
 
@@ -1364,6 +1438,89 @@ class LiveBitDropCore implements BitDropCore {
       }
       await _mockCore.send(cmd);
       await refreshStorage();
+    } else if (cmd is SetSetting) {
+      _settings.add(_settings.value.withKey(cmd.key, cmd.value));
+      unawaited(_saveSettings());
+      await _mockCore.send(cmd);
+    } else if (cmd is SetSafetyAttenuation) {
+      _settings.add(_settings.value.copyWith(
+        safetyAttenuationEnabled: cmd.enabled,
+        safetyAttenuationDb: cmd.db ?? _settings.value.safetyAttenuationDb,
+      ));
+      unawaited(_saveSettings());
+      await _mockCore.send(cmd);
+    } else if (cmd is SetEqBands) {
+      _eq.add(_eq.value.copyWith(bands: cmd.bands, mode: EqMode.parametric, bypass: false));
+      unawaited(_saveEqState());
+      await _mockCore.send(cmd);
+    } else if (cmd is SetEqMode) {
+      _eq.add(_eq.value.copyWith(mode: cmd.mode));
+      unawaited(_saveEqState());
+      await _mockCore.send(cmd);
+    } else if (cmd is SetGraphicGains) {
+      _eq.add(_eq.value.copyWith(graphicGains: cmd.gains, mode: EqMode.graphic, bypass: false));
+      unawaited(_saveEqState());
+      await _mockCore.send(cmd);
+    } else if (cmd is SetBypass) {
+      _eq.add(_eq.value.copyWith(bypass: cmd.bypass));
+      unawaited(_saveEqState());
+      await _mockCore.send(cmd);
+    } else if (cmd is SetPreamp) {
+      final clipped = cmd.db > 0 ? (cmd.db * 420).round() : 0;
+      _eq.add(_eq.value.copyWith(preampDb: cmd.db, clippedSamples: clipped));
+      unawaited(_saveEqState());
+      await _mockCore.send(cmd);
+    } else if (cmd is SetTone) {
+      _eq.add(_eq.value.copyWith(
+        mode: EqMode.simple,
+        bassDb: cmd.bassDb,
+        trebleDb: cmd.trebleDb,
+        balance: cmd.balance,
+        mono: cmd.mono,
+        bypass: false,
+      ));
+      unawaited(_saveEqState());
+      await _mockCore.send(cmd);
+    } else if (cmd is SetReplayGain) {
+      _eq.add(_eq.value.copyWith(replayGain: cmd.mode, replayGainPreampDb: cmd.preampDb));
+      _settings.add(_settings.value.copyWith(replayGain: cmd.mode));
+      unawaited(_saveEqState());
+      unawaited(_saveSettings());
+      await _mockCore.send(cmd);
+    } else if (cmd is AssignEqToDevice) {
+      final currentDev = _outputProbe.current;
+      final devName = currentDev?.id == cmd.deviceId
+          ? currentDev?.name
+          : (cmd.assign ? 'Headphones' : null);
+      _eq.add(_eq.value.copyWith(
+        assignedDeviceName: cmd.assign ? devName : null,
+      ));
+      final updatedProfiles = _deviceProfiles.value.map((p) {
+        if (p.deviceId == cmd.deviceId) {
+          return DeviceProfile(
+            deviceId: p.deviceId,
+            deviceName: p.deviceName,
+            eqPresetName: cmd.assign ? (_eq.value.presetName ?? 'Custom EQ') : null,
+            replayGain: p.replayGain,
+            safetyAttenuationDb: p.safetyAttenuationDb,
+            preferredVolumeDb: p.preferredVolumeDb,
+            autoApply: p.autoApply,
+          );
+        }
+        return p;
+      }).toList();
+      _deviceProfiles.add(updatedProfiles);
+      unawaited(_saveDeviceProfiles());
+      unawaited(_saveEqState());
+      await _mockCore.send(cmd);
+    } else if (cmd is ApplyAutoEqProfile) {
+      await _mockCore.send(cmd);
+      _eq.add(_mockCore.eqValue);
+      unawaited(_saveEqState());
+    } else if (cmd is ImportParametricEq) {
+      await _mockCore.send(cmd);
+      _eq.add(_mockCore.eqValue);
+      unawaited(_saveEqState());
     } else {
       await _mockCore.send(cmd);
     }
@@ -1553,6 +1710,10 @@ class LiveBitDropCore implements BitDropCore {
     _nowPlaying.close();
     _syncStatus.close();
     _queue.close();
+    _storage.close();
+    _eq.close();
+    _settings.close();
+    _deviceProfiles.close();
     _cloud?.dispose();
     _outputProbe.dispose();
     _signalPath.close();

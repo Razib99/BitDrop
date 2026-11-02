@@ -1143,6 +1143,41 @@ pub fn cloud_cache_prune_now(
     })
 }
 
+#[derive(Debug, Clone)]
+pub struct KeyValuePair {
+    pub key: String,
+    pub value: String,
+}
+
+/// Stores a persistent key-value configuration pair in SQLite.
+pub fn cloud_db_set_kv(key: String, value: String) -> Result<(), String> {
+    with_db(|db| {
+        db.set_kv(&key, &value).map_err(anyhow::Error::from)
+    })
+}
+
+/// Reads a persistent key-value configuration pair from SQLite.
+pub fn cloud_db_get_kv(key: String) -> Result<Option<String>, String> {
+    with_db(|db| {
+        db.get_kv(&key).map_err(anyhow::Error::from)
+    })
+}
+
+/// Deletes a persistent key-value configuration pair from SQLite.
+pub fn cloud_db_delete_kv(key: String) -> Result<(), String> {
+    with_db(|db| {
+        db.delete_kv(&key).map_err(anyhow::Error::from)
+    })
+}
+
+/// Lists all key-value configuration pairs with keys matching the prefix.
+pub fn cloud_db_list_kv_prefix(prefix: String) -> Result<Vec<KeyValuePair>, String> {
+    with_db(|db| {
+        let items = db.list_kv_prefix(&prefix).map_err(anyhow::Error::from)?;
+        Ok(items.into_iter().map(|(key, value)| KeyValuePair { key, value }).collect())
+    })
+}
+
 /// Deletes every cached audio chunk and returns the bytes reclaimed.
 ///
 /// Only the streamed audio goes: artwork and the library index stay, so the

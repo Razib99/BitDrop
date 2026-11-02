@@ -917,6 +917,26 @@ impl MetadataDb {
         }
     }
 
+    /// Deletes a persistent key-value configuration pair.
+    pub fn delete_kv(&self, key: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM app_kv WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
+    /// Lists all key-value configuration pairs starting with a given prefix.
+    pub fn list_kv_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        let pattern = format!("{}%", prefix);
+        let mut stmt = self.conn.prepare("SELECT key, value FROM app_kv WHERE key LIKE ?1 ORDER BY key ASC")?;
+        let rows = stmt.query_map(params![pattern], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
+        let mut result = Vec::new();
+        for r in rows {
+            result.push(r?);
+        }
+        Ok(result)
+    }
+
     /// Returns the number of cached chunks for a given file_id.
     pub fn count_cached_chunks_for_file(&self, file_id: &str) -> Result<u32> {
         let count: u32 = self.conn.query_row(
@@ -1437,6 +1457,40 @@ mod tests {
         let stats_after = db.get_cache_stats(&["track_pinned_1".to_string()]).unwrap();
         assert!(stats_after.unpinned_bytes <= 6 * 1024 * 1024);
         assert_eq!(stats_after.pinned_bytes, 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_app_kv_store_operations() {
+        let db = MetadataDb::new_in_memory().expect("in-memory db failed");
+
+        // Set and get
+        db.set_kv("eq_state", "{\"bypass\":false}").unwrap();
+        assert_eq!(
+            db.get_kv("eq_state").unwrap(),
+            Some("{\"bypass\":false}".to_string())
+        );
+
+        // Update existing
+        db.set_kv("eq_state", "{\"bypass\":true}").unwrap();
+        assert_eq!(
+            db.get_kv("eq_state").unwrap(),
+            Some("{\"bypass\":true}".to_string())
+        );
+
+        // List prefix
+        db.set_kv("preset:vocal", "{\"bands\":[]}").unwrap();
+        db.set_kv("preset:bass", "{\"bands\":[]}").unwrap();
+        db.set_kv("other:foo", "bar").unwrap();
+
+        let presets = db.list_kv_prefix("preset:").unwrap();
+        assert_eq!(presets.len(), 2);
+        assert_eq!(presets[0].0, "preset:bass");
+        assert_eq!(presets[1].0, "preset:vocal");
+
+        // Delete
+        db.delete_kv("preset:bass").unwrap();
+        assert_eq!(db.get_kv("preset:bass").unwrap(), None);
+        assert_eq!(db.list_kv_prefix("preset:").unwrap().len(), 1);
     }
 }
 
