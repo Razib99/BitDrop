@@ -1,23 +1,36 @@
-//! Golden Audio CI Suite: Mandatory Gates 1, 2, 3 (DSP Pipeline Verification)
+//! Golden Audio CI Suite: Mandatory Gates 1, 2, 3, 4, 5
 //!
-//! Evaluates the BitDrop Engine v2 64-bit float precision DSP pipeline against:
+//! Evaluates the BitDrop Engine v2 64-bit float precision DSP pipeline and transport against:
 //! - Gate 1: Frequency response within ±0.05 dB of mathematical f64 reference across 44.1, 48, 96, 192 kHz.
 //! - Gate 2: Zero clipping across all presets with auto-preamp and limiter enabled on 0 dBFS input.
 //! - Gate 3: Cryptographic SHA-256 bit-exact identity during neutral bypass.
+//! - Gate 4: Offline render to exact last frame without truncation.
+//! - Gate 5: Gapless album boundary sample-level continuity with zero dropped or padded frames.
 
+use rust_lib_bitdrop::api::audio_engine::{
+    CALLBACK_FADE_STEP, CALLBACK_FADE_TARGET, CALLBACK_FLUSH_REQUESTED,
+    CALLBACK_FRAMES_PLAYED, CALLBACK_GATE_OUTPUT, CALLBACK_IS_PLAYING,
+    DSP_TRIPLE_BUFFER, TRACK_ENDED_FLAG,
+};
 use rust_lib_bitdrop::dsp::{
+    downmix_to_stereo, BoundaryKind, BoundaryMarker, DspConfigSnapshot,
     DspPipelineV2, StereoBiquadF64, BUTTERWORTH_Q, EQ_HIGH_SHELF, EQ_LOW_SHELF, EQ_PEAK,
     OCTAVE_PEAK_Q,
 };
+use rust_lib_bitdrop::renderer::OutputRenderer;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::path::Path;
+use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
+
+static SUITE_MUTEX: Mutex<()> = Mutex::new(());
 
 #[test]
 fn gate_1_eq_frequency_response() {
@@ -445,4 +458,446 @@ fn gate_3_bit_exact_bypass_hash() {
             );
         }
     }
+}
+
+#[test]
+fn gate_4_offline_render_last_frame_exact() {
+    let _lock = SUITE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Reset global atomic engine state for test isolation
+    CALLBACK_IS_PLAYING.store(true, Ordering::SeqCst);
+    CALLBACK_GATE_OUTPUT.store(false, Ordering::SeqCst);
+    CALLBACK_FLUSH_REQUESTED.store(false, Ordering::SeqCst);
+    CALLBACK_FADE_TARGET.store(1.0f32.to_bits(), Ordering::SeqCst);
+    CALLBACK_FADE_STEP.store(1.0f32.to_bits(), Ordering::SeqCst);
+    CALLBACK_FRAMES_PLAYED.store(0, Ordering::SeqCst);
+    TRACK_ENDED_FLAG.store(false, Ordering::SeqCst);
+    DSP_TRIPLE_BUFFER.publish(DspConfigSnapshot::default());
+
+    let golden_dir = Path::new("/tmp/bitdrop_golden_flacs");
+    let test_flac = golden_dir.join("01 - O Sajna.flac");
+    let mut source_frames: Vec<(f32, f32)> = Vec::new();
+    let mut sample_rate = 48000.0;
+
+    if test_flac.exists() {
+        if let Ok(file) = File::open(&test_flac) {
+            let mss = MediaSourceStream::new(Box::new(file), Default::default());
+            let hint = Hint::new();
+            let format_opts = FormatOptions::default();
+            let metadata_opts = MetadataOptions::default();
+            if let Ok(mut probed) = symphonia::default::get_probe().format(
+                &hint,
+                mss,
+                &format_opts,
+                &metadata_opts,
+            ) {
+                if let Some(track) = probed.format.tracks().iter().find(|t| {
+                    t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL
+                }) {
+                    let track_id = track.id;
+                    if let Some(sr) = track.codec_params.sample_rate {
+                        sample_rate = sr as f64;
+                    }
+                    if let Ok(mut decoder) = symphonia::default::get_codecs()
+                        .make(&track.codec_params, &DecoderOptions::default())
+                    {
+                        let mut sample_buf = None;
+                        while let Ok(packet) = probed.format.next_packet() {
+                            if packet.track_id() != track_id {
+                                continue;
+                            }
+                            if let Ok(decoded) = decoder.decode(&packet) {
+                                let channels = decoded.spec().channels.count();
+                                if sample_buf.is_none() {
+                                    let spec = *decoded.spec();
+                                    let duration = decoded.capacity() as u64;
+                                    sample_buf = Some(SampleBuffer::<f32>::new(duration, spec));
+                                }
+                                if let Some(buf) = sample_buf.as_mut() {
+                                    buf.copy_interleaved_ref(decoded);
+                                    let stereo = downmix_to_stereo(buf.samples(), channels);
+                                    let frames = stereo.len() / 2;
+                                    for i in 0..frames {
+                                        source_frames.push((stereo[i * 2], stereo[i * 2 + 1]));
+                                    }
+                                    if source_frames.len() >= 50_000 {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if source_frames.is_empty() {
+        // Deterministic synthetic stream (65,536 frames)
+        for i in 0..65536 {
+            let l = ((i as f32) * 0.01).sin();
+            let r = ((i as f32) * 0.02).cos();
+            source_frames.push((l, r));
+        }
+    }
+
+    assert!(!source_frames.is_empty(), "Gate 4: Source frames must not be empty");
+    let total_source_frames = source_frames.len();
+    let expected_last_frame = *source_frames.last().unwrap();
+
+    // Setup SPSC PCM audio ring buffer & boundary marker queues
+    let (mut audio_prod, audio_cons) = rtrb::RingBuffer::<f32>::new(16384);
+    let (mut boundary_prod, boundary_cons) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+    let (triggered_prod, mut triggered_cons) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+
+    let mut renderer = OutputRenderer::new(
+        sample_rate,
+        Some(audio_cons),
+        Some(boundary_cons),
+        Some(triggered_prod),
+    );
+    renderer.dsp.eq_enabled = false; // Bit-exact neutral bypass
+
+    let mut rendered_frames: Vec<(f32, f32)> = Vec::with_capacity(total_source_frames);
+    let mut source_idx = 0;
+    let mut eof_reached = false;
+    let mut render_buf = [0.0f32; 512]; // 256 stereo frames
+
+    let mut iterations = 0;
+    while (!TRACK_ENDED_FLAG.load(Ordering::Acquire) || rendered_frames.len() < total_source_frames)
+        && iterations < 1_000_000
+    {
+        iterations += 1;
+
+        // --- DECODER THREAD STEP ---
+        if !eof_reached {
+            let avail_slots = audio_prod.slots();
+            let frames_to_push = (avail_slots / 2).min(total_source_frames - source_idx).min(512);
+            if frames_to_push > 0 {
+                if let Ok(mut chunk) = audio_prod.write_chunk(frames_to_push * 2) {
+                    let (s1, s2) = chunk.as_mut_slices();
+                    let mut pushed = 0;
+                    for i in 0..frames_to_push {
+                        let (l, r) = source_frames[source_idx + i];
+                        if pushed < s1.len() {
+                            s1[pushed] = l;
+                            s1[pushed + 1] = r;
+                        } else {
+                            let idx2 = pushed - s1.len();
+                            s2[idx2] = l;
+                            s2[idx2 + 1] = r;
+                        }
+                        pushed += 2;
+                    }
+                    chunk.commit_all();
+                    source_idx += frames_to_push;
+                }
+            }
+
+            if source_idx >= total_source_frames {
+                eof_reached = true;
+                let marker = BoundaryMarker::track_ended(total_source_frames as u64, "golden_track");
+                boundary_prod.push(marker).expect("Push boundary marker");
+            }
+        }
+
+        // --- OUTPUT RENDERER STEP ---
+        let frames_left = total_source_frames - rendered_frames.len();
+        let avail_frames = renderer.consumer.as_ref().map(|c| c.slots() / 2).unwrap_or(0);
+        let frames_to_render = frames_left.min(avail_frames).min(256);
+
+        if frames_to_render > 0 {
+            let out_slice = &mut render_buf[..frames_to_render * 2];
+            renderer.render_interleaved(out_slice, 2);
+            for i in 0..frames_to_render {
+                rendered_frames.push((out_slice[i * 2], out_slice[i * 2 + 1]));
+            }
+        } else if eof_reached && !TRACK_ENDED_FLAG.load(Ordering::Acquire) {
+            let out_slice = &mut render_buf[..0];
+            renderer.render_interleaved(out_slice, 2);
+        }
+    }
+
+    assert!(TRACK_ENDED_FLAG.load(Ordering::Acquire), "Gate 4: TrackEnded must fire at EOF");
+    assert_eq!(
+        rendered_frames.len(),
+        total_source_frames,
+        "Gate 4: Rendered frames must exactly equal source frames (no cut-off ending)"
+    );
+    let actual_last_frame = *rendered_frames.last().unwrap();
+    assert_eq!(
+        actual_last_frame.0.to_bits(),
+        expected_last_frame.0.to_bits(),
+        "Gate 4: L-channel last frame bit-exact match"
+    );
+    assert_eq!(
+        actual_last_frame.1.to_bits(),
+        expected_last_frame.1.to_bits(),
+        "Gate 4: R-channel last frame bit-exact match"
+    );
+    assert_eq!(
+        renderer.consumer.as_ref().unwrap().slots(),
+        0,
+        "Gate 4: All frames in ring buffer must be consumed"
+    );
+
+    let triggered = triggered_cons.pop().expect("Gate 4: Triggered event must be present");
+    assert_eq!(triggered.kind, BoundaryKind::TrackEnded);
+    assert_eq!(triggered.trigger_at_frame, total_source_frames as u64);
+    assert_eq!(triggered.file_id_str(), "golden_track");
+
+    for i in 0..total_source_frames {
+        assert_eq!(
+            rendered_frames[i].0.to_bits(),
+            source_frames[i].0.to_bits(),
+            "Gate 4: Frame {} L bit deviation",
+            i
+        );
+        assert_eq!(
+            rendered_frames[i].1.to_bits(),
+            source_frames[i].1.to_bits(),
+            "Gate 4: Frame {} R bit deviation",
+            i
+        );
+    }
+}
+
+#[test]
+fn gate_5_gapless_boundary_continuity() {
+    let _lock = SUITE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+    let sample_rate = 48000.0;
+    let total_frames = 96000; // 2.0 seconds
+    let boundary_frame = 48000; // 1.0 second album track transition
+
+    // 1. Generate mathematical continuous 440 Hz reference sine wave
+    let freq = 440.0;
+    let mut reference = Vec::with_capacity(total_frames);
+    for n in 0..total_frames {
+        let t = (n as f64) / sample_rate;
+        let val = (2.0 * std::f64::consts::PI * freq * t).sin() as f32;
+        reference.push((val, val));
+    }
+
+    let track1_frames = &reference[..boundary_frame];
+    let track2_frames = &reference[boundary_frame..];
+
+    // Reset global atomic engine state for test isolation
+    CALLBACK_IS_PLAYING.store(true, Ordering::SeqCst);
+    CALLBACK_GATE_OUTPUT.store(false, Ordering::SeqCst);
+    CALLBACK_FLUSH_REQUESTED.store(false, Ordering::SeqCst);
+    CALLBACK_FADE_TARGET.store(1.0f32.to_bits(), Ordering::SeqCst);
+    CALLBACK_FADE_STEP.store(1.0f32.to_bits(), Ordering::SeqCst);
+    CALLBACK_FRAMES_PLAYED.store(0, Ordering::SeqCst);
+    TRACK_ENDED_FLAG.store(false, Ordering::SeqCst);
+    DSP_TRIPLE_BUFFER.publish(DspConfigSnapshot::default());
+
+    // Setup SPSC ring buffers
+    let (mut audio_prod, audio_cons) = rtrb::RingBuffer::<f32>::new(16384);
+    let (mut boundary_prod, boundary_cons) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+    let (triggered_prod, mut triggered_cons) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+
+    let mut renderer = OutputRenderer::new(
+        sample_rate,
+        Some(audio_cons),
+        Some(boundary_cons),
+        Some(triggered_prod),
+    );
+    renderer.dsp.eq_enabled = false; // Bit-exact bypass mode
+
+    // Push Track 1 start boundary marker
+    boundary_prod
+        .push(BoundaryMarker::track_started(0, "album_track_1"))
+        .expect("Push track 1 start marker");
+
+    let mut track1_pushed = 0;
+    let mut track2_pushed = 0;
+    let mut track_changed_pushed = false;
+    let mut track_ended_pushed = false;
+
+    let mut rendered_frames: Vec<(f32, f32)> = Vec::with_capacity(total_frames);
+    let mut render_buf = [0.0f32; 512]; // 256 stereo frames
+
+    let mut iterations = 0;
+    while iterations < 2_000_000 && rendered_frames.len() < total_frames {
+        iterations += 1;
+
+        // --- PRODUCER (DECODER) STEP ---
+        // 1. Push Track 1
+        if track1_pushed < track1_frames.len() {
+            let avail = audio_prod.slots() / 2;
+            let to_push = avail.min(track1_frames.len() - track1_pushed).min(512);
+            if to_push > 0 {
+                if let Ok(mut chunk) = audio_prod.write_chunk(to_push * 2) {
+                    let (s1, s2) = chunk.as_mut_slices();
+                    let mut p = 0;
+                    for i in 0..to_push {
+                        let (l, r) = track1_frames[track1_pushed + i];
+                        if p < s1.len() {
+                            s1[p] = l;
+                            s1[p + 1] = r;
+                        } else {
+                            let idx = p - s1.len();
+                            s2[idx] = l;
+                            s2[idx + 1] = r;
+                        }
+                        p += 2;
+                    }
+                    chunk.commit_all();
+                    track1_pushed += to_push;
+                }
+            }
+        } else if !track_changed_pushed {
+            // Gapless boundary: Track 1 finished pushing, immediately stage Track 2 boundary marker
+            boundary_prod
+                .push(BoundaryMarker::track_changed(
+                    boundary_frame as u64,
+                    "album_track_2",
+                ))
+                .expect("Push track changed marker");
+            track_changed_pushed = true;
+        }
+
+        // 2. Seamlessly push Track 2 into the SAME audio ring buffer
+        if track_changed_pushed && track2_pushed < track2_frames.len() {
+            let avail = audio_prod.slots() / 2;
+            let to_push = avail.min(track2_frames.len() - track2_pushed).min(512);
+            if to_push > 0 {
+                if let Ok(mut chunk) = audio_prod.write_chunk(to_push * 2) {
+                    let (s1, s2) = chunk.as_mut_slices();
+                    let mut p = 0;
+                    for i in 0..to_push {
+                        let (l, r) = track2_frames[track2_pushed + i];
+                        if p < s1.len() {
+                            s1[p] = l;
+                            s1[p + 1] = r;
+                        } else {
+                            let idx = p - s1.len();
+                            s2[idx] = l;
+                            s2[idx + 1] = r;
+                        }
+                        p += 2;
+                    }
+                    chunk.commit_all();
+                    track2_pushed += to_push;
+                }
+            }
+        } else if track_changed_pushed
+            && track2_pushed >= track2_frames.len()
+            && !track_ended_pushed
+        {
+            // EOF of Track 2: push track ended marker
+            boundary_prod
+                .push(BoundaryMarker::track_ended(
+                    total_frames as u64,
+                    "album_track_2",
+                ))
+                .expect("Push track ended marker");
+            track_ended_pushed = true;
+        }
+
+        // --- CONSUMER (OUTPUT RENDERER) STEP ---
+        let frames_left = total_frames - rendered_frames.len();
+        let avail_frames = renderer.consumer.as_ref().map(|c| c.slots() / 2).unwrap_or(0);
+        let frames_to_render = frames_left.min(avail_frames).min(256);
+
+        if frames_to_render > 0 {
+            let out_slice = &mut render_buf[..frames_to_render * 2];
+            renderer.render_interleaved(out_slice, 2);
+            for i in 0..frames_to_render {
+                rendered_frames.push((out_slice[i * 2], out_slice[i * 2 + 1]));
+            }
+        } else if track_ended_pushed && !TRACK_ENDED_FLAG.load(Ordering::Acquire) {
+            let out_slice = &mut render_buf[..0];
+            renderer.render_interleaved(out_slice, 2);
+        }
+    }
+
+    assert_eq!(
+        rendered_frames.len(),
+        total_frames,
+        "Gate 5: Total rendered frames must match reference exactly (zero dropped, zero padded)"
+    );
+
+    // Collect all triggered boundary events
+    let mut triggered_events = Vec::new();
+    while let Ok(m) = triggered_cons.pop() {
+        triggered_events.push(m);
+    }
+
+    assert_eq!(
+        triggered_events.len(),
+        3,
+        "Gate 5: Exactly 3 boundary markers must be triggered"
+    );
+    assert_eq!(triggered_events[0].kind, BoundaryKind::TrackStarted);
+    assert_eq!(triggered_events[0].file_id_str(), "album_track_1");
+    assert_eq!(triggered_events[0].trigger_at_frame, 0);
+
+    assert_eq!(triggered_events[1].kind, BoundaryKind::TrackChanged);
+    assert_eq!(triggered_events[1].file_id_str(), "album_track_2");
+    assert_eq!(
+        triggered_events[1].trigger_at_frame,
+        boundary_frame as u64
+    );
+
+    assert_eq!(triggered_events[2].kind, BoundaryKind::TrackEnded);
+    assert_eq!(triggered_events[2].file_id_str(), "album_track_2");
+    assert_eq!(triggered_events[2].trigger_at_frame, total_frames as u64);
+
+    // Verify sample continuity across boundary (frame boundary - 20 .. boundary + 20)
+    for i in (boundary_frame - 20)..(boundary_frame + 20) {
+        let ref_frame = reference[i];
+        let rend_frame = rendered_frames[i];
+        assert!(
+            (rend_frame.0 - ref_frame.0).abs() < 1e-4,
+            "Gate 5: Frame {} L channel discontinuity: ref {} != rend {}",
+            i,
+            ref_frame.0,
+            rend_frame.0
+        );
+        assert!(
+            (rend_frame.1 - ref_frame.1).abs() < 1e-4,
+            "Gate 5: Frame {} R channel discontinuity: ref {} != rend {}",
+            i,
+            ref_frame.1,
+            rend_frame.1
+        );
+    }
+
+    // Verify 1st derivative (slope) continuity across boundary
+    let slope_ref = reference[boundary_frame].0 - reference[boundary_frame - 1].0;
+    let slope_rend = rendered_frames[boundary_frame].0 - rendered_frames[boundary_frame - 1].0;
+    assert!(
+        (slope_rend - slope_ref).abs() < 1e-4,
+        "Gate 5: Slope discontinuity across gapless boundary: ref {} != rend {}",
+        slope_ref,
+        slope_rend
+    );
+
+    // Bit-exact identity check across entire stream
+    for i in 0..total_frames {
+        assert_eq!(
+            rendered_frames[i].0.to_bits(),
+            reference[i].0.to_bits(),
+            "Gate 5: Sample {} L channel bit deviation",
+            i
+        );
+        assert_eq!(
+            rendered_frames[i].1.to_bits(),
+            reference[i].1.to_bits(),
+            "Gate 5: Sample {} R channel bit deviation",
+            i
+        );
+    }
+
+    assert_eq!(
+        renderer.consumer.as_ref().unwrap().slots(),
+        0,
+        "Gate 5: Ring buffer must be completely drained at end"
+    );
+    assert!(
+        TRACK_ENDED_FLAG.load(Ordering::Acquire),
+        "Gate 5: TrackEnded flag must be set"
+    );
 }
