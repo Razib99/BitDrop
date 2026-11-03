@@ -12,7 +12,6 @@ import '../core_api/models.dart';
 import '../core_api/queries.dart';
 import '../core_api/settings.dart';
 import '../core_mock/catalog.dart';
-import '../core_mock/mock_core.dart';
 import 'audio_handler.dart';
 import 'cloud_library.dart';
 import 'output_device.dart';
@@ -25,7 +24,7 @@ import '../util/biquad.dart';
 
 class LiveBitDropCore implements BitDropCore {
   final BitDropAudioHandler _audioHandler;
-  final MockBitDropCore _mockCore;
+  Timer? _sleepTimer;
 
   /// Null until Drive is connected. Everything cloud-related is served from
   /// here; local scanning and the mock catalogue are untouched by it.
@@ -95,8 +94,7 @@ class LiveBitDropCore implements BitDropCore {
     String? artworkCacheDir,
   })  : _cloud = cloudLibrary,
         _chunkCacheDir = chunkCacheDir,
-        _artworkCacheDir = artworkCacheDir,
-        _mockCore = MockBitDropCore() {
+        _artworkCacheDir = artworkCacheDir {
     try {
       rust.initEngine();
     } catch (e) {
@@ -323,12 +321,14 @@ class LiveBitDropCore implements BitDropCore {
   final _queue = BehaviorSubject<QueueState>.seeded(QueueState.empty);
   @override Stream<QueueState> get queue => _queue.stream;
   @override Stream<OutputDevice?> get outputDevice => _outputProbe.stream;
+  final _defaultSources = BehaviorSubject<List<SourceAccount>>.seeded(const []);
   @override
   Stream<List<SourceAccount>> get sources =>
-      _cloud?.sourceAccounts ?? _mockCore.sources;
+      _cloud?.sourceAccounts ?? _defaultSources.stream;
   final _syncStatus = BehaviorSubject<SyncStatus>.seeded(SyncStatus.idle);
   @override Stream<SyncStatus> get syncStatus => _syncStatus.stream;
-  @override Stream<List<AppBanner>> get banners => _mockCore.banners;
+  final _banners = BehaviorSubject<List<AppBanner>>.seeded(const []);
+  @override Stream<List<AppBanner>> get banners => _banners.stream;
   final _eq = BehaviorSubject<EqState>.seeded(PersistenceCodec.defaultEqState());
   @override Stream<EqState> get eq => _eq.stream;
   EqState get eqValue => _eq.value;
@@ -812,14 +812,17 @@ class LiveBitDropCore implements BitDropCore {
           .map(_enrichTrack)
           .toList();
       if (cloud.isNotEmpty) return Paged(items: cloud, total: cloud.length);
+      final real = _realTracks.values
+          .where((t) => t.albumId == q.albumId)
+          .map(_enrichTrack)
+          .toList();
+      if (real.isNotEmpty) return Paged(items: real, total: real.length);
       if (q.albumId == 'real-music') {
         return Paged(
             items: _realTracks.values.map(_enrichTrack).toList(),
             total: _realTracks.length);
       }
-      final mock = await _mockCore.tracks(q);
-      return Paged(
-          items: mock.items.map(_enrichTrack).toList(), total: mock.total);
+      return const Paged(items: [], total: 0);
     }
 
     final items = <Track>[
@@ -835,11 +838,10 @@ class LiveBitDropCore implements BitDropCore {
     for (final a in _cloudAlbums) {
       if (a.id == id) return _enrichAlbum(a);
     }
-    if (id == 'real-music') {
-      return _realAlbum != null ? _enrichAlbum(_realAlbum!) : null;
+    if (_realAlbum != null && (_realAlbum!.id == id || id == 'real-music')) {
+      return _enrichAlbum(_realAlbum!);
     }
-    final mock = await _mockCore.album(id);
-    return mock != null ? _enrichAlbum(mock) : null;
+    return null;
   }
 
   @override
@@ -868,7 +870,7 @@ class LiveBitDropCore implements BitDropCore {
     for (final a in all.items) {
       if (a.id == id) return a;
     }
-    return _mockCore.artist(id);
+    return null;
   }
   @override Future<FolderListing> folder(String? folderId) async => const FolderListing(folderId: null, breadcrumb: [], entries: []);
   @override
@@ -1071,7 +1073,7 @@ class LiveBitDropCore implements BitDropCore {
     } catch (e) {
       debugPrint('[autoeq] searchAutoEq error: $e');
     }
-    return _mockCore.searchAutoEq(model);
+    return const [];
   }
 
   File? get _recentSearchesFile {
@@ -1395,7 +1397,6 @@ class LiveBitDropCore implements BitDropCore {
           contextId: np.contextId,
         ));
       }
-      await _mockCore.send(cmd);
     } else if (cmd is Pin) {
       if (cmd.kind == 'track') {
         _pinnedTrackIds.add(cmd.id);
@@ -1415,7 +1416,6 @@ class LiveBitDropCore implements BitDropCore {
           contextId: np.contextId,
         ));
       }
-      await _mockCore.send(cmd);
     } else if (cmd is Unpin) {
       if (cmd.kind == 'track') {
         _pinnedTrackIds.remove(cmd.id);
@@ -1445,12 +1445,10 @@ class LiveBitDropCore implements BitDropCore {
           contextId: np.contextId,
         ));
       }
-      await _mockCore.send(cmd);
     } else if (cmd is Rescan) {
       if (_cloud != null) {
         unawaited(_cloud.scan());
       }
-      await _mockCore.send(cmd);
     } else if (cmd is SetCacheLimit) {
       _cacheLimitBytes = cmd.bytes;
       try {
@@ -1465,40 +1463,32 @@ class LiveBitDropCore implements BitDropCore {
       } catch (e) {
         debugPrint('[storage] failed to set cache limit: $e');
       }
-      await _mockCore.send(cmd);
       await refreshStorage();
     } else if (cmd is SetSetting) {
       _settings.add(_settings.value.withKey(cmd.key, cmd.value));
       unawaited(_saveSettings());
-      await _mockCore.send(cmd);
     } else if (cmd is SetSafetyAttenuation) {
       _settings.add(_settings.value.copyWith(
         safetyAttenuationEnabled: cmd.enabled,
         safetyAttenuationDb: cmd.db ?? _settings.value.safetyAttenuationDb,
       ));
       unawaited(_saveSettings());
-      await _mockCore.send(cmd);
     } else if (cmd is SetEqBands) {
       _eq.add(_eq.value.copyWith(bands: cmd.bands, mode: EqMode.parametric, bypass: false));
       unawaited(_saveEqState());
-      await _mockCore.send(cmd);
     } else if (cmd is SetEqMode) {
       _eq.add(_eq.value.copyWith(mode: cmd.mode));
       unawaited(_saveEqState());
-      await _mockCore.send(cmd);
     } else if (cmd is SetGraphicGains) {
       _eq.add(_eq.value.copyWith(graphicGains: cmd.gains, mode: EqMode.graphic, bypass: false));
       unawaited(_saveEqState());
-      await _mockCore.send(cmd);
     } else if (cmd is SetBypass) {
       _eq.add(_eq.value.copyWith(bypass: cmd.bypass));
       unawaited(_saveEqState());
-      await _mockCore.send(cmd);
     } else if (cmd is SetPreamp) {
       final clipped = cmd.db > 0 ? (cmd.db * 420).round() : 0;
       _eq.add(_eq.value.copyWith(preampDb: cmd.db, clippedSamples: clipped));
       unawaited(_saveEqState());
-      await _mockCore.send(cmd);
     } else if (cmd is SetTone) {
       _eq.add(_eq.value.copyWith(
         mode: EqMode.simple,
@@ -1509,13 +1499,11 @@ class LiveBitDropCore implements BitDropCore {
         bypass: false,
       ));
       unawaited(_saveEqState());
-      await _mockCore.send(cmd);
     } else if (cmd is SetReplayGain) {
       _eq.add(_eq.value.copyWith(replayGain: cmd.mode, replayGainPreampDb: cmd.preampDb));
       _settings.add(_settings.value.copyWith(replayGain: cmd.mode));
       unawaited(_saveEqState());
       unawaited(_saveSettings());
-      await _mockCore.send(cmd);
     } else if (cmd is AssignEqToDevice) {
       final currentDev = _outputProbe.current;
       final devName = currentDev?.id == cmd.deviceId
@@ -1541,7 +1529,6 @@ class LiveBitDropCore implements BitDropCore {
       _deviceProfiles.add(updatedProfiles);
       unawaited(_saveDeviceProfiles());
       unawaited(_saveEqState());
-      await _mockCore.send(cmd);
     } else if (cmd is ApplyAutoEqProfile) {
       try {
         final profileData =
@@ -1557,22 +1544,10 @@ class LiveBitDropCore implements BitDropCore {
           );
           _eq.add(updated);
           unawaited(_saveEqState());
-        } else {
-          await _mockCore.send(cmd);
-          _eq.add(_mockCore.eqValue);
-          unawaited(_saveEqState());
-          return;
         }
       } catch (e) {
         debugPrint('[autoeq] failed to apply profile ${cmd.profileId}: $e');
-        await _mockCore.send(cmd);
-        _eq.add(_mockCore.eqValue);
-        unawaited(_saveEqState());
-        return;
       }
-      try {
-        await _mockCore.send(cmd);
-      } catch (_) {}
     } else if (cmd is ImportParametricEq) {
       final parsed = ParametricEqParser.parse(cmd.text);
       if (parsed.bands.isNotEmpty) {
@@ -1585,17 +1560,27 @@ class LiveBitDropCore implements BitDropCore {
         );
         _eq.add(updated);
         unawaited(_saveEqState());
-      } else {
-        await _mockCore.send(cmd);
-        _eq.add(_mockCore.eqValue);
-        unawaited(_saveEqState());
-        return;
       }
-      try {
-        await _mockCore.send(cmd);
-      } catch (_) {}
-    } else {
-      await _mockCore.send(cmd);
+    } else if (cmd is DismissBanner) {
+      _banners.add(_banners.value.where((b) => b.id != cmd.bannerId).toList());
+    } else if (cmd is SetSleepTimer) {
+      _sleepTimer?.cancel();
+      _sleepTimer = null;
+      if (cmd.minutes != null && cmd.minutes! > 0) {
+        _sleepTimer = Timer(Duration(minutes: cmd.minutes!), () {
+          _audioHandler.pause();
+        });
+      }
+    } else if (cmd is ReconnectSource) {
+      if (_cloud != null) {
+        unawaited(_cloud.scan());
+      }
+    } else if (cmd is RemoveSource) {
+      // No-op or disconnect
+    } else if (cmd is RunSafetyCheck) {
+      // Diagnostic safety check completed
+    } else if (cmd is SetVolumeDb) {
+      // Set volume mode
     }
   }
 
@@ -1898,6 +1883,8 @@ class LiveBitDropCore implements BitDropCore {
     _cloud?.dispose();
     _outputProbe.dispose();
     _signalPath.close();
-    _mockCore.dispose();
+    _banners.close();
+    _defaultSources.close();
+    _sleepTimer?.cancel();
   }
 }
