@@ -320,6 +320,8 @@ class EngineOutputState {
   /// True when the EQ chain is altering samples.
   final bool dspActive;
   final bool hasTrack;
+  final int hardwareSampleRate;
+  final String hardwareFormat;
 
   const EngineOutputState({
     required this.sourceCodec,
@@ -329,6 +331,8 @@ class EngineOutputState {
     required this.outputSampleRate,
     required this.dspActive,
     required this.hasTrack,
+    required this.hardwareSampleRate,
+    required this.hardwareFormat,
   });
 
   @override
@@ -339,7 +343,9 @@ class EngineOutputState {
       sourceChannels.hashCode ^
       outputSampleRate.hashCode ^
       dspActive.hashCode ^
-      hasTrack.hashCode;
+      hasTrack.hashCode ^
+      hardwareSampleRate.hashCode ^
+      hardwareFormat.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -352,7 +358,9 @@ class EngineOutputState {
           sourceChannels == other.sourceChannels &&
           outputSampleRate == other.outputSampleRate &&
           dspActive == other.dspActive &&
-          hasTrack == other.hasTrack;
+          hasTrack == other.hasTrack &&
+          hardwareSampleRate == other.hardwareSampleRate &&
+          hardwareFormat == other.hardwareFormat;
 }
 
 class PlayerState {
@@ -362,6 +370,8 @@ class PlayerState {
   final int positionMs;
   final int durationMs;
   final String currentTrackId;
+  final int hardwareSampleRate;
+  final String hardwareFormat;
   final bool eqEnabled;
   final F32Array10 eqGains;
   final double eqPreamp;
@@ -417,6 +427,8 @@ class PlayerState {
     required this.positionMs,
     required this.durationMs,
     required this.currentTrackId,
+    required this.hardwareSampleRate,
+    required this.hardwareFormat,
     required this.eqEnabled,
     required this.eqGains,
     required this.eqPreamp,
@@ -446,6 +458,8 @@ class PlayerState {
       positionMs.hashCode ^
       durationMs.hashCode ^
       currentTrackId.hashCode ^
+      hardwareSampleRate.hashCode ^
+      hardwareFormat.hashCode ^
       eqEnabled.hashCode ^
       eqGains.hashCode ^
       eqPreamp.hashCode ^
@@ -477,6 +491,8 @@ class PlayerState {
           positionMs == other.positionMs &&
           durationMs == other.durationMs &&
           currentTrackId == other.currentTrackId &&
+          hardwareSampleRate == other.hardwareSampleRate &&
+          hardwareFormat == other.hardwareFormat &&
           eqEnabled == other.eqEnabled &&
           eqGains == other.eqGains &&
           eqPreamp == other.eqPreamp &&

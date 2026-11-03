@@ -63,6 +63,22 @@ class OutputDeviceProbe {
           (raw['encodings'] as List?)?.cast<int>() ?? const <int>[];
 
       final name = (raw['name'] as String? ?? '').trim();
+      final apiLevel = raw['apiLevel'] as int?;
+      final supportsBitPerfect = raw['supportsBitPerfect'] as bool? ?? false;
+      final rawMaxTier = raw['maxTier'] as String?;
+      final tierExplanation = raw['tierExplanation'] as String?;
+
+      final OutputTier maxTier;
+      if (rawMaxTier != null) {
+        maxTier = switch (rawMaxTier) {
+          'bitPerfect' => OutputTier.bitPerfect,
+          'nativeRate' => OutputTier.nativeRate,
+          'resampled' => OutputTier.resampled,
+          _ => _maxTierFor(type),
+        };
+      } else {
+        maxTier = _maxTierFor(type);
+      }
 
       return OutputDevice(
         id: 'android-${type.name}-$name',
@@ -76,16 +92,65 @@ class OutputDeviceProbe {
         hardwareVolume: type == DeviceType.phoneSpeaker
             ? HardwareVolume.yes
             : HardwareVolume.unknown,
-        maxTier: _maxTierFor(type),
+        maxTier: maxTier,
         connectionLabel: switch (type) {
           DeviceType.usb => 'USB-C',
           DeviceType.bluetooth => 'Bluetooth',
           DeviceType.wiredAnalog => '3.5 mm',
           _ => null,
         },
+        apiLevel: apiLevel,
+        supportsBitPerfect: supportsBitPerfect,
+        tierExplanation: tierExplanation,
       );
     } catch (e) {
       debugPrint('[output] could not read the device: $e');
+      return null;
+    }
+  }
+
+  /// Configures preferred mixer attributes on Android 14+ (API 34+) for bit-perfect output.
+  Future<bool> setPreferredMixerAttributes({
+    required int sampleRate,
+    required int bitDepth,
+    bool bitPerfect = true,
+  }) async {
+    if (!_supported) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>(
+        'setPreferredMixerAttributes',
+        {
+          'sampleRate': sampleRate,
+          'bitDepth': bitDepth,
+          'bitPerfect': bitPerfect,
+        },
+      );
+      return ok ?? false;
+    } catch (e) {
+      debugPrint('[output] failed to set preferred mixer attributes: $e');
+      return false;
+    }
+  }
+
+  /// Clears preferred mixer attributes on Android 14+ (API 34+), resetting to system mixer.
+  Future<bool> clearPreferredMixerAttributes() async {
+    if (!_supported) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>('clearPreferredMixerAttributes');
+      return ok ?? false;
+    } catch (e) {
+      debugPrint('[output] failed to clear preferred mixer attributes: $e');
+      return false;
+    }
+  }
+
+  /// Queries all supported mixer attributes on the active USB device (API 34+).
+  Future<Map<String, dynamic>?> getMixerAttributes() async {
+    if (!_supported) return null;
+    try {
+      return await _channel.invokeMapMethod<String, dynamic>('getMixerAttributes');
+    } catch (e) {
+      debugPrint('[output] failed to get mixer attributes: $e');
       return null;
     }
   }

@@ -1964,8 +1964,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   EngineOutputState dco_decode_engine_output_state(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 7)
-      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
     return EngineOutputState(
       sourceCodec: dco_decode_String(arr[0]),
       sourceSampleRate: dco_decode_u_32(arr[1]),
@@ -1974,6 +1974,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       outputSampleRate: dco_decode_u_32(arr[4]),
       dspActive: dco_decode_bool(arr[5]),
       hasTrack: dco_decode_bool(arr[6]),
+      hardwareSampleRate: dco_decode_u_32(arr[7]),
+      hardwareFormat: dco_decode_String(arr[8]),
     );
   }
 
@@ -2142,8 +2144,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PlayerState dco_decode_player_state(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 25)
-      throw Exception('unexpected arr length: expect 25 but see ${arr.length}');
+    if (arr.length != 27)
+      throw Exception('unexpected arr length: expect 27 but see ${arr.length}');
     return PlayerState(
       targetSampleRate: dco_decode_u_32(arr[0]),
       flushRequested: dco_decode_bool(arr[1]),
@@ -2151,25 +2153,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       positionMs: dco_decode_u_32(arr[3]),
       durationMs: dco_decode_u_32(arr[4]),
       currentTrackId: dco_decode_String(arr[5]),
-      eqEnabled: dco_decode_bool(arr[6]),
-      eqGains: dco_decode_f_32_array_10(arr[7]),
-      eqPreamp: dco_decode_f_32(arr[8]),
-      eqSpecs: dco_decode_opt_list_eq_band_spec(arr[9]),
-      autoGain: dco_decode_f_32(arr[10]),
-      balance: dco_decode_f_32(arr[11]),
-      mono: dco_decode_bool(arr[12]),
-      eqUpdated: dco_decode_bool(arr[13]),
-      fadeTarget: dco_decode_f_32(arr[14]),
-      fadeStep: dco_decode_f_32(arr[15]),
-      gateOutput: dco_decode_bool(arr[16]),
-      loading: dco_decode_bool(arr[17]),
-      decodedMs: dco_decode_u_32(arr[18]),
-      buffering: dco_decode_bool(arr[19]),
-      bufferedMs: dco_decode_u_32(arr[20]),
-      sourceCodec: dco_decode_String(arr[21]),
-      sourceSampleRate: dco_decode_u_32(arr[22]),
-      sourceBits: dco_decode_u_32(arr[23]),
-      sourceChannels: dco_decode_u_32(arr[24]),
+      hardwareSampleRate: dco_decode_u_32(arr[6]),
+      hardwareFormat: dco_decode_String(arr[7]),
+      eqEnabled: dco_decode_bool(arr[8]),
+      eqGains: dco_decode_f_32_array_10(arr[9]),
+      eqPreamp: dco_decode_f_32(arr[10]),
+      eqSpecs: dco_decode_opt_list_eq_band_spec(arr[11]),
+      autoGain: dco_decode_f_32(arr[12]),
+      balance: dco_decode_f_32(arr[13]),
+      mono: dco_decode_bool(arr[14]),
+      eqUpdated: dco_decode_bool(arr[15]),
+      fadeTarget: dco_decode_f_32(arr[16]),
+      fadeStep: dco_decode_f_32(arr[17]),
+      gateOutput: dco_decode_bool(arr[18]),
+      loading: dco_decode_bool(arr[19]),
+      decodedMs: dco_decode_u_32(arr[20]),
+      buffering: dco_decode_bool(arr[21]),
+      bufferedMs: dco_decode_u_32(arr[22]),
+      sourceCodec: dco_decode_String(arr[23]),
+      sourceSampleRate: dco_decode_u_32(arr[24]),
+      sourceBits: dco_decode_u_32(arr[25]),
+      sourceChannels: dco_decode_u_32(arr[26]),
     );
   }
 
@@ -2537,6 +2541,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_outputSampleRate = sse_decode_u_32(deserializer);
     var var_dspActive = sse_decode_bool(deserializer);
     var var_hasTrack = sse_decode_bool(deserializer);
+    var var_hardwareSampleRate = sse_decode_u_32(deserializer);
+    var var_hardwareFormat = sse_decode_String(deserializer);
     return EngineOutputState(
         sourceCodec: var_sourceCodec,
         sourceSampleRate: var_sourceSampleRate,
@@ -2544,7 +2550,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sourceChannels: var_sourceChannels,
         outputSampleRate: var_outputSampleRate,
         dspActive: var_dspActive,
-        hasTrack: var_hasTrack);
+        hasTrack: var_hasTrack,
+        hardwareSampleRate: var_hardwareSampleRate,
+        hardwareFormat: var_hardwareFormat);
   }
 
   @protected
@@ -2800,6 +2808,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_positionMs = sse_decode_u_32(deserializer);
     var var_durationMs = sse_decode_u_32(deserializer);
     var var_currentTrackId = sse_decode_String(deserializer);
+    var var_hardwareSampleRate = sse_decode_u_32(deserializer);
+    var var_hardwareFormat = sse_decode_String(deserializer);
     var var_eqEnabled = sse_decode_bool(deserializer);
     var var_eqGains = sse_decode_f_32_array_10(deserializer);
     var var_eqPreamp = sse_decode_f_32(deserializer);
@@ -2826,6 +2836,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         positionMs: var_positionMs,
         durationMs: var_durationMs,
         currentTrackId: var_currentTrackId,
+        hardwareSampleRate: var_hardwareSampleRate,
+        hardwareFormat: var_hardwareFormat,
         eqEnabled: var_eqEnabled,
         eqGains: var_eqGains,
         eqPreamp: var_eqPreamp,
@@ -3150,6 +3162,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.outputSampleRate, serializer);
     sse_encode_bool(self.dspActive, serializer);
     sse_encode_bool(self.hasTrack, serializer);
+    sse_encode_u_32(self.hardwareSampleRate, serializer);
+    sse_encode_String(self.hardwareFormat, serializer);
   }
 
   @protected
@@ -3379,6 +3393,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_32(self.positionMs, serializer);
     sse_encode_u_32(self.durationMs, serializer);
     sse_encode_String(self.currentTrackId, serializer);
+    sse_encode_u_32(self.hardwareSampleRate, serializer);
+    sse_encode_String(self.hardwareFormat, serializer);
     sse_encode_bool(self.eqEnabled, serializer);
     sse_encode_f_32_array_10(self.eqGains, serializer);
     sse_encode_f_32(self.eqPreamp, serializer);

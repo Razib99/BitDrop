@@ -474,6 +474,9 @@ class OutputDevice {
     required this.hardwareVolume,
     this.maxTier = OutputTier.unknown,
     this.connectionLabel,
+    this.apiLevel,
+    this.supportsBitPerfect = false,
+    this.tierExplanation,
   });
 
   final String id;
@@ -488,6 +491,15 @@ class OutputDevice {
   /// Best tier this device can reach on this phone.
   final OutputTier maxTier;
   final String? connectionLabel;
+
+  /// Platform Android API level, if probed on Android.
+  final int? apiLevel;
+
+  /// Whether the platform verified Android 14+ MIXER_BEHAVIOR_BIT_PERFECT.
+  final bool supportsBitPerfect;
+
+  /// Human-readable explanation of why this tier was assigned.
+  final String? tierExplanation;
 
   String get typeLabel => switch (type) {
         DeviceType.usb => 'USB',

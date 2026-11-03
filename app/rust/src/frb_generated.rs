@@ -2298,6 +2298,8 @@ impl SseDecode for crate::api::audio_engine::EngineOutputState {
         let mut var_outputSampleRate = <u32>::sse_decode(deserializer);
         let mut var_dspActive = <bool>::sse_decode(deserializer);
         let mut var_hasTrack = <bool>::sse_decode(deserializer);
+        let mut var_hardwareSampleRate = <u32>::sse_decode(deserializer);
+        let mut var_hardwareFormat = <String>::sse_decode(deserializer);
         return crate::api::audio_engine::EngineOutputState {
             source_codec: var_sourceCodec,
             source_sample_rate: var_sourceSampleRate,
@@ -2306,6 +2308,8 @@ impl SseDecode for crate::api::audio_engine::EngineOutputState {
             output_sample_rate: var_outputSampleRate,
             dsp_active: var_dspActive,
             has_track: var_hasTrack,
+            hardware_sample_rate: var_hardwareSampleRate,
+            hardware_format: var_hardwareFormat,
         };
     }
 }
@@ -2584,6 +2588,8 @@ impl SseDecode for crate::api::audio_engine::PlayerState {
         let mut var_positionMs = <u32>::sse_decode(deserializer);
         let mut var_durationMs = <u32>::sse_decode(deserializer);
         let mut var_currentTrackId = <String>::sse_decode(deserializer);
+        let mut var_hardwareSampleRate = <u32>::sse_decode(deserializer);
+        let mut var_hardwareFormat = <String>::sse_decode(deserializer);
         let mut var_eqEnabled = <bool>::sse_decode(deserializer);
         let mut var_eqGains = <[f32; 10]>::sse_decode(deserializer);
         let mut var_eqPreamp = <f32>::sse_decode(deserializer);
@@ -2610,6 +2616,8 @@ impl SseDecode for crate::api::audio_engine::PlayerState {
             position_ms: var_positionMs,
             duration_ms: var_durationMs,
             current_track_id: var_currentTrackId,
+            hardware_sample_rate: var_hardwareSampleRate,
+            hardware_format: var_hardwareFormat,
             eq_enabled: var_eqEnabled,
             eq_gains: var_eqGains,
             eq_preamp: var_eqPreamp,
@@ -3284,6 +3292,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::audio_engine::EngineOutputSta
             self.output_sample_rate.into_into_dart().into_dart(),
             self.dsp_active.into_into_dart().into_dart(),
             self.has_track.into_into_dart().into_dart(),
+            self.hardware_sample_rate.into_into_dart().into_dart(),
+            self.hardware_format.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3348,6 +3358,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::audio_engine::PlayerState {
             self.position_ms.into_into_dart().into_dart(),
             self.duration_ms.into_into_dart().into_dart(),
             self.current_track_id.into_into_dart().into_dart(),
+            self.hardware_sample_rate.into_into_dart().into_dart(),
+            self.hardware_format.into_into_dart().into_dart(),
             self.eq_enabled.into_into_dart().into_dart(),
             self.eq_gains.into_into_dart().into_dart(),
             self.eq_preamp.into_into_dart().into_dart(),
@@ -3690,6 +3702,8 @@ impl SseEncode for crate::api::audio_engine::EngineOutputState {
         <u32>::sse_encode(self.output_sample_rate, serializer);
         <bool>::sse_encode(self.dsp_active, serializer);
         <bool>::sse_encode(self.has_track, serializer);
+        <u32>::sse_encode(self.hardware_sample_rate, serializer);
+        <String>::sse_encode(self.hardware_format, serializer);
     }
 }
 
@@ -3917,6 +3931,8 @@ impl SseEncode for crate::api::audio_engine::PlayerState {
         <u32>::sse_encode(self.position_ms, serializer);
         <u32>::sse_encode(self.duration_ms, serializer);
         <String>::sse_encode(self.current_track_id, serializer);
+        <u32>::sse_encode(self.hardware_sample_rate, serializer);
+        <String>::sse_encode(self.hardware_format, serializer);
         <bool>::sse_encode(self.eq_enabled, serializer);
         <[f32; 10]>::sse_encode(self.eq_gains, serializer);
         <f32>::sse_encode(self.eq_preamp, serializer);

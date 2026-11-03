@@ -1634,12 +1634,13 @@ class LiveBitDropCore implements BitDropCore {
           out.outputSampleRate == 0 ? out.sourceSampleRate : out.outputSampleRate,
     );
 
-    final resampled = actual.sampleRate != source.sampleRate;
+    final resampled = actual.sampleRate != source.sampleRate ||
+        (out.hardwareSampleRate != 0 && out.hardwareSampleRate != source.sampleRate);
     final dsp = out.dspActive;
 
-    // Order matters. A rate change is the more severe truth, so it outranks
+    // Order matters. A rate change is the most severe truth, so it outranks
     // DSP; DSP in turn rules out bit-perfect. The device ceiling caps the
-    // rest, and on Android 12 that ceiling is never bit-perfect.
+    // rest, and on pre-Android 14 (API < 34) that ceiling is never bit-perfect.
     final ceiling = device?.maxTier ?? OutputTier.unknown;
     final OutputTier tier;
     if (resampled) {
@@ -1649,9 +1650,26 @@ class LiveBitDropCore implements BitDropCore {
     } else if (ceiling == OutputTier.resampled) {
       tier = OutputTier.resampled;
     } else if (device?.type == DeviceType.usb) {
-      tier = OutputTier.bitPerfect;
+      if (device?.supportsBitPerfect == true) {
+        tier = OutputTier.bitPerfect;
+      } else if (device?.apiLevel != null && device!.apiLevel! < 34) {
+        // Pre-Android 14 (e.g. S10+ on Android 12) AudioFlinger limitation
+        tier = OutputTier.resampled;
+      } else if (device?.maxTier == OutputTier.bitPerfect) {
+        tier = OutputTier.bitPerfect;
+      } else {
+        tier = ceiling;
+      }
     } else {
       tier = ceiling;
+    }
+
+    if (device?.type == DeviceType.usb && _supported) {
+      unawaited(_outputProbe.setPreferredMixerAttributes(
+        sampleRate: source.sampleRate,
+        bitDepth: source.bitDepth,
+        bitPerfect: !dsp,
+      ));
     }
 
     final dspChain = <String>[];
@@ -1674,6 +1692,9 @@ class LiveBitDropCore implements BitDropCore {
       explanation: _explain(tier, source, actual, dsp, device),
     ));
   }
+
+  static bool get _supported =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   String get _currentTrackId => _nowPlaying.value?.track.id ?? '';
 
@@ -1712,8 +1733,8 @@ class LiveBitDropCore implements BitDropCore {
     OutputDevice? device,
   ) {
     if (tier == OutputTier.bitPerfect) {
-      return 'Bit-perfect direct stream active. The audio engine has exclusive '
-          'access to your ${device?.name ?? "USB DAC"} at its native '
+      return 'Bit-perfect direct stream active via Android 14+ Mixer Attributes. '
+          'The audio engine has exclusive access to your ${device?.name ?? "USB DAC"} at its native '
           '${source.sampleRate ~/ 1000} kHz / ${source.bitDepth}-bit format with zero resampling or DSP.';
     }
     if (device?.type == DeviceType.phoneSpeaker) {
@@ -1727,19 +1748,25 @@ class LiveBitDropCore implements BitDropCore {
             'Connect a USB DAC for direct exclusive bit-perfect playback.';
       }
     }
+    if (device?.type == DeviceType.bluetooth) {
+      return 'Bluetooth re-encodes audio with its own codec (lossy compression), '
+          'so lossless bit-perfect playback is not possible over Bluetooth.';
+    }
     if (tier == OutputTier.resampled && actual.sampleRate != source.sampleRate) {
       return 'This phone mixes all audio at '
           '${actual.sampleRate ~/ 1000} kHz, so your '
           '${source.sampleRate ~/ 1000} kHz file is resampled before it '
           'reaches the output. Connect a USB DAC for bit-perfect output.';
     }
-    if (device?.type == DeviceType.bluetooth) {
-      return 'Bluetooth re-encodes audio with its own codec (lossy compression), '
-          'so lossless bit-perfect playback is not possible over Bluetooth.';
-    }
     if (dsp) {
       return 'The equaliser or DSP is active, altering the audio samples. '
           'Bypass the equaliser to restore bit-perfect output.';
+    }
+    if (device?.type == DeviceType.usb &&
+        device?.apiLevel != null &&
+        device!.apiLevel! < 34) {
+      return 'Your ${device.name} is running on Android ${device.apiLevel}. '
+          'Pre-Android 14 cannot bypass AudioFlinger Fast Mixer without root, so audio is resampled.';
     }
     if (tier == OutputTier.nativeRate) {
       return 'No resampling is happening: the stream runs at the file\'s native rate '

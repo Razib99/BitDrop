@@ -161,6 +161,8 @@ pub struct PlayerState {
     pub position_ms: u32,
     pub duration_ms: u32,
     pub current_track_id: String,
+    pub hardware_sample_rate: u32,
+    pub hardware_format: String,
     
     pub eq_enabled: bool,
     pub eq_gains: [f32; 10],
@@ -1274,6 +1276,8 @@ fn open_output_stream(sample_rate: Option<u32>) {
         {
             let mut state = PLAYER_STATE.lock().unwrap();
             state.target_sample_rate = rate;
+            state.hardware_sample_rate = rate;
+            state.hardware_format = "PCM_FLOAT".to_string();
             state.eq_updated = true;
             publish_dsp_config(&state);
             set_ramp(&mut state, 1.0, FADE_MS);
@@ -1520,6 +1524,8 @@ pub struct EngineOutputState {
     /// True when the EQ chain is altering samples.
     pub dsp_active: bool,
     pub has_track: bool,
+    pub hardware_sample_rate: u32,
+    pub hardware_format: String,
 }
 
 /// A span of the current track that is already on disk.
@@ -1579,6 +1585,8 @@ pub fn engine_output_state() -> EngineOutputState {
         output_sample_rate: state.target_sample_rate,
         dsp_active,
         has_track: !state.current_track_id.is_empty(),
+        hardware_sample_rate: state.hardware_sample_rate,
+        hardware_format: state.hardware_format.clone(),
     }
 }
 
