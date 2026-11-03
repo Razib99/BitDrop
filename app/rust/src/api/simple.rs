@@ -1,10 +1,10 @@
+use std::io::Cursor;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-use std::io::Cursor;
 
 pub struct DecodedAudio {
     pub sample_rate: u32,
@@ -50,12 +50,13 @@ pub fn decode_flac_full(audio_data: Vec<u8>) -> Result<DecodedAudio, String> {
     if let Ok(packet) = format.next_packet() {
         if packet.track_id() == track_id {
             if let Ok(audio_buf) = decoder.decode(&packet) {
-                let mut sample_buf = SampleBuffer::<f32>::new(audio_buf.capacity() as u64, *audio_buf.spec());
+                let mut sample_buf =
+                    SampleBuffer::<f32>::new(audio_buf.capacity() as u64, *audio_buf.spec());
                 sample_buf.copy_interleaved_ref(audio_buf);
-                
+
                 let samples = sample_buf.samples();
                 total_samples += samples.len() as u32;
-                
+
                 let extract_len = std::cmp::min(100, samples.len());
                 first_frame_samples.extend_from_slice(&samples[0..extract_len]);
             }
@@ -75,12 +76,18 @@ pub fn init_audio_playback(sample_rate: u32, channels: u32) -> Result<String, St
     #[cfg(target_os = "android")]
     {
         // Oboe implementation comes later
-        Ok(format!("Oboe AudioStream initialized successfully on Android. SR: {}, Ch: {}", sample_rate, channels))
+        Ok(format!(
+            "Oboe AudioStream initialized successfully on Android. SR: {}, Ch: {}",
+            sample_rate, channels
+        ))
     }
-    
+
     #[cfg(not(target_os = "android"))]
     {
-        Ok(format!("Mock AudioStream (Non-Android target) initialized at {}Hz, {}Ch", sample_rate, channels))
+        Ok(format!(
+            "Mock AudioStream (Non-Android target) initialized at {}Hz, {}Ch",
+            sample_rate, channels
+        ))
     }
 }
 
@@ -99,32 +106,34 @@ pub fn scan_local_file(path: String) -> Result<TrackMetadata, String> {
     // Probes a local file path and extracts its ID3/FLAC metadata natively in Rust
     use std::fs::File;
     let mut hint = Hint::new();
-    let ext = std::path::Path::new(&path).extension().and_then(|e| e.to_str()).unwrap_or("");
+    let ext = std::path::Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
     hint.with_extension(ext);
-    
+
     let file = Box::new(File::open(&path).map_err(|e| e.to_string())?);
     let mss = MediaSourceStream::new(file, Default::default());
-    
+
     let mut probed = symphonia::default::get_probe()
         .format(&hint, mss, &Default::default(), &Default::default())
         .map_err(|e| e.to_string())?;
-        
+
     let track = probed.format.default_track().ok_or("No default track")?;
     let sample_rate = track.codec_params.sample_rate.unwrap_or(0);
     let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(0) as u32;
-    
+
     let mut duration_ms = 0;
     if let (Some(frames), Some(tb)) = (track.codec_params.n_frames, track.codec_params.time_base) {
         let time = tb.calc_time(frames);
         duration_ms = (time.seconds * 1000 + time.frac as u64 * 1000) as u32;
     }
-    
+
     // Attempt to extract tags
     let mut title = "".to_string();
     let mut artist = "".to_string();
     let mut album = "".to_string();
-    
-    
+
     // Some formats put tags in the metadata block
     macro_rules! extract_tags {
         ($meta:expr) => {
@@ -139,9 +148,9 @@ pub fn scan_local_file(path: String) -> Result<TrackMetadata, String> {
                     }
                 }
             }
-        }
+        };
     }
-    
+
     if let Some(metadata) = probed.metadata.get() {
         extract_tags!(metadata);
     }
@@ -149,9 +158,6 @@ pub fn scan_local_file(path: String) -> Result<TrackMetadata, String> {
         extract_tags!(probed.format.metadata());
     }
 
-
-
-    
     Ok(TrackMetadata {
         path,
         title,
@@ -172,15 +178,18 @@ pub fn init_app() {
 pub fn scan_directory(path: String) -> Result<Vec<TrackMetadata>, String> {
     use std::fs;
     let mut results = Vec::new();
-    
+
     let dir = fs::read_dir(&path).map_err(|e| format!("Failed to read dir: {:?}", e))?;
-    
+
     for entry in dir {
         if let Ok(entry) = entry {
             let path = entry.path();
             if path.is_file() {
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if ext.eq_ignore_ascii_case("flac") || ext.eq_ignore_ascii_case("mp3") || ext.eq_ignore_ascii_case("wav") {
+                    if ext.eq_ignore_ascii_case("flac")
+                        || ext.eq_ignore_ascii_case("mp3")
+                        || ext.eq_ignore_ascii_case("wav")
+                    {
                         // Suppress errors for individual files so one bad file doesn't crash the scan
                         if let Ok(meta) = scan_local_file(path.to_string_lossy().into_owned()) {
                             results.push(meta);
@@ -190,7 +199,7 @@ pub fn scan_directory(path: String) -> Result<Vec<TrackMetadata>, String> {
             }
         }
     }
-    
+
     Ok(results)
 }
 
@@ -205,27 +214,28 @@ pub fn get_cover_art(path: String) -> Option<Vec<u8>> {
     // 1. If it's already an image file, read it directly
     if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
         let lower = ext.to_lowercase();
-        if lower == "img" || lower == "jpg" || lower == "jpeg" || lower == "png" || lower == "webp" {
+        if lower == "img" || lower == "jpg" || lower == "jpeg" || lower == "png" || lower == "webp"
+        {
             return std::fs::read(&path).ok();
         }
     }
 
     let file = File::open(&path).ok()?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    
+
     let mut hint = Hint::new();
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
     hint.with_extension(ext);
-    
-    if let Ok(mut probed) = symphonia::default::get_probe()
-        .format(&hint, mss, &Default::default(), &Default::default())
+
+    if let Ok(mut probed) =
+        symphonia::default::get_probe().format(&hint, mss, &Default::default(), &Default::default())
     {
         if let Some(metadata) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
             if let Some(visual) = metadata.visuals().first() {
                 return Some(visual.data.to_vec());
             }
         }
-        
+
         if let Some(metadata) = probed.format.metadata().current() {
             if let Some(visual) = metadata.visuals().first() {
                 return Some(visual.data.to_vec());
@@ -236,8 +246,14 @@ pub fn get_cover_art(path: String) -> Option<Vec<u8>> {
     // 2. Check parent directory for folder cover images (Poweramp style)
     if let Some(parent) = p.parent() {
         for name in &[
-            "cover.jpg", "folder.jpg", "front.jpg", "albumart.jpg",
-            "cover.png", "folder.png", "front.png", "cover.jpeg",
+            "cover.jpg",
+            "folder.jpg",
+            "front.jpg",
+            "albumart.jpg",
+            "cover.png",
+            "folder.png",
+            "front.png",
+            "cover.jpeg",
         ] {
             let candidate = parent.join(name);
             if candidate.exists() {
@@ -249,6 +265,6 @@ pub fn get_cover_art(path: String) -> Option<Vec<u8>> {
             }
         }
     }
-    
+
     None
 }

@@ -1,0 +1,121 @@
+name: BitDrop Continuous Integration
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-dsp-gates:
+    name: Rust DSP Engine & Golden Audio CI Gates (1-5)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Audio Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev pkg-config
+
+      - name: Setup Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/rust -> target
+
+      - name: Rustfmt Check
+        run: cargo fmt --check --manifest-path app/rust/Cargo.toml
+
+      - name: Clippy Linter (-D warnings)
+        run: cargo clippy --manifest-path app/rust/Cargo.toml --all-targets -- -D warnings
+
+      - name: Run Unit & Integration Tests (28 tests)
+        run: cargo test --manifest-path app/rust/Cargo.toml
+
+      - name: Run Golden Audio CI Suite (Gates 1, 2, 3, 4, 5)
+        run: cargo test --manifest-path app/rust/Cargo.toml --test golden_audio_suite -- --nocapture
+
+  flutter-suite:
+    name: Flutter UI & LiveBitDropCore Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter Stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Flutter Analyzer (Zero Warnings)
+        working-directory: app
+        run: flutter analyze
+
+      - name: Flutter Test Suite (93 tests)
+        working-directory: app
+        run: flutter test --coverage
+
+  android-release-build:
+    name: Android Release APK Build Validation
+    runs-on: ubuntu-latest
+    needs: [rust-dsp-gates, flutter-suite]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Rust Stable with Android Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+
+      - name: Setup Flutter Stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build Android Release APK (ARM64)
+        working-directory: app
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BitDrop-Release-APK
+          path: app/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error

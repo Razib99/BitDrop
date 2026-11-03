@@ -21,8 +21,9 @@ pub const EQ_LOW_PASS: u8 = 3;
 pub const EQ_HIGH_PASS: u8 = 4;
 
 pub const MAX_EQ_BANDS: usize = 16;
-pub const ISO_10_BAND: [f64; 10] =
-    [31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0];
+pub const ISO_10_BAND: [f64; 10] = [
+    31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
+];
 
 pub const BUTTERWORTH_Q: f64 = std::f64::consts::FRAC_1_SQRT_2; // 1.0 / sqrt(2)
 pub const OCTAVE_PEAK_Q: f64 = std::f64::consts::SQRT_2; // sqrt(2)
@@ -156,7 +157,7 @@ impl BoundaryMarker {
 }
 
 /// Downmixes interleaved multichannel audio into stereo using ITU-R BS.775 standard coefficients.
-/// 
+///
 /// Channels supported:
 /// - 1 (Mono): duplicated to L and R
 /// - 2 (Stereo): passed through
@@ -265,9 +266,13 @@ impl<T: Copy + Default> TripleBuffer<T> {
         unsafe {
             *self.buffers[w].get() = value;
         }
-        let old_shared = self.shared.swap((w as u8) | TRIPLE_DIRTY_BIT, std::sync::atomic::Ordering::AcqRel);
+        let old_shared = self.shared.swap(
+            (w as u8) | TRIPLE_DIRTY_BIT,
+            std::sync::atomic::Ordering::AcqRel,
+        );
         let new_w = old_shared & 0x03;
-        self.write_idx.store(new_w, std::sync::atomic::Ordering::Relaxed);
+        self.write_idx
+            .store(new_w, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Read the newest published snapshot from the consumer (real-time audio thread).
@@ -280,7 +285,8 @@ impl<T: Copy + Default> TripleBuffer<T> {
         let r = self.read_idx.load(std::sync::atomic::Ordering::Relaxed);
         let old_shared = self.shared.swap(r, std::sync::atomic::Ordering::AcqRel);
         let new_r = old_shared & 0x03;
-        self.read_idx.store(new_r, std::sync::atomic::Ordering::Relaxed);
+        self.read_idx
+            .store(new_r, std::sync::atomic::Ordering::Relaxed);
         let val = unsafe { *self.buffers[new_r as usize].get() };
         Some(val)
     }
@@ -547,7 +553,11 @@ impl LookaheadLimiterF64 {
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f64) {
-        let fs = if sample_rate > 0.0 { sample_rate } else { 48000.0 };
+        let fs = if sample_rate > 0.0 {
+            sample_rate
+        } else {
+            48000.0
+        };
         // 1.5 ms lookahead delay
         let len = (fs * 0.0015).round() as usize;
         self.lookahead_len = len.clamp(1, 1023);
@@ -576,7 +586,8 @@ impl LookaheadLimiterF64 {
         if target_gain < self.envelope {
             self.envelope = target_gain; // Instant attack on lookahead
         } else {
-            self.envelope = self.envelope * self.release_coeff + target_gain * (1.0 - self.release_coeff);
+            self.envelope =
+                self.envelope * self.release_coeff + target_gain * (1.0 - self.release_coeff);
         }
         self.gain_delay[self.write_idx] = self.envelope;
 
@@ -617,7 +628,9 @@ pub struct TpdfDither {
 
 impl Default for TpdfDither {
     fn default() -> Self {
-        Self { state: 0x853c49e6748fea9b }
+        Self {
+            state: 0x853c49e6748fea9b,
+        }
     }
 }
 
@@ -687,7 +700,11 @@ impl DspPipelineV2 {
     }
 
     pub fn new(sample_rate: f64) -> Self {
-        let fs = if sample_rate > 0.0 { sample_rate } else { 48000.0 };
+        let fs = if sample_rate > 0.0 {
+            sample_rate
+        } else {
+            48000.0
+        };
         let mut subsonic = StereoBiquadF64::default();
         subsonic.set_coeffs(EQ_HIGH_PASS, SUBSONIC_FREQ, fs, BUTTERWORTH_Q, 0.0);
 
@@ -722,7 +739,13 @@ impl DspPipelineV2 {
             self.sample_rate = sample_rate;
             self.crossfade_len = (0.020 * sample_rate).round() as usize;
             self.subsonic_blend_step = 1.0 / (0.020 * sample_rate).max(1.0);
-            self.subsonic_filter.set_coeffs(EQ_HIGH_PASS, SUBSONIC_FREQ, sample_rate, BUTTERWORTH_Q, 0.0);
+            self.subsonic_filter.set_coeffs(
+                EQ_HIGH_PASS,
+                SUBSONIC_FREQ,
+                sample_rate,
+                BUTTERWORTH_Q,
+                0.0,
+            );
             self.subsonic_filter.reset_state();
             self.limiter.set_sample_rate(sample_rate);
 
@@ -730,12 +753,24 @@ impl DspPipelineV2 {
             let fs = self.sample_rate;
             for i in 0..self.active_bank.active {
                 let s = self.active_bank.specs[i];
-                self.active_bank.bands[i].set_coeffs(s.kind, s.freq as f64, fs, s.q as f64, s.gain_db as f64);
+                self.active_bank.bands[i].set_coeffs(
+                    s.kind,
+                    s.freq as f64,
+                    fs,
+                    s.q as f64,
+                    s.gain_db as f64,
+                );
                 self.active_bank.bands[i].reset_state();
             }
             for i in 0..self.target_bank.active {
                 let s = self.target_bank.specs[i];
-                self.target_bank.bands[i].set_coeffs(s.kind, s.freq as f64, fs, s.q as f64, s.gain_db as f64);
+                self.target_bank.bands[i].set_coeffs(
+                    s.kind,
+                    s.freq as f64,
+                    fs,
+                    s.q as f64,
+                    s.gain_db as f64,
+                );
                 self.target_bank.bands[i].reset_state();
             }
         }
@@ -777,7 +812,9 @@ impl DspPipelineV2 {
         let effective_rg = self.replay_gain_db.min(rg_cap);
 
         // Detect if any band < 60 Hz has positive gain to engage 18 Hz subsonic filter
-        let has_sub_boost = specs.iter().any(|s| (s.freq as f64) < 60.0 && s.gain_db > 0.0);
+        let has_sub_boost = specs
+            .iter()
+            .any(|s| (s.freq as f64) < 60.0 && s.gain_db > 0.0);
         self.subsonic_engaged = has_sub_boost;
 
         // Build target filter bank with specs
@@ -792,7 +829,8 @@ impl DspPipelineV2 {
         };
 
         let total_preamp_db = user_preamp_db + auto_preamp_db + effective_rg;
-        self.target_bank.set_bands(specs, total_preamp_db, self.sample_rate);
+        self.target_bank
+            .set_bands(specs, total_preamp_db, self.sample_rate);
 
         // Copy filter state from active bank into target bank so crossfade starts smoothly
         self.target_bank.copy_state_from(&self.active_bank);
@@ -1062,19 +1100,21 @@ pub fn compute_visualizer_frame(is_playing: bool) -> VisualizerFrameData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
+    use std::path::Path;
     use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::DecoderOptions;
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
-    use std::fs::File;
-    use std::path::Path;
 
     #[test]
     fn test_frequency_response_and_31hz_snr_at_192khz() {
         let sample_rates = [44100.0, 48000.0, 96000.0, 192000.0];
-        let test_freqs = [20.0, 31.0, 62.0, 125.0, 500.0, 1000.0, 4000.0, 10000.0, 18000.0, 20000.0];
+        let test_freqs = [
+            20.0, 31.0, 62.0, 125.0, 500.0, 1000.0, 4000.0, 10000.0, 18000.0, 20000.0,
+        ];
 
         // 1. Verify frequency response magnitude within +/- 0.05 dB of reference formula
         for &fs in &sample_rates {
@@ -1098,9 +1138,15 @@ mod tests {
                 let n_im = -(biquad.b1 * sin_w + biquad.b2 * sin_2w);
                 let d_re = 1.0 + biquad.a1 * cos_w + biquad.a2 * cos_2w;
                 let d_im = -(biquad.a1 * sin_w + biquad.a2 * sin_2w);
-                let ref_mag_db: f64 = 10.0 * ((n_re * n_re + n_im * n_im) / (d_re * d_re + d_im * d_im)).log10();
+                let ref_mag_db: f64 =
+                    10.0 * ((n_re * n_re + n_im * n_im) / (d_re * d_re + d_im * d_im)).log10();
 
-                assert!((mag_db - ref_mag_db).abs() < 0.05, "Mag response mismatch at f={} fs={}", f, fs);
+                assert!(
+                    (mag_db - ref_mag_db).abs() < 0.05,
+                    "Mag response mismatch at f={} fs={}",
+                    f,
+                    fs
+                );
             }
         }
 
@@ -1170,13 +1216,30 @@ mod tests {
         eprintln!("\n=======================================================");
         eprintln!("        31 Hz at 192 kHz Precision SNR Metrics         ");
         eprintln!("=======================================================");
-        eprintln!(" Legacy f32 : Noise Error = {:>7.2} dBFS | SNR = {:>6.2} dB", err_dbfs_f32, snr_f32);
-        eprintln!(" Engine v2  : Noise Error = {:>7.2} dBFS | SNR = {:>6.2} dB", err_dbfs_f64, snr_f64);
-        eprintln!(" Improvement: Noise Reduction = {:>5.2} dB", err_dbfs_32_diff(err_dbfs_f32, err_dbfs_f64));
+        eprintln!(
+            " Legacy f32 : Noise Error = {:>7.2} dBFS | SNR = {:>6.2} dB",
+            err_dbfs_f32, snr_f32
+        );
+        eprintln!(
+            " Engine v2  : Noise Error = {:>7.2} dBFS | SNR = {:>6.2} dB",
+            err_dbfs_f64, snr_f64
+        );
+        eprintln!(
+            " Improvement: Noise Reduction = {:>5.2} dB",
+            err_dbfs_32_diff(err_dbfs_f32, err_dbfs_f64)
+        );
         eprintln!("=======================================================\n");
 
-        assert!(err_dbfs_f64 < -120.0, "f64 error must be < -120 dBFS, got {:.2}", err_dbfs_f64);
-        assert!(snr_f64 > 120.0, "f64 SNR must be > 120 dB, got {:.2}", snr_f64);
+        assert!(
+            err_dbfs_f64 < -120.0,
+            "f64 error must be < -120 dBFS, got {:.2}",
+            err_dbfs_f64
+        );
+        assert!(
+            snr_f64 > 120.0,
+            "f64 SNR must be > 120 dB, got {:.2}",
+            snr_f64
+        );
     }
 
     fn err_dbfs_32_diff(f32_err: f64, f64_err: f64) -> f64 {
@@ -1212,11 +1275,18 @@ mod tests {
         eprintln!("\n=======================================================");
         eprintln!("       Synthetic 0 dBFS Sine Sweep Limiter Test        ");
         eprintln!("=======================================================");
-        eprintln!(" Max Peak Observed: {:.5} ({:.2} dBFS)", max_sweep_out, sweep_peak_dbfs);
+        eprintln!(
+            " Max Peak Observed: {:.5} ({:.2} dBFS)",
+            max_sweep_out, sweep_peak_dbfs
+        );
         eprintln!(" Limiter Ceiling  : {:.5} (-1.00 dBFS)", ceiling_linear);
         eprintln!(" Status           : PASS (Peak <= Ceiling)");
         eprintln!("=======================================================\n");
-        assert!(max_sweep_out <= ceiling_linear + 1e-6, "Peak exceeded limiter ceiling: {}", max_sweep_out);
+        assert!(
+            max_sweep_out <= ceiling_linear + 1e-6,
+            "Peak exceeded limiter ceiling: {}",
+            max_sweep_out
+        );
 
         // Test on Golden FLACs in /tmp/bitdrop_golden_flacs/
         let golden_dir = Path::new("/tmp/bitdrop_golden_flacs");
@@ -1250,7 +1320,12 @@ mod tests {
                     .format(&hint, mss, &format_opts, &metadata_opts)
                     .unwrap();
 
-                let track = probed.format.tracks().iter().find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL).unwrap();
+                let track = probed
+                    .format
+                    .tracks()
+                    .iter()
+                    .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
+                    .unwrap();
                 let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
                 let mut decoder = symphonia::default::get_codecs()
                     .make(&track.codec_params, &DecoderOptions::default())
@@ -1299,8 +1374,14 @@ mod tests {
                 }
 
                 let peak_dbfs = 20.0 * max_flac_peak.log10();
-                eprintln!(" FLAC {:<28} => Peak: {:.5} ({:>6.2} dBFS)", flac_name, max_flac_peak, peak_dbfs);
-                assert!(max_flac_peak <= ceiling_linear + 1e-6, "FLAC peak exceeded limiter ceiling!");
+                eprintln!(
+                    " FLAC {:<28} => Peak: {:.5} ({:>6.2} dBFS)",
+                    flac_name, max_flac_peak, peak_dbfs
+                );
+                assert!(
+                    max_flac_peak <= ceiling_linear + 1e-6,
+                    "FLAC peak exceeded limiter ceiling!"
+                );
             }
             eprintln!("=======================================================\n");
         }
@@ -1315,7 +1396,10 @@ mod tests {
         dsp.mono = false;
         dsp.software_volume = 1.0;
 
-        assert!(dsp.is_bit_exact_neutral(), "DSP pipeline should report bit-exact neutral state");
+        assert!(
+            dsp.is_bit_exact_neutral(),
+            "DSP pipeline should report bit-exact neutral state"
+        );
 
         // Generate arbitrary stereo float buffer
         let mut input_frames = Vec::with_capacity(1000);
@@ -1333,8 +1417,18 @@ mod tests {
 
         // Assert exact float equality (every bit identical)
         for i in 0..1000 {
-            assert_eq!(input_frames[i].0.to_bits(), output_frames[i].0.to_bits(), "L channel bit mismatch at {}", i);
-            assert_eq!(input_frames[i].1.to_bits(), output_frames[i].1.to_bits(), "R channel bit mismatch at {}", i);
+            assert_eq!(
+                input_frames[i].0.to_bits(),
+                output_frames[i].0.to_bits(),
+                "L channel bit mismatch at {}",
+                i
+            );
+            assert_eq!(
+                input_frames[i].1.to_bits(),
+                output_frames[i].1.to_bits(),
+                "R channel bit mismatch at {}",
+                i
+            );
         }
 
         eprintln!("=======================================================");
@@ -1362,7 +1456,8 @@ mod tests {
             1024,
             2,
             rubato::FixedAsync::Input,
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1370,7 +1465,9 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        let tb = Arc::new(TripleBuffer::<DspConfigSnapshot>::new(DspConfigSnapshot::default()));
+        let tb = Arc::new(TripleBuffer::<DspConfigSnapshot>::new(
+            DspConfigSnapshot::default(),
+        ));
         let tb_prod = Arc::clone(&tb);
         let tb_cons = Arc::clone(&tb);
 
@@ -1390,8 +1487,14 @@ mod tests {
             let mut reads = 0;
             while last_seen_version < 50_000 {
                 if let Some(snap) = tb_cons.read_new() {
-                    assert!(snap.version >= last_seen_version, "Out of order snapshot version!");
-                    assert!((snap.preamp_db - snap.version as f64 * 0.1).abs() < 1e-6, "Torn read detected!");
+                    assert!(
+                        snap.version >= last_seen_version,
+                        "Out of order snapshot version!"
+                    );
+                    assert!(
+                        (snap.preamp_db - snap.version as f64 * 0.1).abs() < 1e-6,
+                        "Torn read detected!"
+                    );
                     last_seen_version = snap.version;
                     reads += 1;
                 }
@@ -1403,7 +1506,10 @@ mod tests {
         producer.join().unwrap();
         let total_reads = consumer.join().unwrap();
         assert!(total_reads > 0);
-        eprintln!("Triple buffer concurrent test passed: {} snapshots consumed", total_reads);
+        eprintln!(
+            "Triple buffer concurrent test passed: {} snapshots consumed",
+            total_reads
+        );
     }
 
     #[test]
@@ -1441,7 +1547,11 @@ mod tests {
             .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
             .unwrap();
-        assert!(max_val > 0.5, "Peak at 1kHz should be substantial: {}", max_val);
+        assert!(
+            max_val > 0.5,
+            "Peak at 1kHz should be substantial: {}",
+            max_val
+        );
         assert!(
             (6..=15).contains(&max_band),
             "1kHz peak at unexpected band {}",
@@ -1466,4 +1576,3 @@ mod tests {
         assert_eq!(silent_frame.spectrum, vec![0.0f32; VISUALIZER_BANDS]);
     }
 }
-

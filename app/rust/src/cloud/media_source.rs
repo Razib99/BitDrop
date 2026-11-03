@@ -371,7 +371,8 @@ impl SparseTrackCache {
                                 hasher.update(&verify_buf);
                                 if hasher.finalize() == rec.crc32 {
                                     // CRC32 integrity verified!
-                                    cache.chunk_written_bytes[idx].store(chunk_len, Ordering::Relaxed);
+                                    cache.chunk_written_bytes[idx]
+                                        .store(chunk_len, Ordering::Relaxed);
                                     continue;
                                 }
                             }
@@ -406,7 +407,8 @@ impl SparseTrackCache {
                                         let now = std::time::SystemTime::now()
                                             .duration_since(std::time::UNIX_EPOCH)
                                             .unwrap_or_default()
-                                            .as_secs() as i64;
+                                            .as_secs()
+                                            as i64;
                                         let rec = crate::cloud::db::CachedChunkRecord {
                                             file_id: file_id.to_string(),
                                             chunk_idx: idx as u32,
@@ -417,7 +419,8 @@ impl SparseTrackCache {
                                             last_accessed_ts: now,
                                         };
                                         cache.record_chunk(&rec);
-                                        cache.chunk_written_bytes[idx].store(chunk_len, Ordering::Relaxed);
+                                        cache.chunk_written_bytes[idx]
+                                            .store(chunk_len, Ordering::Relaxed);
                                     }
                                 }
                             }
@@ -445,7 +448,8 @@ impl SparseTrackCache {
             let _ = db.lock().delete_cached_chunk(file_id, chunk_idx);
         } else {
             let _ = crate::api::cloud_library::with_db_mut(|db| {
-                db.delete_cached_chunk(file_id, chunk_idx).map_err(anyhow::Error::from)
+                db.delete_cached_chunk(file_id, chunk_idx)
+                    .map_err(anyhow::Error::from)
             });
         }
     }
@@ -456,7 +460,8 @@ impl SparseTrackCache {
         } else {
             crate::api::cloud_library::with_db(|db| {
                 db.get_cached_chunks(file_id).map_err(anyhow::Error::from)
-            }).unwrap_or_default()
+            })
+            .unwrap_or_default()
         }
     }
 
@@ -469,7 +474,8 @@ impl SparseTrackCache {
             let _ = db.lock().touch_chunk_access(file_id, chunk_idx, now);
         } else {
             let _ = crate::api::cloud_library::with_db_mut(|db| {
-                db.touch_chunk_access(file_id, chunk_idx, now).map_err(anyhow::Error::from)
+                db.touch_chunk_access(file_id, chunk_idx, now)
+                    .map_err(anyhow::Error::from)
             });
         }
     }
@@ -534,7 +540,11 @@ impl SparseTrackCache {
         let (url, token, index_path) = {
             let guard = self.fetch_ctx.lock();
             match guard.as_ref() {
-                Some(ctx) => (ctx.url.clone(), ctx.auth_token.clone(), ctx.index_path.clone()),
+                Some(ctx) => (
+                    ctx.url.clone(),
+                    ctx.auth_token.clone(),
+                    ctx.index_path.clone(),
+                ),
                 None => {
                     self.chunk_fetching[chunk_idx].store(false, Ordering::Release);
                     return;
@@ -792,7 +802,8 @@ impl CloudMediaSource {
         let sparse_path = cache_dir.join(format!("{}.sparse", file_id));
         let index_path = cache_dir.join(format!("{}.idx", file_id));
 
-        let cache = SparseTrackCache::new_with_db(&file_id, &sparse_path, &index_path, total_size, None)?;
+        let cache =
+            SparseTrackCache::new_with_db(&file_id, &sparse_path, &index_path, total_size, None)?;
 
         cache.set_fetch_context(FetchContext {
             url,
@@ -891,11 +902,14 @@ impl Read for CloudMediaSource {
             return Ok(0); // EOF
         }
 
-        self.cache.current_position.store(self.position, Ordering::Relaxed);
+        self.cache
+            .current_position
+            .store(self.position, Ordering::Relaxed);
 
         let chunk_idx = (self.position / CHUNK_SIZE) as usize;
         let chunk_offset = (self.position % CHUNK_SIZE) as u32;
-        let chunk_total_len = ((self.cache.total_size - (chunk_idx as u64 * CHUNK_SIZE)).min(CHUNK_SIZE)) as u32;
+        let chunk_total_len =
+            ((self.cache.total_size - (chunk_idx as u64 * CHUNK_SIZE)).min(CHUNK_SIZE)) as u32;
 
         let max_readable_in_chunk = (chunk_total_len - chunk_offset) as usize;
         let to_read = buf.len().min(max_readable_in_chunk);
@@ -904,9 +918,14 @@ impl Read for CloudMediaSource {
         self.ensure_bytes_available(chunk_idx, needed_end)?;
 
         // Positional zero-seek read directly from unified kernel page cache
-        let bytes_read = self.cache.file.read_at(&mut buf[..to_read], self.position)?;
+        let bytes_read = self
+            .cache
+            .file
+            .read_at(&mut buf[..to_read], self.position)?;
         self.position += bytes_read as u64;
-        self.cache.current_position.store(self.position, Ordering::Relaxed);
+        self.cache
+            .current_position
+            .store(self.position, Ordering::Relaxed);
         self.cache.touch_chunk(&self.file_id, chunk_idx as u32);
 
         // Continuous rolling 30-second read-ahead scheduler
@@ -936,7 +955,9 @@ impl Seek for CloudMediaSource {
         let new_chunk = (new_pos / CHUNK_SIZE) as usize;
 
         self.position = new_pos;
-        self.cache.current_position.store(new_pos, Ordering::Relaxed);
+        self.cache
+            .current_position
+            .store(new_pos, Ordering::Relaxed);
 
         if (new_chunk as isize - old_chunk as isize).abs() > 2 {
             // Large seek: bump generation to cancel distant in-flight fetches
@@ -970,7 +991,12 @@ pub fn deallocate_chunk_range(file: &std::fs::File, offset: u64, len: u64) {
     use std::os::unix::io::AsRawFd;
     // FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE = 0x02 | 0x01 = 0x03
     unsafe {
-        libc::fallocate(file.as_raw_fd(), 3, offset as libc::off_t, len as libc::off_t);
+        libc::fallocate(
+            file.as_raw_fd(),
+            3,
+            offset as libc::off_t,
+            len as libc::off_t,
+        );
     }
 }
 
@@ -1029,11 +1055,14 @@ mod tests {
 
     #[test]
     fn test_sparse_cache_sqlite_and_crc32_verification() {
-        let temp_dir = std::env::temp_dir().join(format!("bitdrop_test_cache_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("bitdrop_test_cache_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
 
-        let db = Arc::new(parking_lot::Mutex::new(MetadataDb::new_in_memory().unwrap()));
+        let db = Arc::new(parking_lot::Mutex::new(
+            MetadataDb::new_in_memory().unwrap(),
+        ));
         let file_id = "test_track_integrity";
         let sparse_path = temp_dir.join(format!("{}.sparse", file_id));
         let index_path = temp_dir.join(format!("{}.idx", file_id));
@@ -1120,11 +1149,14 @@ mod tests {
 
     #[test]
     fn test_sparse_cache_legacy_idx_migration() {
-        let temp_dir = std::env::temp_dir().join(format!("bitdrop_test_mig_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("bitdrop_test_mig_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
 
-        let db = Arc::new(parking_lot::Mutex::new(MetadataDb::new_in_memory().unwrap()));
+        let db = Arc::new(parking_lot::Mutex::new(
+            MetadataDb::new_in_memory().unwrap(),
+        ));
         let file_id = "legacy_track";
         let sparse_path = temp_dir.join(format!("{}.sparse", file_id));
         let index_path = temp_dir.join(format!("{}.idx", file_id));
@@ -1165,7 +1197,9 @@ mod tests {
 
     #[test]
     fn test_bitrate_aware_nominal_rate_calculation() {
-        let db = Arc::new(parking_lot::Mutex::new(MetadataDb::new_in_memory().unwrap()));
+        let db = Arc::new(parking_lot::Mutex::new(
+            MetadataDb::new_in_memory().unwrap(),
+        ));
 
         // Case A: Track with known duration (240s, 276 MB hi-res FLAC)
         db.lock()
@@ -1227,11 +1261,14 @@ mod tests {
 
     #[test]
     fn test_bitrate_aware_30s_rolling_read_ahead_scheduler() {
-        let temp_dir = std::env::temp_dir().join(format!("bitdrop_test_sched_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("bitdrop_test_sched_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
 
-        let db = Arc::new(parking_lot::Mutex::new(MetadataDb::new_in_memory().unwrap()));
+        let db = Arc::new(parking_lot::Mutex::new(
+            MetadataDb::new_in_memory().unwrap(),
+        ));
         let file_id = "test_sched_track";
         let sparse_path = temp_dir.join(format!("{}.sparse", file_id));
         let index_path = temp_dir.join(format!("{}.idx", file_id));
@@ -1291,7 +1328,8 @@ mod tests {
 
     #[test]
     fn test_apply_chunk_evictions_sparse_file_cleanup() {
-        let temp_dir = std::env::temp_dir().join(format!("bitdrop_test_evict_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("bitdrop_test_evict_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
 
@@ -1307,23 +1345,26 @@ mod tests {
         assert!(idx_a.exists());
 
         // Eviction record for track_A chunk 0
-        let evictions = vec![
-            crate::cloud::db::EvictedChunk {
-                file_id: "track_A".to_string(),
-                chunk_idx: 0,
-                byte_offset: 0,
-                byte_len: 2 * 1024 * 1024,
-            },
-        ];
+        let evictions = vec![crate::cloud::db::EvictedChunk {
+            file_id: "track_A".to_string(),
+            chunk_idx: 0,
+            byte_offset: 0,
+            byte_len: 2 * 1024 * 1024,
+        }];
 
         // Since count_cached_chunks_for_file("track_A") is 0 in db,
         // apply_chunk_evictions should delete both sparse and idx files.
         apply_chunk_evictions(&temp_dir, &evictions, &db);
 
-        assert!(!sparse_a.exists(), "Sparse file should be deleted when 0 chunks remain");
-        assert!(!idx_a.exists(), "Index file should be deleted when 0 chunks remain");
+        assert!(
+            !sparse_a.exists(),
+            "Sparse file should be deleted when 0 chunks remain"
+        );
+        assert!(
+            !idx_a.exists(),
+            "Index file should be deleted when 0 chunks remain"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
 }
-

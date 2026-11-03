@@ -10,7 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use crate::cloud::db::{AlbumSummaryRow, CloudTrackRow, MetadataDb, TrackPlaceholder, TrackTagUpdate};
+use crate::cloud::db::{
+    AlbumSummaryRow, CloudTrackRow, MetadataDb, TrackPlaceholder, TrackTagUpdate,
+};
 use crate::cloud::flac_parser::{FlacProgressiveParser, ParseProgress};
 use governor::{Quota, RateLimiter};
 use std::num::NonZeroU32;
@@ -238,14 +240,16 @@ pub fn cloud_library_read_tags(
     auth_token: Option<String>,
 ) -> Result<bool, String> {
     use crate::cloud::media_source::CloudMediaSource;
-    use symphonia::core::probe::Hint;
+    use std::path::PathBuf;
+    use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::formats::FormatOptions;
-    use std::path::PathBuf;
+    use symphonia::core::probe::Hint;
 
     let size_bytes = with_db(|db| {
-        let mut stmt = db.conn.prepare("SELECT size_bytes FROM tracks WHERE file_id = ?")?;
+        let mut stmt = db
+            .conn
+            .prepare("SELECT size_bytes FROM tracks WHERE file_id = ?")?;
         let size: u64 = stmt.query_row([&file_id], |r| r.get(0)).unwrap_or(0);
         Ok(size)
     })?;
@@ -263,17 +267,18 @@ pub fn cloud_library_read_tags(
             .clone()
             .ok_or_else(|| "cloud library not opened".to_string())?,
     );
-    let cloud_source = match CloudMediaSource::new(file_id.clone(), url, auth_token, size_bytes, cache_dir) {
-        Ok(cs) => cs,
-        Err(e) => {
-            eprintln!("[bitdrop] CloudMediaSource::new failed: {:?}", e);
-            let _ = with_db(|db| {
-                db.mark_tags_attempted(&file_id)?;
-                Ok(())
-            });
-            return Ok(false);
-        }
-    };
+    let cloud_source =
+        match CloudMediaSource::new(file_id.clone(), url, auth_token, size_bytes, cache_dir) {
+            Ok(cs) => cs,
+            Err(e) => {
+                eprintln!("[bitdrop] CloudMediaSource::new failed: {:?}", e);
+                let _ = with_db(|db| {
+                    db.mark_tags_attempted(&file_id)?;
+                    Ok(())
+                });
+                return Ok(false);
+            }
+        };
 
     let mss = MediaSourceStream::new(Box::new(cloud_source), Default::default());
     let hint = Hint::new();
@@ -293,13 +298,13 @@ pub fn cloud_library_read_tags(
     };
 
     let mut format = probed.format;
-    
+
     // Extract metadata
     let mut duration_ms = 0;
     let mut sample_rate = 44100;
     let mut channels = 2;
     let mut bits_per_sample = 16;
-    
+
     if let Some(track) = format.default_track() {
         if let Some(tb) = track.codec_params.time_base {
             if let Some(n_frames) = track.codec_params.n_frames {
@@ -308,7 +313,11 @@ pub fn cloud_library_read_tags(
             }
         }
         sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
-        channels = track.codec_params.channels.map(|c| c.count() as u8).unwrap_or(2);
+        channels = track
+            .codec_params
+            .channels
+            .map(|c| c.count() as u8)
+            .unwrap_or(2);
         bits_per_sample = track.codec_params.bits_per_sample.unwrap_or(16) as u8;
     }
 
@@ -350,14 +359,26 @@ pub fn cloud_library_read_tags(
     if let Some(metadata) = format.metadata().current() {
         for tag in metadata.tags() {
             match tag.std_key {
-                Some(symphonia::core::meta::StandardTagKey::TrackTitle) => title = tag.value.to_string(),
-                Some(symphonia::core::meta::StandardTagKey::Artist) => artist = tag.value.to_string(),
+                Some(symphonia::core::meta::StandardTagKey::TrackTitle) => {
+                    title = tag.value.to_string()
+                }
+                Some(symphonia::core::meta::StandardTagKey::Artist) => {
+                    artist = tag.value.to_string()
+                }
                 Some(symphonia::core::meta::StandardTagKey::Album) => album = tag.value.to_string(),
-                Some(symphonia::core::meta::StandardTagKey::AlbumArtist) => album_artist = tag.value.to_string(),
+                Some(symphonia::core::meta::StandardTagKey::AlbumArtist) => {
+                    album_artist = tag.value.to_string()
+                }
                 Some(symphonia::core::meta::StandardTagKey::Genre) => genre = tag.value.to_string(),
-                Some(symphonia::core::meta::StandardTagKey::Date) => year = tag.value.to_string().parse().ok(),
-                Some(symphonia::core::meta::StandardTagKey::TrackNumber) => track_number = tag.value.to_string().parse().ok(),
-                Some(symphonia::core::meta::StandardTagKey::DiscNumber) => disc_number = tag.value.to_string().parse().ok(),
+                Some(symphonia::core::meta::StandardTagKey::Date) => {
+                    year = tag.value.to_string().parse().ok()
+                }
+                Some(symphonia::core::meta::StandardTagKey::TrackNumber) => {
+                    track_number = tag.value.to_string().parse().ok()
+                }
+                Some(symphonia::core::meta::StandardTagKey::DiscNumber) => {
+                    disc_number = tag.value.to_string().parse().ok()
+                }
                 _ => {}
             }
         }
@@ -372,8 +393,18 @@ pub fn cloud_library_read_tags(
                 tags_read = 1
              WHERE file_id = ?",
             rusqlite::params![
-                title, artist, album, album_artist, genre, year, track_number, disc_number,
-                duration_ms, sample_rate, channels, bits_per_sample,
+                title,
+                artist,
+                album,
+                album_artist,
+                genre,
+                year,
+                track_number,
+                disc_number,
+                duration_ms,
+                sample_rate,
+                channels,
+                bits_per_sample,
                 file_id
             ],
         )?;
@@ -436,9 +467,7 @@ fn parse_track_and_title(s: &str) -> (u32, String) {
     if !num_str.is_empty() {
         let num: u32 = num_str.parse().unwrap_or(0);
         let rem: String = chars.collect();
-        let title = rem
-            .trim_start_matches(['-', '.', ' ', '_', '~'])
-            .trim();
+        let title = rem.trim_start_matches(['-', '.', ' ', '_', '~']).trim();
         if !title.is_empty() {
             return (num, title.to_string());
         }
@@ -479,20 +508,38 @@ async fn fetch_online_cover_art(artist: &str, album: &str, title: &str) -> Optio
 
     // 1. Search Deezer by album & artist
     if !clean_album.is_empty() && clean_album != "unknown_album" && clean_album != "Unknown Album" {
-        let q = if !clean_artist.is_empty() && clean_artist != "unknown_artist" && clean_artist != "Unknown Artist" {
+        let q = if !clean_artist.is_empty()
+            && clean_artist != "unknown_artist"
+            && clean_artist != "Unknown Artist"
+        {
             format!("{} {}", clean_artist, clean_album)
         } else {
             clean_album.to_string()
         };
         let encoded_q = url_encode(&q);
-        let url = format!("https://api.deezer.com/search/album?q={}&limit=1", encoded_q);
-        if let Ok(resp) = HTTP_CLIENT.get(&url).timeout(Duration::from_secs(4)).send().await {
+        let url = format!(
+            "https://api.deezer.com/search/album?q={}&limit=1",
+            encoded_q
+        );
+        if let Ok(resp) = HTTP_CLIENT
+            .get(&url)
+            .timeout(Duration::from_secs(4))
+            .send()
+            .await
+        {
             if resp.status().is_success() {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
-                    if let Some(cover_url) = json.pointer("/data/0/cover_big")
+                    if let Some(cover_url) = json
+                        .pointer("/data/0/cover_big")
                         .or_else(|| json.pointer("/data/0/cover_medium"))
-                        .and_then(|v| v.as_str()) {
-                        if let Ok(img_resp) = HTTP_CLIENT.get(cover_url).timeout(Duration::from_secs(5)).send().await {
+                        .and_then(|v| v.as_str())
+                    {
+                        if let Ok(img_resp) = HTTP_CLIENT
+                            .get(cover_url)
+                            .timeout(Duration::from_secs(5))
+                            .send()
+                            .await
+                        {
                             if let Ok(b) = img_resp.bytes().await {
                                 if !b.is_empty() {
                                     return Some(b.to_vec());
@@ -520,13 +567,29 @@ async fn fetch_online_cover_art(artist: &str, album: &str, title: &str) -> Optio
 
     if !itunes_term.is_empty() {
         let encoded_term = url_encode(&itunes_term);
-        let itunes_url = format!("https://itunes.apple.com/search?term={}&entity=album&limit=1", encoded_term);
-        if let Ok(resp) = HTTP_CLIENT.get(&itunes_url).timeout(Duration::from_secs(4)).send().await {
+        let itunes_url = format!(
+            "https://itunes.apple.com/search?term={}&entity=album&limit=1",
+            encoded_term
+        );
+        if let Ok(resp) = HTTP_CLIENT
+            .get(&itunes_url)
+            .timeout(Duration::from_secs(4))
+            .send()
+            .await
+        {
             if resp.status().is_success() {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
-                    if let Some(art_url) = json.pointer("/results/0/artworkUrl100").and_then(|v| v.as_str()) {
+                    if let Some(art_url) = json
+                        .pointer("/results/0/artworkUrl100")
+                        .and_then(|v| v.as_str())
+                    {
                         let high_res = art_url.replace("100x100bb", "600x600bb");
-                        if let Ok(img_resp) = HTTP_CLIENT.get(&high_res).timeout(Duration::from_secs(5)).send().await {
+                        if let Ok(img_resp) = HTTP_CLIENT
+                            .get(&high_res)
+                            .timeout(Duration::from_secs(5))
+                            .send()
+                            .await
+                        {
                             if let Ok(b) = img_resp.bytes().await {
                                 if !b.is_empty() {
                                     return Some(b.to_vec());
@@ -548,13 +611,25 @@ async fn fetch_online_cover_art(artist: &str, album: &str, title: &str) -> Optio
         };
         let encoded_q = url_encode(&q);
         let url = format!("https://api.deezer.com/search?q={}&limit=1", encoded_q);
-        if let Ok(resp) = HTTP_CLIENT.get(&url).timeout(Duration::from_secs(4)).send().await {
+        if let Ok(resp) = HTTP_CLIENT
+            .get(&url)
+            .timeout(Duration::from_secs(4))
+            .send()
+            .await
+        {
             if resp.status().is_success() {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
-                    if let Some(cover_url) = json.pointer("/data/0/album/cover_big")
+                    if let Some(cover_url) = json
+                        .pointer("/data/0/album/cover_big")
                         .or_else(|| json.pointer("/data/0/album/cover_medium"))
-                        .and_then(|v| v.as_str()) {
-                        if let Ok(img_resp) = HTTP_CLIENT.get(cover_url).timeout(Duration::from_secs(5)).send().await {
+                        .and_then(|v| v.as_str())
+                    {
+                        if let Ok(img_resp) = HTTP_CLIENT
+                            .get(cover_url)
+                            .timeout(Duration::from_secs(5))
+                            .send()
+                            .await
+                        {
                             if let Ok(b) = img_resp.bytes().await {
                                 if !b.is_empty() {
                                     return Some(b.to_vec());
@@ -604,7 +679,7 @@ pub fn cloud_library_scan_tags_batch(
 
     let placeholders = with_db(|db| {
         let mut stmt = db.conn.prepare(
-            "SELECT file_id, name, folder_path, size_bytes FROM tracks WHERE file_id = ?"
+            "SELECT file_id, name, folder_path, size_bytes FROM tracks WHERE file_id = ?",
         )?;
         let mut list = Vec::new();
         for id in &file_ids {
@@ -640,7 +715,10 @@ pub fn cloud_library_scan_tags_batch(
                 let token = token_clone.clone();
                 let art_dir = art_dir.clone();
                 async move {
-                    let fallback_title = name.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or_else(|| name.clone());
+                    let fallback_title = name
+                        .rsplit_once('.')
+                        .map(|(s, _)| s.to_string())
+                        .unwrap_or_else(|| name.clone());
                     let default_update = TrackTagUpdate {
                         file_id: file_id.clone(),
                         title: fallback_title.clone(),
@@ -663,11 +741,16 @@ pub fn cloud_library_scan_tags_batch(
                     } else {
                         65535
                     };
-                    let url = format!("https://www.googleapis.com/drive/v3/files/{}?alt=media", file_id);
+                    let url = format!(
+                        "https://www.googleapis.com/drive/v3/files/{}?alt=media",
+                        file_id
+                    );
 
                     RATE_LIMITER.until_ready().await;
 
-                    let mut req = HTTP_CLIENT.get(&url).header("Range", format!("bytes=0-{}", range_end));
+                    let mut req = HTTP_CLIENT
+                        .get(&url)
+                        .header("Range", format!("bytes=0-{}", range_end));
                     if let Some(ref t) = token {
                         req = req.bearer_auth(t);
                     }
@@ -686,23 +769,33 @@ pub fn cloud_library_scan_tags_batch(
                     if bytes.starts_with(b"fLaC") {
                         let parsed = match FlacProgressiveParser::parse(&bytes, 0) {
                             Ok(ParseProgress::Complete(m)) => Some(m),
-                            Ok(ParseProgress::NeedMoreBytes { partial: Some(m), .. }) => Some(m),
-                            Ok(ParseProgress::NeedMoreBytes { offset, length, .. }) if offset + length as u64 <= 262144 => {
+                            Ok(ParseProgress::NeedMoreBytes {
+                                partial: Some(m), ..
+                            }) => Some(m),
+                            Ok(ParseProgress::NeedMoreBytes { offset, length, .. })
+                                if offset + length as u64 <= 262144 =>
+                            {
                                 // One follow-up range request if header is slightly larger than 64KB
                                 RATE_LIMITER.until_ready().await;
-                                let mut req2 = HTTP_CLIENT
-                                    .get(&url)
-                                    .header("Range", format!("bytes=0-{}", offset + length as u64 - 1));
+                                let mut req2 = HTTP_CLIENT.get(&url).header(
+                                    "Range",
+                                    format!("bytes=0-{}", offset + length as u64 - 1),
+                                );
                                 if let Some(ref t) = token {
                                     req2 = req2.bearer_auth(t);
                                 }
                                 if let Ok(resp2) = req2.send().await {
                                     if let Ok(more_b) = resp2.bytes().await {
                                         bytes = more_b.to_vec();
-                                        FlacProgressiveParser::parse(&bytes, 0).ok().and_then(|p| match p {
-                                            ParseProgress::Complete(m) => Some(m),
-                                            ParseProgress::NeedMoreBytes { partial: Some(m), .. } => Some(m),
-                                            _ => None,
+                                        FlacProgressiveParser::parse(&bytes, 0).ok().and_then(|p| {
+                                            match p {
+                                                ParseProgress::Complete(m) => Some(m),
+                                                ParseProgress::NeedMoreBytes {
+                                                    partial: Some(m),
+                                                    ..
+                                                } => Some(m),
+                                                _ => None,
+                                            }
                                         })
                                     } else {
                                         None
@@ -715,17 +808,37 @@ pub fn cloud_library_scan_tags_batch(
                         };
 
                         if let Some(meta) = parsed {
-                            let title = meta.tags.get("TITLE").cloned().filter(|s| !s.is_empty()).unwrap_or(fallback_title.clone());
+                            let title = meta
+                                .tags
+                                .get("TITLE")
+                                .cloned()
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or(fallback_title.clone());
                             let artist = meta.tags.get("ARTIST").cloned().unwrap_or_default();
                             let album = meta.tags.get("ALBUM").cloned().unwrap_or_default();
-                            let album_artist = meta.tags.get("ALBUMARTIST")
+                            let album_artist = meta
+                                .tags
+                                .get("ALBUMARTIST")
                                 .or_else(|| meta.tags.get("ALBUM ARTIST"))
                                 .cloned()
                                 .unwrap_or_else(|| artist.clone());
                             let genre = meta.tags.get("GENRE").cloned().unwrap_or_default();
-                            let year = meta.tags.get("DATE").or_else(|| meta.tags.get("YEAR")).map(|s| parse_year(s)).unwrap_or(0);
-                            let track_number = meta.tags.get("TRACKNUMBER").map(|s| parse_index_number(s)).unwrap_or(0);
-                            let disc_number = meta.tags.get("DISCNUMBER").map(|s| parse_index_number(s)).unwrap_or(1);
+                            let year = meta
+                                .tags
+                                .get("DATE")
+                                .or_else(|| meta.tags.get("YEAR"))
+                                .map(|s| parse_year(s))
+                                .unwrap_or(0);
+                            let track_number = meta
+                                .tags
+                                .get("TRACKNUMBER")
+                                .map(|s| parse_index_number(s))
+                                .unwrap_or(0);
+                            let disc_number = meta
+                                .tags
+                                .get("DISCNUMBER")
+                                .map(|s| parse_index_number(s))
+                                .unwrap_or(1);
                             let duration_ms = (meta.stream_info.duration_seconds * 1000.0) as u32;
                             let sample_rate = meta.stream_info.sample_rate;
                             let channels = meta.stream_info.channels as u32;
@@ -733,7 +846,11 @@ pub fn cloud_library_scan_tags_batch(
 
                             // Deduplicate artwork by (album_artist, album)
                             let mut artwork_path = String::new();
-                            let album_clean = if album.is_empty() { "unknown_album" } else { &album };
+                            let album_clean = if album.is_empty() {
+                                "unknown_album"
+                            } else {
+                                &album
+                            };
                             let artist_clean = if !album_artist.is_empty() {
                                 &album_artist
                             } else if !artist.is_empty() {
@@ -741,8 +858,13 @@ pub fn cloud_library_scan_tags_batch(
                             } else {
                                 "unknown_artist"
                             };
-                            let album_key = format!("{}::{}", artist_clean.trim().to_lowercase(), album_clean.trim().to_lowercase());
-                            let art_target = art_dir.join(format!("{}.img", sanitize_filename(&album_key)));
+                            let album_key = format!(
+                                "{}::{}",
+                                artist_clean.trim().to_lowercase(),
+                                album_clean.trim().to_lowercase()
+                            );
+                            let art_target =
+                                art_dir.join(format!("{}.img", sanitize_filename(&album_key)));
 
                             if art_target.exists() {
                                 artwork_path = art_target.to_string_lossy().to_string();
@@ -755,19 +877,28 @@ pub fn cloud_library_scan_tags_batch(
                                     {
                                         artwork_path = art_target.to_string_lossy().to_string();
                                     }
-                                } else if pic.data_length > 0 && pic.data_length <= 5 * 1024 * 1024 {
+                                } else if pic.data_length > 0 && pic.data_length <= 5 * 1024 * 1024
+                                {
                                     RATE_LIMITER.until_ready().await;
-                                    let mut art_req = HTTP_CLIENT
-                                        .get(&url)
-                                        .header("Range", format!("bytes={}-{}", pic.data_offset, pic.data_offset + pic.data_length as u64 - 1));
+                                    let mut art_req = HTTP_CLIENT.get(&url).header(
+                                        "Range",
+                                        format!(
+                                            "bytes={}-{}",
+                                            pic.data_offset,
+                                            pic.data_offset + pic.data_length as u64 - 1
+                                        ),
+                                    );
                                     if let Some(ref t) = token {
                                         art_req = art_req.bearer_auth(t);
                                     }
                                     if let Ok(art_resp) = art_req.send().await {
-                                        if art_resp.status().is_success() || art_resp.status().as_u16() == 206 {
+                                        if art_resp.status().is_success()
+                                            || art_resp.status().as_u16() == 206
+                                        {
                                             if let Ok(art_bytes) = art_resp.bytes().await {
                                                 if std::fs::write(&art_target, &art_bytes).is_ok() {
-                                                    artwork_path = art_target.to_string_lossy().to_string();
+                                                    artwork_path =
+                                                        art_target.to_string_lossy().to_string();
                                                 }
                                             }
                                         }
@@ -777,7 +908,9 @@ pub fn cloud_library_scan_tags_batch(
 
                             // Fallback to online cover art if embedded is absent
                             if artwork_path.is_empty() && (!album.is_empty() || !title.is_empty()) {
-                                if let Some(online_b) = fetch_online_cover_art(artist_clean, album_clean, &title).await {
+                                if let Some(online_b) =
+                                    fetch_online_cover_art(artist_clean, album_clean, &title).await
+                                {
                                     if std::fs::write(&art_target, &online_b).is_ok() {
                                         artwork_path = art_target.to_string_lossy().to_string();
                                     }
@@ -804,13 +937,14 @@ pub fn cloud_library_scan_tags_batch(
                     }
 
                     // 2. Fallback to Symphonia probe for MP3/WAV/AAC within initial chunk
+                    use std::io::Cursor;
                     use symphonia::core::formats::FormatOptions;
                     use symphonia::core::io::MediaSourceStream;
                     use symphonia::core::meta::MetadataOptions;
                     use symphonia::core::probe::Hint;
-                    use std::io::Cursor;
 
-                    let mss = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
+                    let mss =
+                        MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
                     let mut hint = Hint::new();
                     if let Some(ext) = name.rsplit('.').next() {
                         hint.with_extension(ext);
@@ -818,7 +952,9 @@ pub fn cloud_library_scan_tags_batch(
                     let meta_opts: MetadataOptions = Default::default();
                     let fmt_opts: FormatOptions = Default::default();
 
-                    if let Ok(probed) = symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts) {
+                    if let Ok(probed) =
+                        symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts)
+                    {
                         let mut format = probed.format;
                         let mut duration_ms = 0;
                         let mut sample_rate = 44100;
@@ -829,11 +965,16 @@ pub fn cloud_library_scan_tags_batch(
                             if let Some(tb) = track.codec_params.time_base {
                                 if let Some(n_frames) = track.codec_params.n_frames {
                                     let time = tb.calc_time(n_frames);
-                                    duration_ms = (time.seconds * 1000 + (time.frac * 1000.0) as u64) as u32;
+                                    duration_ms =
+                                        (time.seconds * 1000 + (time.frac * 1000.0) as u64) as u32;
                                 }
                             }
                             sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
-                            channels = track.codec_params.channels.map(|c| c.count() as u32).unwrap_or(2);
+                            channels = track
+                                .codec_params
+                                .channels
+                                .map(|c| c.count() as u32)
+                                .unwrap_or(2);
                             bits_per_sample = track.codec_params.bits_per_sample.unwrap_or(16);
                         }
 
@@ -849,14 +990,30 @@ pub fn cloud_library_scan_tags_batch(
                         if let Some(metadata) = format.metadata().current() {
                             for tag in metadata.tags() {
                                 match tag.std_key {
-                                    Some(symphonia::core::meta::StandardTagKey::TrackTitle) => title = tag.value.to_string(),
-                                    Some(symphonia::core::meta::StandardTagKey::Artist) => artist = tag.value.to_string(),
-                                    Some(symphonia::core::meta::StandardTagKey::Album) => album = tag.value.to_string(),
-                                    Some(symphonia::core::meta::StandardTagKey::AlbumArtist) => album_artist = tag.value.to_string(),
-                                    Some(symphonia::core::meta::StandardTagKey::Genre) => genre = tag.value.to_string(),
-                                    Some(symphonia::core::meta::StandardTagKey::Date) => year = tag.value.to_string().parse().unwrap_or(0),
-                                    Some(symphonia::core::meta::StandardTagKey::TrackNumber) => track_number = tag.value.to_string().parse().unwrap_or(0),
-                                    Some(symphonia::core::meta::StandardTagKey::DiscNumber) => disc_number = tag.value.to_string().parse().unwrap_or(1),
+                                    Some(symphonia::core::meta::StandardTagKey::TrackTitle) => {
+                                        title = tag.value.to_string()
+                                    }
+                                    Some(symphonia::core::meta::StandardTagKey::Artist) => {
+                                        artist = tag.value.to_string()
+                                    }
+                                    Some(symphonia::core::meta::StandardTagKey::Album) => {
+                                        album = tag.value.to_string()
+                                    }
+                                    Some(symphonia::core::meta::StandardTagKey::AlbumArtist) => {
+                                        album_artist = tag.value.to_string()
+                                    }
+                                    Some(symphonia::core::meta::StandardTagKey::Genre) => {
+                                        genre = tag.value.to_string()
+                                    }
+                                    Some(symphonia::core::meta::StandardTagKey::Date) => {
+                                        year = tag.value.to_string().parse().unwrap_or(0)
+                                    }
+                                    Some(symphonia::core::meta::StandardTagKey::TrackNumber) => {
+                                        track_number = tag.value.to_string().parse().unwrap_or(0)
+                                    }
+                                    Some(symphonia::core::meta::StandardTagKey::DiscNumber) => {
+                                        disc_number = tag.value.to_string().parse().unwrap_or(1)
+                                    }
                                     _ => {}
                                 }
                             }
@@ -864,8 +1021,10 @@ pub fn cloud_library_scan_tags_batch(
 
                         // Filename fallback if tags are missing or title is still fallback
                         if artist.is_empty() || album.is_empty() {
-                            let (fn_title, fn_artist, fn_album, fn_track) = parse_filename_metadata(&name);
-                            if !fn_title.is_empty() && (title == fallback_title || title.is_empty()) {
+                            let (fn_title, fn_artist, fn_album, fn_track) =
+                                parse_filename_metadata(&name);
+                            if !fn_title.is_empty() && (title == fallback_title || title.is_empty())
+                            {
                                 title = fn_title;
                             }
                             if artist.is_empty() && !fn_artist.is_empty() {
@@ -891,7 +1050,11 @@ pub fn cloud_library_scan_tags_batch(
                             }
                         }
 
-                        let album_clean = if album.is_empty() { "unknown_album" } else { &album };
+                        let album_clean = if album.is_empty() {
+                            "unknown_album"
+                        } else {
+                            &album
+                        };
                         let artist_clean = if !album_artist.is_empty() {
                             &album_artist
                         } else if !artist.is_empty() {
@@ -899,8 +1062,13 @@ pub fn cloud_library_scan_tags_batch(
                         } else {
                             "unknown_artist"
                         };
-                        let album_key = format!("{}::{}", artist_clean.trim().to_lowercase(), album_clean.trim().to_lowercase());
-                        let art_target = art_dir.join(format!("{}.img", sanitize_filename(&album_key)));
+                        let album_key = format!(
+                            "{}::{}",
+                            artist_clean.trim().to_lowercase(),
+                            album_clean.trim().to_lowercase()
+                        );
+                        let art_target =
+                            art_dir.join(format!("{}.img", sanitize_filename(&album_key)));
                         let mut artwork_path = String::new();
 
                         if art_target.exists() {
@@ -910,7 +1078,9 @@ pub fn cloud_library_scan_tags_batch(
                                 artwork_path = art_target.to_string_lossy().to_string();
                             }
                         } else if !album.is_empty() || !title.is_empty() {
-                            if let Some(online_b) = fetch_online_cover_art(artist_clean, album_clean, &title).await {
+                            if let Some(online_b) =
+                                fetch_online_cover_art(artist_clean, album_clean, &title).await
+                            {
                                 if std::fs::write(&art_target, &online_b).is_ok() {
                                     artwork_path = art_target.to_string_lossy().to_string();
                                 }
@@ -937,22 +1107,40 @@ pub fn cloud_library_scan_tags_batch(
 
                     // 3. Fallback for completely unprobed files (e.g. raw WAV)
                     let (fn_title, fn_artist, fn_album, fn_track) = parse_filename_metadata(&name);
-                    let title = if !fn_title.is_empty() { fn_title } else { fallback_title };
+                    let title = if !fn_title.is_empty() {
+                        fn_title
+                    } else {
+                        fallback_title
+                    };
                     let artist = fn_artist;
                     let album = fn_album;
                     let album_artist = artist.clone();
                     let track_number = fn_track;
 
-                    let album_clean = if album.is_empty() { "unknown_album" } else { &album };
-                    let artist_clean = if !artist.is_empty() { &artist } else { "unknown_artist" };
-                    let album_key = format!("{}::{}", artist_clean.trim().to_lowercase(), album_clean.trim().to_lowercase());
+                    let album_clean = if album.is_empty() {
+                        "unknown_album"
+                    } else {
+                        &album
+                    };
+                    let artist_clean = if !artist.is_empty() {
+                        &artist
+                    } else {
+                        "unknown_artist"
+                    };
+                    let album_key = format!(
+                        "{}::{}",
+                        artist_clean.trim().to_lowercase(),
+                        album_clean.trim().to_lowercase()
+                    );
                     let art_target = art_dir.join(format!("{}.img", sanitize_filename(&album_key)));
                     let mut artwork_path = String::new();
 
                     if art_target.exists() {
                         artwork_path = art_target.to_string_lossy().to_string();
                     } else if !album.is_empty() || !title.is_empty() {
-                        if let Some(online_b) = fetch_online_cover_art(artist_clean, album_clean, &title).await {
+                        if let Some(online_b) =
+                            fetch_online_cover_art(artist_clean, album_clean, &title).await
+                        {
                             if std::fs::write(&art_target, &online_b).is_ok() {
                                 artwork_path = art_target.to_string_lossy().to_string();
                             }
@@ -994,7 +1182,13 @@ pub fn cloud_library_pending(limit: u32) -> Result<Vec<String>, String> {
 }
 
 pub fn cloud_library_tracks() -> Result<Vec<CloudTrack>, String> {
-    with_db(|db| Ok(db.list_tracks()?.into_iter().map(CloudTrack::from).collect()))
+    with_db(|db| {
+        Ok(db
+            .list_tracks()?
+            .into_iter()
+            .map(CloudTrack::from)
+            .collect())
+    })
 }
 
 pub fn cloud_library_counts() -> Result<ScanCounts, String> {
@@ -1161,30 +1355,27 @@ pub struct KeyValuePair {
 
 /// Stores a persistent key-value configuration pair in SQLite.
 pub fn cloud_db_set_kv(key: String, value: String) -> Result<(), String> {
-    with_db(|db| {
-        db.set_kv(&key, &value).map_err(anyhow::Error::from)
-    })
+    with_db(|db| db.set_kv(&key, &value).map_err(anyhow::Error::from))
 }
 
 /// Reads a persistent key-value configuration pair from SQLite.
 pub fn cloud_db_get_kv(key: String) -> Result<Option<String>, String> {
-    with_db(|db| {
-        db.get_kv(&key).map_err(anyhow::Error::from)
-    })
+    with_db(|db| db.get_kv(&key).map_err(anyhow::Error::from))
 }
 
 /// Deletes a persistent key-value configuration pair from SQLite.
 pub fn cloud_db_delete_kv(key: String) -> Result<(), String> {
-    with_db(|db| {
-        db.delete_kv(&key).map_err(anyhow::Error::from)
-    })
+    with_db(|db| db.delete_kv(&key).map_err(anyhow::Error::from))
 }
 
 /// Lists all key-value configuration pairs with keys matching the prefix.
 pub fn cloud_db_list_kv_prefix(prefix: String) -> Result<Vec<KeyValuePair>, String> {
     with_db(|db| {
         let items = db.list_kv_prefix(&prefix).map_err(anyhow::Error::from)?;
-        Ok(items.into_iter().map(|(key, value)| KeyValuePair { key, value }).collect())
+        Ok(items
+            .into_iter()
+            .map(|(key, value)| KeyValuePair { key, value })
+            .collect())
     })
 }
 
@@ -1231,7 +1422,9 @@ impl From<AutoEqProfileData> for crate::cloud::db::AutoEqProfileRow {
 /// Searches the persistent AutoEQ database for headphone/IEM profiles matching a query.
 pub fn cloud_db_search_autoeq(query: String) -> Result<Vec<AutoEqProfileData>, String> {
     with_db(|db| {
-        let rows = db.search_autoeq_profiles(&query).map_err(anyhow::Error::from)?;
+        let rows = db
+            .search_autoeq_profiles(&query)
+            .map_err(anyhow::Error::from)?;
         Ok(rows.into_iter().map(AutoEqProfileData::from).collect())
     })
 }
@@ -1297,7 +1490,8 @@ mod tests {
 
     #[test]
     fn test_parse_filename_metadata() {
-        let (title, artist, album, track) = parse_filename_metadata("Rockstar - A. R. Rahman - 11- Nadaan Parinde.wav");
+        let (title, artist, album, track) =
+            parse_filename_metadata("Rockstar - A. R. Rahman - 11- Nadaan Parinde.wav");
         assert_eq!(album, "Rockstar");
         assert_eq!(artist, "A. R. Rahman");
         assert_eq!(track, 11);
@@ -1318,8 +1512,10 @@ mod tests {
 
     #[test]
     fn test_url_encode() {
-        assert_eq!(url_encode("Linkin Park One More Light"), "Linkin+Park+One+More+Light");
+        assert_eq!(
+            url_encode("Linkin Park One More Light"),
+            "Linkin+Park+One+More+Light"
+        );
         assert_eq!(url_encode("A. R. Rahman"), "A.+R.+Rahman");
     }
 }
-

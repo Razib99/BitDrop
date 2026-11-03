@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::convert::TryInto;
 use crate::cloud::models::{FlacMetadata, PictureBlockInfo, StreamInfo};
 use anyhow::{anyhow, bail, Result};
+use std::collections::HashMap;
+use std::convert::TryInto;
 
 pub enum ParseProgress {
     Complete(FlacMetadata),
@@ -74,7 +74,10 @@ impl FlacProgressiveParser {
                 0 => {
                     // STREAMINFO (mandatory 34 bytes)
                     if block_length != 34 {
-                        bail!("Invalid STREAMINFO length: expected 34, got {}", block_length);
+                        bail!(
+                            "Invalid STREAMINFO length: expected 34, got {}",
+                            block_length
+                        );
                     }
                     if block_data_start + 34 > buffer.len() {
                         return Ok(ParseProgress::NeedMoreBytes {
@@ -84,7 +87,8 @@ impl FlacProgressiveParser {
                         });
                     }
 
-                    let si = Self::parse_streaminfo(&buffer[block_data_start..block_data_start + 34])?;
+                    let si =
+                        Self::parse_streaminfo(&buffer[block_data_start..block_data_start + 34])?;
                     stream_info = Some(si);
                 }
                 4 => {

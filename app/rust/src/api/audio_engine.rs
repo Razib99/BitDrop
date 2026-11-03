@@ -1,27 +1,27 @@
 #[cfg(target_os = "android")]
 use oboe::{
     AudioApi, AudioOutputCallback, AudioOutputStreamSafe, AudioStream, AudioStreamAsync,
-    AudioStreamBase,
-    AudioStreamBuilder, DataCallbackResult, Output, PerformanceMode, SharingMode, Stereo,
+    AudioStreamBase, AudioStreamBuilder, DataCallbackResult, Output, PerformanceMode, SharingMode,
+    Stereo,
 };
+use std::fs::File;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::thread;
 use std::time::Duration;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::probe::Hint;
-use std::fs::File;
-use std::path::PathBuf;
-use std::thread;
 
 use crate::cloud::media_source::CloudMediaSource;
-use rubato::Resampler;
 pub use crate::dsp::{
     downmix_to_stereo, BoundaryKind, BoundaryMarker, DspConfigSnapshot, DspPipelineV2, EqBandSpec,
     TripleBuffer, VisualizerFrameData, EQ_HIGH_PASS, EQ_HIGH_SHELF, EQ_LOW_PASS, EQ_LOW_SHELF,
     EQ_PEAK, ISO_10_BAND, MAX_EQ_BANDS,
 };
+use rubato::Resampler;
 
 /// Capacity for the lock-free audio ring buffer: 768,000 floats (~3MB memory),
 /// equivalent to 2 seconds of 192kHz stereo audio or 8 seconds of 48kHz stereo audio.
@@ -78,12 +78,29 @@ pub fn enable_hardware_flush_to_zero() {
 
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
-    PlaybackState { is_playing: bool, is_buffering: bool },
-    TrackStarted { file_id: String },
-    TrackEnded { file_id: String },
-    PositionUpdate { position_ms: u32, duration_ms: u32 },
-    BufferTelemetry { buffered_ms: u32, fetches_in_flight: u32, bytes_fetched: u64 },
-    LimiterTelemetry { gr_millidb: u32, clipped_samples: u64 },
+    PlaybackState {
+        is_playing: bool,
+        is_buffering: bool,
+    },
+    TrackStarted {
+        file_id: String,
+    },
+    TrackEnded {
+        file_id: String,
+    },
+    PositionUpdate {
+        position_ms: u32,
+        duration_ms: u32,
+    },
+    BufferTelemetry {
+        buffered_ms: u32,
+        fetches_in_flight: u32,
+        bytes_fetched: u64,
+    },
+    LimiterTelemetry {
+        gr_millidb: u32,
+        clipped_samples: u64,
+    },
 }
 
 lazy_static::lazy_static! {
@@ -133,8 +150,6 @@ static STREAM_LOST: AtomicBool = AtomicBool::new(false);
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 static STREAM_RESTARTS: AtomicU64 = AtomicU64::new(0);
 
-
-
 #[cfg(not(target_os = "android"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -150,9 +165,7 @@ unsafe impl Send for CpalStreamWrapper {}
 #[cfg(not(target_os = "android"))]
 unsafe impl Sync for CpalStreamWrapper {}
 
-lazy_static::lazy_static! {
-
-}
+lazy_static::lazy_static! {}
 #[derive(Clone, Default)]
 pub struct PlayerState {
     pub target_sample_rate: u32,
@@ -163,7 +176,7 @@ pub struct PlayerState {
     pub current_track_id: String,
     pub hardware_sample_rate: u32,
     pub hardware_format: String,
-    
+
     pub eq_enabled: bool,
     pub eq_gains: [f32; 10],
     pub eq_preamp: f32,
@@ -271,7 +284,6 @@ pub fn publish_dsp_config(state: &PlayerState) {
     DSP_TRIPLE_BUFFER.publish(snap);
 }
 
-
 pub enum DecoderCmd {
     Play(String), // local file path
     /// A track streamed from cloud storage over HTTP byte ranges. The decode
@@ -299,7 +311,6 @@ pub enum DecoderCmd {
     Seek(u32), // ms
     Stop,
 }
-
 
 /// A decoder set up and ready to pull packets from.
 struct OpenedTrack {
@@ -418,7 +429,10 @@ impl AudioOutputCallback for PlayerCallback {
     ) -> DataCallbackResult {
         CONSUMED_FRAMES.fetch_add(audio_data.len() as u64, Ordering::Relaxed);
         let slice: &mut [f32] = unsafe {
-            std::slice::from_raw_parts_mut(audio_data.as_mut_ptr() as *mut f32, audio_data.len() * 2)
+            std::slice::from_raw_parts_mut(
+                audio_data.as_mut_ptr() as *mut f32,
+                audio_data.len() * 2,
+            )
         };
         match self.renderer.render_interleaved(slice, 2) {
             crate::renderer::RenderAction::Continue => DataCallbackResult::Continue,
@@ -441,13 +455,15 @@ pub fn init_engine() {
 
     let (load_tx, load_rx) = crossbeam_channel::unbounded::<DecoderCmd>();
     *LOAD_SENDER.lock().unwrap() = Some(load_tx);
-    let (loaded_tx, loaded_rx) =
-        crossbeam_channel::bounded::<(u64, String, Box<OpenedTrack>)>(2);
+    let (loaded_tx, loaded_rx) = crossbeam_channel::bounded::<(u64, String, Box<OpenedTrack>)>(2);
 
     let (audio_tx, audio_rx) = rtrb::RingBuffer::<f32>::new(RING_BUFFER_CAPACITY);
-    let (boundary_tx, boundary_rx) = rtrb::RingBuffer::<BoundaryMarker>::new(BOUNDARY_QUEUE_CAPACITY);
-    let (triggered_tx, mut triggered_rx) = rtrb::RingBuffer::<BoundaryMarker>::new(BOUNDARY_QUEUE_CAPACITY);
-    let (next_loaded_tx, next_loaded_rx) = crossbeam_channel::bounded::<(String, Box<OpenedTrack>)>(1);
+    let (boundary_tx, boundary_rx) =
+        rtrb::RingBuffer::<BoundaryMarker>::new(BOUNDARY_QUEUE_CAPACITY);
+    let (triggered_tx, mut triggered_rx) =
+        rtrb::RingBuffer::<BoundaryMarker>::new(BOUNDARY_QUEUE_CAPACITY);
+    let (next_loaded_tx, next_loaded_rx) =
+        crossbeam_channel::bounded::<(String, Box<OpenedTrack>)>(1);
 
     #[cfg(not(target_os = "android"))]
     {
@@ -593,7 +609,10 @@ pub fn init_engine() {
     thread::spawn(move || {
         while let Ok(cmd) = load_rx.recv() {
             let generation = LOAD_GENERATION.load(Ordering::SeqCst);
-            let is_next = matches!(cmd, DecoderCmd::SetNextTrack(_) | DecoderCmd::SetNextCloud { .. });
+            let is_next = matches!(
+                cmd,
+                DecoderCmd::SetNextTrack(_) | DecoderCmd::SetNextCloud { .. }
+            );
 
             let opened = match cmd {
                 DecoderCmd::Play(path) | DecoderCmd::SetNextTrack(path) => {
@@ -617,7 +636,8 @@ pub fn init_engine() {
                     total_size,
                     cache_dir,
                     ext,
-                } | DecoderCmd::SetNextCloud {
+                }
+                | DecoderCmd::SetNextCloud {
                     file_id,
                     url,
                     auth_token,
@@ -631,9 +651,7 @@ pub fn init_engine() {
                     total_size,
                     PathBuf::from(cache_dir),
                 ) {
-                    Ok(source) => {
-                        open_media_source(Box::new(source), &ext).map(|t| (file_id, t))
-                    }
+                    Ok(source) => open_media_source(Box::new(source), &ext).map(|t| (file_id, t)),
                     Err(e) => {
                         eprintln!("[bitdrop] could not open cloud track {}: {}", file_id, e);
                         None
@@ -722,8 +740,10 @@ pub fn init_engine() {
                 match cmd {
                     // Play and PlayCloud are handled by the loader thread;
                     // they never reach here.
-                    DecoderCmd::Play(_) | DecoderCmd::PlayCloud { .. }
-                    | DecoderCmd::SetNextTrack(_) | DecoderCmd::SetNextCloud { .. } => {}
+                    DecoderCmd::Play(_)
+                    | DecoderCmd::PlayCloud { .. }
+                    | DecoderCmd::SetNextTrack(_)
+                    | DecoderCmd::SetNextCloud { .. } => {}
                     DecoderCmd::Pause => {
                         PLAYER_STATE.lock().unwrap().is_playing = false;
                         CALLBACK_IS_PLAYING.store(false, Ordering::Release);
@@ -918,7 +938,9 @@ pub fn init_engine() {
                 }
             }
 
-            if let (Some(format), Some(decoder)) = (current_format.as_mut(), current_decoder.as_mut()) {
+            if let (Some(format), Some(decoder)) =
+                (current_format.as_mut(), current_decoder.as_mut())
+            {
                 let next = format.next_packet();
                 let ended = match &next {
                     Ok(_) => {
@@ -951,17 +973,23 @@ pub fn init_engine() {
                             let track_sr = audio_buf.spec().rate;
                             let channels = audio_buf.spec().channels.count();
 
-                            let mut sample_buf = SampleBuffer::<f32>::new(audio_buf.capacity() as u64, *audio_buf.spec());
+                            let mut sample_buf = SampleBuffer::<f32>::new(
+                                audio_buf.capacity() as u64,
+                                *audio_buf.spec(),
+                            );
                             sample_buf.copy_interleaved_ref(audio_buf);
-                            
+
                             // DOWNMIX TO STEREO via ITU-R BS.775
                             let mut samples = downmix_to_stereo(sample_buf.samples(), channels);
 
                             // Frame-exact seek trimming: discard leading pre-roll frames before seek target
                             if let Some(target_frame) = seek_target_frame {
                                 if let Some(t) = tb {
-                                    let cur_sr = PLAYER_STATE.lock().unwrap().source_sample_rate.max(1);
-                                    let packet_frame = (packet.ts() * t.numer as u64 * cur_sr as u64) / t.denom as u64;
+                                    let cur_sr =
+                                        PLAYER_STATE.lock().unwrap().source_sample_rate.max(1);
+                                    let packet_frame =
+                                        (packet.ts() * t.numer as u64 * cur_sr as u64)
+                                            / t.denom as u64;
                                     if packet_frame < target_frame {
                                         let frames_to_skip = (target_frame - packet_frame) as usize;
                                         let packet_frames = samples.len() / 2;
@@ -978,11 +1006,13 @@ pub fn init_engine() {
                                     seek_target_frame = None;
                                 }
                             }
-                            
+
                             // High-quality Sinc Resampling via rubato 256-sinc
                             if track_sr != target_sr && target_sr > 0 {
                                 let needs_new_resampler = match &current_resampler {
-                                    Some((in_sr, out_sr, _)) => *in_sr != track_sr || *out_sr != target_sr,
+                                    Some((in_sr, out_sr, _)) => {
+                                        *in_sr != track_sr || *out_sr != target_sr
+                                    }
                                     None => true,
                                 };
                                 if needs_new_resampler {
@@ -1012,7 +1042,8 @@ pub fn init_engine() {
                                 }
 
                                 if let Some((_, _, ref mut resampler)) = current_resampler {
-                                    let samples_f64: Vec<f64> = samples.iter().map(|&s| s as f64).collect();
+                                    let samples_f64: Vec<f64> =
+                                        samples.iter().map(|&s| s as f64).collect();
                                     resample_in_buf.extend_from_slice(&samples_f64);
                                     let chunk_size = resampler.input_frames_next();
                                     let chunk_samples = chunk_size * 2;
@@ -1034,7 +1065,7 @@ pub fn init_engine() {
                                     samples = resampled_out.into_iter().map(|s| s as f32).collect();
                                 }
                             }
-                            
+
                             if !samples.is_empty() {
                                 let slots = audio_producer.slots();
                                 let to_write = samples.len().min(slots);
@@ -1049,7 +1080,8 @@ pub fn init_engine() {
                                         chunk.commit_all();
                                         let pushed = (to_write / 2) as u64;
                                         decoder_frames_pushed += pushed;
-                                        DECODER_FRAMES_PUSHED.store(decoder_frames_pushed, Ordering::Release);
+                                        DECODER_FRAMES_PUSHED
+                                            .store(decoder_frames_pushed, Ordering::Release);
                                     }
                                 }
                                 if to_write < samples.len() {
@@ -1064,12 +1096,14 @@ pub fn init_engine() {
                                 } else {
                                     state.target_sample_rate
                                 };
-                                let queued_samples = audio_producer.buffer().capacity() - audio_producer.slots();
+                                let queued_samples =
+                                    audio_producer.buffer().capacity() - audio_producer.slots();
                                 let queued_frames = queued_samples / 2;
                                 state.buffered_ms =
                                     ((queued_frames as u64 * 1000) / sr as u64) as u32;
 
-                                state.buffering = crate::cloud::media_source::fetches_in_flight() > 0
+                                state.buffering = crate::cloud::media_source::fetches_in_flight()
+                                    > 0
                                     && state.buffered_ms < 500;
 
                                 if state.gate_output && state.buffered_ms >= PREBUFFER_MS {
@@ -1079,12 +1113,10 @@ pub fn init_engine() {
 
                                 if let Some(t) = tb {
                                     let time = t.calc_time(packet.ts());
-                                    let decoded = (time.seconds * 1000
-                                        + (time.frac * 1000.0) as u64)
-                                        as u32;
+                                    let decoded =
+                                        (time.seconds * 1000 + (time.frac * 1000.0) as u64) as u32;
                                     state.decoded_ms = decoded;
-                                    state.position_ms =
-                                        decoded.saturating_sub(state.buffered_ms);
+                                    state.position_ms = decoded.saturating_sub(state.buffered_ms);
                                 }
                             }
                         }
@@ -1096,17 +1128,21 @@ pub fn init_engine() {
                             let chunk_size = resampler.input_frames_next();
                             let chunk_samples = chunk_size * 2;
                             resample_in_buf.resize(chunk_samples, 0.0);
-                            if let Ok(slice) = rubato::audioadapter_buffers::direct::InterleavedSlice::new(
-                                &resample_in_buf,
-                                2,
-                                chunk_size,
-                            ) {
+                            if let Ok(slice) =
+                                rubato::audioadapter_buffers::direct::InterleavedSlice::new(
+                                    &resample_in_buf,
+                                    2,
+                                    chunk_size,
+                                )
+                            {
                                 if let Ok(out) = resampler.process(&slice, None) {
-                                    let remaining: Vec<f32> = out.take_data().into_iter().map(|s| s as f32).collect();
+                                    let remaining: Vec<f32> =
+                                        out.take_data().into_iter().map(|s| s as f32).collect();
                                     let slots = audio_producer.slots();
                                     let to_write = remaining.len().min(slots);
                                     if to_write > 0 {
-                                        if let Ok(mut chunk) = audio_producer.write_chunk(to_write) {
+                                        if let Ok(mut chunk) = audio_producer.write_chunk(to_write)
+                                        {
                                             let (s1, s2) = chunk.as_mut_slices();
                                             let s1_len = s1.len();
                                             s1.copy_from_slice(&remaining[..s1_len]);
@@ -1116,7 +1152,8 @@ pub fn init_engine() {
                                             chunk.commit_all();
                                             let pushed = (to_write / 2) as u64;
                                             decoder_frames_pushed += pushed;
-                                            DECODER_FRAMES_PUSHED.store(decoder_frames_pushed, Ordering::Release);
+                                            DECODER_FRAMES_PUSHED
+                                                .store(decoder_frames_pushed, Ordering::Release);
                                         }
                                     }
                                 }
@@ -1158,7 +1195,10 @@ pub fn init_engine() {
 
                             continue;
                         } else {
-                            let marker = BoundaryMarker::track_ended(decoder_frames_pushed, &current_track_id_str);
+                            let marker = BoundaryMarker::track_ended(
+                                decoder_frames_pushed,
+                                &current_track_id_str,
+                            );
                             let _ = boundary_producer.push(marker);
                             let mut state = PLAYER_STATE.lock().unwrap();
                             state.buffering = false;
@@ -1169,7 +1209,10 @@ pub fn init_engine() {
                         }
                     } else {
                         // Standard EOF: drain all buffered audio with TrackEnded
-                        let marker = BoundaryMarker::track_ended(decoder_frames_pushed, &current_track_id_str);
+                        let marker = BoundaryMarker::track_ended(
+                            decoder_frames_pushed,
+                            &current_track_id_str,
+                        );
                         let _ = boundary_producer.push(marker);
 
                         let mut state = PLAYER_STATE.lock().unwrap();
@@ -1230,12 +1273,19 @@ fn open_output_stream(sample_rate: Option<u32>) {
     }
 
     let opened = builder
-        .set_callback(make_callback(consumer, boundary_consumer, triggered_producer))
+        .set_callback(make_callback(
+            consumer,
+            boundary_consumer,
+            triggered_producer,
+        ))
         .open_stream();
 
     let opened = match opened {
         Ok(stream) => {
-            eprintln!("[bitdrop] opened exclusive stream: rate={}", stream.get_sample_rate());
+            eprintln!(
+                "[bitdrop] opened exclusive stream: rate={}",
+                stream.get_sample_rate()
+            );
             Some(stream)
         }
         Err(e) => {
@@ -1264,7 +1314,11 @@ fn open_output_stream(sample_rate: Option<u32>) {
                 }
             }
             shared_builder
-                .set_callback(make_callback(consumer, boundary_consumer, triggered_producer))
+                .set_callback(make_callback(
+                    consumer,
+                    boundary_consumer,
+                    triggered_producer,
+                ))
                 .open_stream()
                 .map_err(|e| eprintln!("[bitdrop] no audio output: {e:?}"))
                 .ok()
@@ -1316,7 +1370,10 @@ fn start_stream_watchdog() {
             };
 
             if STREAM_LOST.load(Ordering::SeqCst) {
-                eprintln!("[bitdrop] reopening output stream after loss (rate={:?})", current_sr);
+                eprintln!(
+                    "[bitdrop] reopening output stream after loss (rate={:?})",
+                    current_sr
+                );
                 open_output_stream(current_sr);
                 last_frames = CONSUMED_FRAMES.load(Ordering::Relaxed);
                 stalled_ticks = 0;
@@ -1331,7 +1388,10 @@ fn start_stream_watchdog() {
                 // Two ticks, so a single scheduling hiccup does not tear down
                 // a working stream.
                 if stalled_ticks >= 2 {
-                    eprintln!("[bitdrop] output stalled; reopening stream (rate={:?})", current_sr);
+                    eprintln!(
+                        "[bitdrop] output stalled; reopening stream (rate={:?})",
+                        current_sr
+                    );
                     open_output_stream(current_sr);
                     stalled_ticks = 0;
                 }
@@ -1416,7 +1476,9 @@ pub fn engine_set_next_cloud(
 }
 
 #[flutter_rust_bridge::frb]
-pub fn engine_events_stream(sink: crate::frb_generated::StreamSink<EngineEvent>) -> Result<(), String> {
+pub fn engine_events_stream(
+    sink: crate::frb_generated::StreamSink<EngineEvent>,
+) -> Result<(), String> {
     let mut guard = EVENT_SINK.lock().map_err(|e| e.to_string())?;
     *guard = Some(sink);
     Ok(())
@@ -1570,12 +1632,13 @@ pub fn engine_cached_ranges() -> Vec<CachedRangeMs> {
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_output_state() -> EngineOutputState {
     let state = PLAYER_STATE.lock().unwrap();
-    let has_custom_specs = state.eq_specs.as_ref().map_or(false, |specs| {
-        specs.iter().any(|s| s.gain_db.abs() > 0.01)
-    });
+    let has_custom_specs = state
+        .eq_specs
+        .as_ref()
+        .map_or(false, |specs| specs.iter().any(|s| s.gain_db.abs() > 0.01));
     let has_graphic_gains = state.eq_gains.iter().any(|g| g.abs() > 0.01);
-    let dsp_active = state.eq_enabled
-        && (has_custom_specs || has_graphic_gains || state.eq_preamp.abs() > 0.01);
+    let dsp_active =
+        state.eq_enabled && (has_custom_specs || has_graphic_gains || state.eq_preamp.abs() > 0.01);
 
     EngineOutputState {
         source_codec: state.source_codec.clone(),
@@ -1637,7 +1700,8 @@ pub fn engine_get_diagnostics() -> EngineDiagnosticsData {
         48000.0
     };
     let queued_samples = (buffer_ahead_seconds * sr * 2.0) as usize;
-    let pcm_fill_percent = ((queued_samples as f64 / RING_BUFFER_CAPACITY as f64) * 100.0).clamp(0.0, 100.0);
+    let pcm_fill_percent =
+        ((queued_samples as f64 / RING_BUFFER_CAPACITY as f64) * 100.0).clamp(0.0, 100.0);
 
     let underrun_count = crate::renderer::ENGINE_UNDERRUNS.load(Ordering::Relaxed);
     let speed_mbps = crate::cloud::media_source::measured_throughput_bps() as f64 / 1_000_000.0;
@@ -1649,8 +1713,10 @@ pub fn engine_get_diagnostics() -> EngineDiagnosticsData {
     let time_to_first_byte_ms = crate::cloud::media_source::last_ttfb_ms();
     let cache_size_bytes = crate::api::cloud_library::get_total_cache_bytes();
 
-    let current_file_cached_percent = if state.duration_ms > 0 && !state.current_track_id.is_empty() {
-        let (total_bytes, ranges) = crate::cloud::media_source::cached_byte_ranges(Some(&state.current_track_id));
+    let current_file_cached_percent = if state.duration_ms > 0 && !state.current_track_id.is_empty()
+    {
+        let (total_bytes, ranges) =
+            crate::cloud::media_source::cached_byte_ranges(Some(&state.current_track_id));
         if total_bytes > 0 {
             let cached_sum: u64 = ranges.iter().map(|(s, e)| e.saturating_sub(*s)).sum();
             ((cached_sum * 100) / total_bytes).min(100) as u32
@@ -1716,7 +1782,9 @@ pub fn init_app() {
     flutter_rust_bridge::setup_default_user_utils();
     init_engine();
 }
-pub fn play_audio_file_android(_path: String) -> Result<String, String> { Ok("".to_string()) }
+pub fn play_audio_file_android(_path: String) -> Result<String, String> {
+    Ok("".to_string())
+}
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_set_eq(gains: Vec<f32>) {
@@ -1805,9 +1873,24 @@ mod tests {
 
         // Test parametric band configuration (e.g. AutoEQ profile with shelves + peaks)
         let specs = [
-            EqBandSpec { kind: EQ_LOW_SHELF, freq: 105.0, gain_db: 5.5, q: 0.71 },
-            EqBandSpec { kind: EQ_PEAK, freq: 1000.0, gain_db: -2.0, q: 1.4 },
-            EqBandSpec { kind: EQ_HIGH_SHELF, freq: 10000.0, gain_db: -3.0, q: 0.71 },
+            EqBandSpec {
+                kind: EQ_LOW_SHELF,
+                freq: 105.0,
+                gain_db: 5.5,
+                q: 0.71,
+            },
+            EqBandSpec {
+                kind: EQ_PEAK,
+                freq: 1000.0,
+                gain_db: -2.0,
+                q: 1.4,
+            },
+            EqBandSpec {
+                kind: EQ_HIGH_SHELF,
+                freq: 10000.0,
+                gain_db: -3.0,
+                q: 0.71,
+            },
         ];
         dsp.install_parameters(&specs, -3.5, 0.0, 1.0, 0.0, false);
         assert_eq!(dsp.active_bands(), 3);
@@ -1850,22 +1933,16 @@ mod tests {
         let in_sr = 96000;
         let out_sr = 48000;
         let ratio = out_sr as f64 / in_sr as f64;
-        let params = rubato::SincInterpolationParameters::new(64, rubato::WindowFunction::BlackmanHarris2);
-        let mut resampler = rubato::Async::<f32>::new_sinc(
-            ratio,
-            1.0,
-            &params,
-            1024,
-            2,
-            rubato::FixedAsync::Input,
-        ).expect("Resampler initialization");
+        let params =
+            rubato::SincInterpolationParameters::new(64, rubato::WindowFunction::BlackmanHarris2);
+        let mut resampler =
+            rubato::Async::<f32>::new_sinc(ratio, 1.0, &params, 1024, 2, rubato::FixedAsync::Input)
+                .expect("Resampler initialization");
 
         let input_samples = vec![0.25f32; 1024 * 2]; // 1024 stereo frames
-        let slice = rubato::audioadapter_buffers::direct::InterleavedSlice::new(
-            &input_samples,
-            2,
-            1024,
-        ).expect("InterleavedSlice");
+        let slice =
+            rubato::audioadapter_buffers::direct::InterleavedSlice::new(&input_samples, 2, 1024)
+                .expect("InterleavedSlice");
 
         let out = resampler.process(&slice, None).expect("Resample process");
         let resampled = out.take_data();
@@ -1923,7 +2000,10 @@ mod tests {
                 if packet.track_id() == track_id {
                     if let Ok(audio_buf) = decoder.decode(&packet) {
                         let channels = audio_buf.spec().channels.count();
-                        let mut sbuf = SampleBuffer::<f32>::new(audio_buf.capacity() as u64, *audio_buf.spec());
+                        let mut sbuf = SampleBuffer::<f32>::new(
+                            audio_buf.capacity() as u64,
+                            *audio_buf.spec(),
+                        );
                         sbuf.copy_interleaved_ref(audio_buf);
                         let stereo = downmix_to_stereo(sbuf.samples(), channels);
                         for i in 0..(stereo.len() / 2) {
@@ -1970,7 +2050,9 @@ mod tests {
             // --- DECODER THREAD STEP ---
             if !eof_reached {
                 let avail_slots = audio_prod.slots();
-                let frames_to_push = (avail_slots / 2).min(total_source_frames - source_idx).min(1024);
+                let frames_to_push = (avail_slots / 2)
+                    .min(total_source_frames - source_idx)
+                    .min(1024);
                 if frames_to_push > 0 {
                     if let Ok(mut chunk) = audio_prod.write_chunk(frames_to_push * 2) {
                         let (s1, s2) = chunk.as_mut_slices();
@@ -2052,19 +2134,41 @@ mod tests {
             }
         }
 
-        assert!(track_ended_fired, "TrackEnded must fire when all frames are played");
-        assert_eq!(rendered_frames.len(), total_source_frames, "Rendered frames must exactly equal source frames (NO CUTOFF)");
+        assert!(
+            track_ended_fired,
+            "TrackEnded must fire when all frames are played"
+        );
+        assert_eq!(
+            rendered_frames.len(),
+            total_source_frames,
+            "Rendered frames must exactly equal source frames (NO CUTOFF)"
+        );
         let actual_last_frame = *rendered_frames.last().unwrap();
-        assert_eq!(actual_last_frame.0.to_bits(), expected_last_frame.0.to_bits(), "L channel last frame bit-exact match");
-        assert_eq!(actual_last_frame.1.to_bits(), expected_last_frame.1.to_bits(), "R channel last frame bit-exact match");
-        assert_eq!(audio_cons.slots(), 0, "All frames in ring buffer must be consumed");
+        assert_eq!(
+            actual_last_frame.0.to_bits(),
+            expected_last_frame.0.to_bits(),
+            "L channel last frame bit-exact match"
+        );
+        assert_eq!(
+            actual_last_frame.1.to_bits(),
+            expected_last_frame.1.to_bits(),
+            "R channel last frame bit-exact match"
+        );
+        assert_eq!(
+            audio_cons.slots(),
+            0,
+            "All frames in ring buffer must be consumed"
+        );
 
         eprintln!("=======================================================");
         eprintln!("        Golden Test 4: No Cutoff Ending Verified       ");
         eprintln!("=======================================================");
         eprintln!(" Source Frames   : {}", total_source_frames);
         eprintln!(" Rendered Frames : {}", rendered_frames.len());
-        eprintln!(" Last Frame Match: 100% Bit-Exact ({:?})", actual_last_frame);
+        eprintln!(
+            " Last Frame Match: 100% Bit-Exact ({:?})",
+            actual_last_frame
+        );
         eprintln!(" Unplayed Frames : 0 (Zero frames dropped at track end)");
         eprintln!(" Status          : PASS (100% Track Completion Verified)");
         eprintln!("=======================================================\n");
@@ -2117,7 +2221,9 @@ mod tests {
         renderer.dsp.eq_enabled = false; // Bit-exact bypass mode
 
         // Push Track 1 start boundary marker
-        boundary_prod.push(BoundaryMarker::track_started(0, "track_1")).expect("Push start");
+        boundary_prod
+            .push(BoundaryMarker::track_started(0, "track_1"))
+            .expect("Push start");
 
         let mut track1_pushed = 0;
         let mut track2_pushed = 0;
@@ -2158,7 +2264,12 @@ mod tests {
                 }
             } else if !track_changed_pushed {
                 // Gapless boundary! Track 1 finished pushing, immediately stage Track 2 boundary marker
-                boundary_prod.push(BoundaryMarker::track_changed(boundary_frame as u64, "track_2")).expect("Push changed");
+                boundary_prod
+                    .push(BoundaryMarker::track_changed(
+                        boundary_frame as u64,
+                        "track_2",
+                    ))
+                    .expect("Push changed");
                 track_changed_pushed = true;
             }
 
@@ -2186,15 +2297,24 @@ mod tests {
                         track2_pushed += to_push;
                     }
                 }
-            } else if track_changed_pushed && track2_pushed >= track2_frames.len() && !track_ended_pushed {
+            } else if track_changed_pushed
+                && track2_pushed >= track2_frames.len()
+                && !track_ended_pushed
+            {
                 // EOF of Track 2: push track ended marker
-                boundary_prod.push(BoundaryMarker::track_ended(total_frames as u64, "track_2")).expect("Push ended");
+                boundary_prod
+                    .push(BoundaryMarker::track_ended(total_frames as u64, "track_2"))
+                    .expect("Push ended");
                 track_ended_pushed = true;
             }
 
             // --- CONSUMER (AUDIO CALLBACK) STEP ---
             let frames_left = total_frames - rendered_frames.len();
-            let avail_frames = renderer.consumer.as_ref().map(|c| c.slots() / 2).unwrap_or(0);
+            let avail_frames = renderer
+                .consumer
+                .as_ref()
+                .map(|c| c.slots() / 2)
+                .unwrap_or(0);
             let frames_to_render = frames_left.min(avail_frames).min(256);
 
             if frames_to_render > 0 {
@@ -2207,7 +2327,11 @@ mod tests {
             }
         }
 
-        assert_eq!(rendered_frames.len(), total_frames, "Rendered frames count must match reference exactly");
+        assert_eq!(
+            rendered_frames.len(),
+            total_frames,
+            "Rendered frames count must match reference exactly"
+        );
 
         // Collect all triggered boundary events
         let mut triggered_events = Vec::new();
@@ -2215,7 +2339,11 @@ mod tests {
             triggered_events.push(m);
         }
 
-        assert_eq!(triggered_events.len(), 3, "All 3 boundary markers must be triggered");
+        assert_eq!(
+            triggered_events.len(),
+            3,
+            "All 3 boundary markers must be triggered"
+        );
         assert_eq!(triggered_events[0].kind, BoundaryKind::TrackStarted);
         assert_eq!(triggered_events[0].file_id_str(), "track_1");
         assert_eq!(triggered_events[0].trigger_at_frame, 0);
@@ -2232,14 +2360,31 @@ mod tests {
         for i in (boundary_frame - 5)..(boundary_frame + 5) {
             let ref_frame = reference[i];
             let rend_frame = rendered_frames[i];
-            assert!((rend_frame.0 - ref_frame.0).abs() < 1e-4, "Frame {} L channel discontinuity: ref {} != rend {}", i, ref_frame.0, rend_frame.0);
-            assert!((rend_frame.1 - ref_frame.1).abs() < 1e-4, "Frame {} R channel discontinuity: ref {} != rend {}", i, ref_frame.1, rend_frame.1);
+            assert!(
+                (rend_frame.0 - ref_frame.0).abs() < 1e-4,
+                "Frame {} L channel discontinuity: ref {} != rend {}",
+                i,
+                ref_frame.0,
+                rend_frame.0
+            );
+            assert!(
+                (rend_frame.1 - ref_frame.1).abs() < 1e-4,
+                "Frame {} R channel discontinuity: ref {} != rend {}",
+                i,
+                ref_frame.1,
+                rend_frame.1
+            );
         }
 
         // Verify 1st derivative (slope) continuity across boundary
         let slope_ref = reference[boundary_frame].0 - reference[boundary_frame - 1].0;
         let slope_rend = rendered_frames[boundary_frame].0 - rendered_frames[boundary_frame - 1].0;
-        assert!((slope_rend - slope_ref).abs() < 1e-4, "Derivative discontinuity across gapless boundary: ref slope {} != rend slope {}", slope_ref, slope_rend);
+        assert!(
+            (slope_rend - slope_ref).abs() < 1e-4,
+            "Derivative discontinuity across gapless boundary: ref slope {} != rend slope {}",
+            slope_ref,
+            slope_rend
+        );
 
         eprintln!("=======================================================");
         eprintln!("        Golden Test 5: Gapless Boundary Verified       ");
@@ -2275,4 +2420,3 @@ mod tests {
         assert_eq!(vis.spectrum.len(), crate::dsp::VISUALIZER_BANDS);
     }
 }
-

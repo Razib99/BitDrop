@@ -8,14 +8,12 @@
 //! - Gate 5: Gapless album boundary sample-level continuity with zero dropped or padded frames.
 
 use rust_lib_bitdrop::api::audio_engine::{
-    CALLBACK_FADE_STEP, CALLBACK_FADE_TARGET, CALLBACK_FLUSH_REQUESTED,
-    CALLBACK_FRAMES_PLAYED, CALLBACK_GATE_OUTPUT, CALLBACK_IS_PLAYING,
-    DSP_TRIPLE_BUFFER, TRACK_ENDED_FLAG,
+    CALLBACK_FADE_STEP, CALLBACK_FADE_TARGET, CALLBACK_FLUSH_REQUESTED, CALLBACK_FRAMES_PLAYED,
+    CALLBACK_GATE_OUTPUT, CALLBACK_IS_PLAYING, DSP_TRIPLE_BUFFER, TRACK_ENDED_FLAG,
 };
 use rust_lib_bitdrop::dsp::{
-    downmix_to_stereo, BoundaryKind, BoundaryMarker, DspConfigSnapshot,
-    DspPipelineV2, StereoBiquadF64, BUTTERWORTH_Q, EQ_HIGH_SHELF, EQ_LOW_SHELF, EQ_PEAK,
-    OCTAVE_PEAK_Q,
+    downmix_to_stereo, BoundaryKind, BoundaryMarker, DspConfigSnapshot, DspPipelineV2,
+    StereoBiquadF64, BUTTERWORTH_Q, EQ_HIGH_SHELF, EQ_LOW_SHELF, EQ_PEAK, OCTAVE_PEAK_Q,
 };
 use rust_lib_bitdrop::renderer::OutputRenderer;
 use sha2::{Digest, Sha256};
@@ -316,9 +314,12 @@ fn gate_2_zero_clipping_all_presets() {
                 Err(_) => continue,
             };
 
-            let track = match probed.format.tracks().iter().find(|t| {
-                t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL
-            }) {
+            let track = match probed
+                .format
+                .tracks()
+                .iter()
+                .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
+            {
                 Some(t) => t,
                 None => continue,
             };
@@ -485,15 +486,15 @@ fn gate_4_offline_render_last_frame_exact() {
             let hint = Hint::new();
             let format_opts = FormatOptions::default();
             let metadata_opts = MetadataOptions::default();
-            if let Ok(mut probed) = symphonia::default::get_probe().format(
-                &hint,
-                mss,
-                &format_opts,
-                &metadata_opts,
-            ) {
-                if let Some(track) = probed.format.tracks().iter().find(|t| {
-                    t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL
-                }) {
+            if let Ok(mut probed) =
+                symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts)
+            {
+                if let Some(track) = probed
+                    .format
+                    .tracks()
+                    .iter()
+                    .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
+                {
                     let track_id = track.id;
                     if let Some(sr) = track.codec_params.sample_rate {
                         sample_rate = sr as f64;
@@ -541,7 +542,10 @@ fn gate_4_offline_render_last_frame_exact() {
         }
     }
 
-    assert!(!source_frames.is_empty(), "Gate 4: Source frames must not be empty");
+    assert!(
+        !source_frames.is_empty(),
+        "Gate 4: Source frames must not be empty"
+    );
     let total_source_frames = source_frames.len();
     let expected_last_frame = *source_frames.last().unwrap();
 
@@ -572,7 +576,9 @@ fn gate_4_offline_render_last_frame_exact() {
         // --- DECODER THREAD STEP ---
         if !eof_reached {
             let avail_slots = audio_prod.slots();
-            let frames_to_push = (avail_slots / 2).min(total_source_frames - source_idx).min(512);
+            let frames_to_push = (avail_slots / 2)
+                .min(total_source_frames - source_idx)
+                .min(512);
             if frames_to_push > 0 {
                 if let Ok(mut chunk) = audio_prod.write_chunk(frames_to_push * 2) {
                     let (s1, s2) = chunk.as_mut_slices();
@@ -596,14 +602,19 @@ fn gate_4_offline_render_last_frame_exact() {
 
             if source_idx >= total_source_frames {
                 eof_reached = true;
-                let marker = BoundaryMarker::track_ended(total_source_frames as u64, "golden_track");
+                let marker =
+                    BoundaryMarker::track_ended(total_source_frames as u64, "golden_track");
                 boundary_prod.push(marker).expect("Push boundary marker");
             }
         }
 
         // --- OUTPUT RENDERER STEP ---
         let frames_left = total_source_frames - rendered_frames.len();
-        let avail_frames = renderer.consumer.as_ref().map(|c| c.slots() / 2).unwrap_or(0);
+        let avail_frames = renderer
+            .consumer
+            .as_ref()
+            .map(|c| c.slots() / 2)
+            .unwrap_or(0);
         let frames_to_render = frames_left.min(avail_frames).min(256);
 
         if frames_to_render > 0 {
@@ -618,7 +629,10 @@ fn gate_4_offline_render_last_frame_exact() {
         }
     }
 
-    assert!(TRACK_ENDED_FLAG.load(Ordering::Acquire), "Gate 4: TrackEnded must fire at EOF");
+    assert!(
+        TRACK_ENDED_FLAG.load(Ordering::Acquire),
+        "Gate 4: TrackEnded must fire at EOF"
+    );
     assert_eq!(
         rendered_frames.len(),
         total_source_frames,
@@ -641,7 +655,9 @@ fn gate_4_offline_render_last_frame_exact() {
         "Gate 4: All frames in ring buffer must be consumed"
     );
 
-    let triggered = triggered_cons.pop().expect("Gate 4: Triggered event must be present");
+    let triggered = triggered_cons
+        .pop()
+        .expect("Gate 4: Triggered event must be present");
     assert_eq!(triggered.kind, BoundaryKind::TrackEnded);
     assert_eq!(triggered.trigger_at_frame, total_source_frames as u64);
     assert_eq!(triggered.file_id_str(), "golden_track");
@@ -798,7 +814,11 @@ fn gate_5_gapless_boundary_continuity() {
 
         // --- CONSUMER (OUTPUT RENDERER) STEP ---
         let frames_left = total_frames - rendered_frames.len();
-        let avail_frames = renderer.consumer.as_ref().map(|c| c.slots() / 2).unwrap_or(0);
+        let avail_frames = renderer
+            .consumer
+            .as_ref()
+            .map(|c| c.slots() / 2)
+            .unwrap_or(0);
         let frames_to_render = frames_left.min(avail_frames).min(256);
 
         if frames_to_render > 0 {
@@ -836,10 +856,7 @@ fn gate_5_gapless_boundary_continuity() {
 
     assert_eq!(triggered_events[1].kind, BoundaryKind::TrackChanged);
     assert_eq!(triggered_events[1].file_id_str(), "album_track_2");
-    assert_eq!(
-        triggered_events[1].trigger_at_frame,
-        boundary_frame as u64
-    );
+    assert_eq!(triggered_events[1].trigger_at_frame, boundary_frame as u64);
 
     assert_eq!(triggered_events[2].kind, BoundaryKind::TrackEnded);
     assert_eq!(triggered_events[2].file_id_str(), "album_track_2");

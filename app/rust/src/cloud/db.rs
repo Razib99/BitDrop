@@ -143,7 +143,7 @@ impl MetadataDb {
         let _ = conn.pragma_update(None, "journal_mode", "WAL");
         let _ = conn.pragma_update(None, "synchronous", "NORMAL");
         let _ = conn.pragma_update(None, "mmap_size", 268435456); // 256 MB zero-copy memory-mapped I/O
-        let _ = conn.pragma_update(None, "cache_size", -32768);   // 32 MB page cache in RAM
+        let _ = conn.pragma_update(None, "cache_size", -32768); // 32 MB page cache in RAM
         let _ = conn.pragma_update(None, "temp_store", "MEMORY"); // Temp tables strictly in RAM
         let _ = conn.pragma_update(None, "wal_autocheckpoint", 2000);
         let _ = conn.pragma_update(None, "busy_timeout", 5000);
@@ -181,10 +181,18 @@ impl MetadataDb {
         )?;
 
         // Non-destructive migrations for legacy tables
-        let _ = self.conn.execute("ALTER TABLE tracks ADD COLUMN artwork_path TEXT", []);
-        let _ = self.conn.execute("ALTER TABLE tracks ADD COLUMN md5_checksum TEXT", []);
-        let _ = self.conn.execute("ALTER TABLE tracks ADD COLUMN picture_offset INTEGER", []);
-        let _ = self.conn.execute("ALTER TABLE tracks ADD COLUMN picture_length INTEGER", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE tracks ADD COLUMN artwork_path TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE tracks ADD COLUMN md5_checksum TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE tracks ADD COLUMN picture_offset INTEGER", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE tracks ADD COLUMN picture_length INTEGER", []);
 
         // 2. Covering indexes for zero-heap UI sorting (<1.5ms at 100k tracks)
         self.conn.execute(
@@ -365,7 +373,9 @@ impl MetadataDb {
             name: name.clone(),
             folder_path: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
             title: title.filter(|t| !t.is_empty()).unwrap_or_else(|| {
-                name.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or(name)
+                name.rsplit_once('.')
+                    .map(|(s, _)| s.to_string())
+                    .unwrap_or(name)
             }),
             artist: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
             album: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
@@ -507,7 +517,11 @@ impl MetadataDb {
                     u.artwork_path,
                 ])?;
 
-                let album_clean = if u.album.is_empty() { "Unknown Album" } else { &u.album };
+                let album_clean = if u.album.is_empty() {
+                    "Unknown Album"
+                } else {
+                    &u.album
+                };
                 let artist_clean = if !u.album_artist.is_empty() {
                     &u.album_artist
                 } else if !u.artist.is_empty() {
@@ -515,7 +529,11 @@ impl MetadataDb {
                 } else {
                     "Unknown Artist"
                 };
-                let album_key = format!("{}::{}", artist_clean.to_lowercase(), album_clean.to_lowercase());
+                let album_key = format!(
+                    "{}::{}",
+                    artist_clean.to_lowercase(),
+                    album_clean.to_lowercase()
+                );
 
                 album_stmt.execute(params![
                     album_key,
@@ -602,9 +620,7 @@ impl MetadataDb {
              LIMIT ?2",
         )?;
 
-        let rows = stmt.query_map(params![fts_query, limit], |r| {
-            Self::row_to_cloud_track(r)
-        })?;
+        let rows = stmt.query_map(params![fts_query, limit], Self::row_to_cloud_track)?;
 
         rows.collect()
     }
@@ -678,11 +694,11 @@ impl MetadataDb {
         let total: u32 = self
             .conn
             .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))?;
-        let tagged: u32 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM tracks WHERE tags_read = 1", [], |r| {
-                r.get(0)
-            })?;
+        let tagged: u32 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM tracks WHERE tags_read = 1", [], |r| {
+                    r.get(0)
+                })?;
         Ok((total, tagged))
     }
 
@@ -835,7 +851,11 @@ impl MetadataDb {
     }
 
     /// Fetches a specific cached chunk record.
-    pub fn get_cached_chunk(&self, file_id: &str, chunk_idx: u32) -> Result<Option<CachedChunkRecord>> {
+    pub fn get_cached_chunk(
+        &self,
+        file_id: &str,
+        chunk_idx: u32,
+    ) -> Result<Option<CachedChunkRecord>> {
         let mut stmt = self.conn.prepare(
             "SELECT file_id, chunk_idx, byte_offset, byte_len, crc32, file_mtime, last_accessed_ts
              FROM cached_chunks WHERE file_id = ?1 AND chunk_idx = ?2",
@@ -896,11 +916,9 @@ impl MetadataDb {
 
     /// Returns the total bytes across all cached chunks.
     pub fn total_cached_bytes(&self) -> Result<u64> {
-        let total: Option<i64> = self.conn.query_row(
-            "SELECT SUM(byte_len) FROM cached_chunks",
-            [],
-            |r| r.get(0),
-        )?;
+        let total: Option<i64> =
+            self.conn
+                .query_row("SELECT SUM(byte_len) FROM cached_chunks", [], |r| r.get(0))?;
         Ok(total.unwrap_or(0).max(0) as u64)
     }
 
@@ -909,7 +927,8 @@ impl MetadataDb {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM pinned_tracks", [])?;
         {
-            let mut stmt = tx.prepare_cached("INSERT OR IGNORE INTO pinned_tracks (file_id) VALUES (?1)")?;
+            let mut stmt =
+                tx.prepare_cached("INSERT OR IGNORE INTO pinned_tracks (file_id) VALUES (?1)")?;
             for id in pinned_ids {
                 stmt.execute(params![id])?;
             }
@@ -947,7 +966,9 @@ impl MetadataDb {
 
     /// Reads a persistent key-value configuration pair.
     pub fn get_kv(&self, key: &str) -> Result<Option<String>> {
-        let mut stmt = self.conn.prepare("SELECT value FROM app_kv WHERE key = ?1")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM app_kv WHERE key = ?1")?;
         let mut rows = stmt.query_map(params![key], |r| r.get::<_, String>(0))?;
         match rows.next() {
             Some(res) => res.map(Some),
@@ -957,17 +978,18 @@ impl MetadataDb {
 
     /// Deletes a persistent key-value configuration pair.
     pub fn delete_kv(&self, key: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM app_kv WHERE key = ?1", params![key])?;
+        self.conn
+            .execute("DELETE FROM app_kv WHERE key = ?1", params![key])?;
         Ok(())
     }
 
     /// Lists all key-value configuration pairs starting with a given prefix.
     pub fn list_kv_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>> {
         let pattern = format!("{}%", prefix);
-        let mut stmt = self.conn.prepare("SELECT key, value FROM app_kv WHERE key LIKE ?1 ORDER BY key ASC")?;
-        let rows = stmt.query_map(params![pattern], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key, value FROM app_kv WHERE key LIKE ?1 ORDER BY key ASC")?;
+        let rows = stmt.query_map(params![pattern], |r| Ok((r.get(0)?, r.get(1)?)))?;
         let mut result = Vec::new();
         for r in rows {
             result.push(r?);
@@ -1063,11 +1085,9 @@ impl MetadataDb {
 
     /// Seeds curated audiophile headphone/IEM profiles if table is empty.
     pub fn seed_autoeq_profiles(&self) -> Result<()> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM autoeq_profiles",
-            [],
-            |r| r.get(0),
-        )?;
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM autoeq_profiles", [], |r| r.get(0))?;
         if count > 0 {
             return Ok(());
         }
@@ -1569,7 +1589,8 @@ impl MetadataDb {
 
     /// Aggregates total, pinned, and unpinned cache bytes.
     pub fn get_cache_stats(&self, extra_pinned_ids: &[String]) -> Result<CacheStatsRecord> {
-        let mut pinned_set: std::collections::HashSet<String> = self.get_pinned_tracks()?.into_iter().collect();
+        let mut pinned_set: std::collections::HashSet<String> =
+            self.get_pinned_tracks()?.into_iter().collect();
         for id in extra_pinned_ids {
             pinned_set.insert(id.clone());
         }
@@ -1622,7 +1643,8 @@ impl MetadataDb {
             return Ok(Vec::new());
         }
 
-        let mut pinned_set: std::collections::HashSet<String> = self.get_pinned_tracks()?.into_iter().collect();
+        let mut pinned_set: std::collections::HashSet<String> =
+            self.get_pinned_tracks()?.into_iter().collect();
         for id in extra_pinned_ids {
             pinned_set.insert(id.clone());
         }
@@ -1896,7 +1918,8 @@ mod tests {
         assert_eq!(single.crc32, 0x12345678);
 
         // Touch access time
-        db.touch_chunk_access("flac_track_1", 0, 1700000050).unwrap();
+        db.touch_chunk_access("flac_track_1", 0, 1700000050)
+            .unwrap();
         let touched = db.get_cached_chunk("flac_track_1", 0).unwrap().unwrap();
         assert_eq!(touched.last_accessed_ts, 1700000050);
 
@@ -1943,7 +1966,8 @@ mod tests {
             crc32: 0x11,
             file_mtime: 100,
             last_accessed_ts: 100,
-        }).unwrap();
+        })
+        .unwrap();
         db.record_cached_chunk(&CachedChunkRecord {
             file_id: "track_A".to_string(),
             chunk_idx: 1,
@@ -1952,7 +1976,8 @@ mod tests {
             crc32: 0x12,
             file_mtime: 100,
             last_accessed_ts: 101,
-        }).unwrap();
+        })
+        .unwrap();
 
         // Track B: unpinned, middle (ts = 200), 2 chunks * 2 MB = 4 MB
         db.record_cached_chunk(&CachedChunkRecord {
@@ -1963,7 +1988,8 @@ mod tests {
             crc32: 0x21,
             file_mtime: 200,
             last_accessed_ts: 200,
-        }).unwrap();
+        })
+        .unwrap();
         db.record_cached_chunk(&CachedChunkRecord {
             file_id: "track_B".to_string(),
             chunk_idx: 1,
@@ -1972,7 +1998,8 @@ mod tests {
             crc32: 0x22,
             file_mtime: 200,
             last_accessed_ts: 201,
-        }).unwrap();
+        })
+        .unwrap();
 
         // Track C: unpinned, newer (ts = 300), 2 chunks * 2 MB = 4 MB
         db.record_cached_chunk(&CachedChunkRecord {
@@ -1983,7 +2010,8 @@ mod tests {
             crc32: 0x31,
             file_mtime: 300,
             last_accessed_ts: 300,
-        }).unwrap();
+        })
+        .unwrap();
         db.record_cached_chunk(&CachedChunkRecord {
             file_id: "track_C".to_string(),
             chunk_idx: 1,
@@ -1992,7 +2020,8 @@ mod tests {
             crc32: 0x32,
             file_mtime: 300,
             last_accessed_ts: 301,
-        }).unwrap();
+        })
+        .unwrap();
 
         // Track P: pinned (in pinned list), ts = 50 (even older than A!), 2 chunks * 2 MB = 4 MB
         db.record_cached_chunk(&CachedChunkRecord {
@@ -2003,7 +2032,8 @@ mod tests {
             crc32: 0x41,
             file_mtime: 50,
             last_accessed_ts: 50,
-        }).unwrap();
+        })
+        .unwrap();
         db.record_cached_chunk(&CachedChunkRecord {
             file_id: "track_pinned_1".to_string(),
             chunk_idx: 1,
@@ -2012,7 +2042,8 @@ mod tests {
             crc32: 0x42,
             file_mtime: 50,
             last_accessed_ts: 51,
-        }).unwrap();
+        })
+        .unwrap();
 
         // Track Active: currently playing, ts = 60, 2 chunks * 2 MB = 4 MB
         db.record_cached_chunk(&CachedChunkRecord {
@@ -2023,7 +2054,8 @@ mod tests {
             crc32: 0x51,
             file_mtime: 60,
             last_accessed_ts: 60,
-        }).unwrap();
+        })
+        .unwrap();
         db.record_cached_chunk(&CachedChunkRecord {
             file_id: "track_active".to_string(),
             chunk_idx: 1,
@@ -2032,7 +2064,8 @@ mod tests {
             crc32: 0x52,
             file_mtime: 60,
             last_accessed_ts: 61,
-        }).unwrap();
+        })
+        .unwrap();
 
         // Verify total stats before pruning
         let stats = db.get_cache_stats(&["track_pinned_1".to_string()]).unwrap();
@@ -2047,17 +2080,25 @@ mod tests {
         // Protected: track_pinned_1 (pinned) and track_active (active).
         // Eviction order (last_accessed_ts ASC):
         // track_A (100, 101), track_B (200, 201), track_C (300, 301)
-        let evicted = db.prune_lru_chunks(
-            6 * 1024 * 1024,
-            &["track_pinned_1".to_string()],
-            Some("track_active"),
-        ).unwrap();
+        let evicted = db
+            .prune_lru_chunks(
+                6 * 1024 * 1024,
+                &["track_pinned_1".to_string()],
+                Some("track_active"),
+            )
+            .unwrap();
 
         assert!(!evicted.is_empty());
         // Verify evicted chunks are all from unpinned tracks (A, B, C), and NEVER from track_pinned_1 or track_active
         for c in &evicted {
-            assert_ne!(c.file_id, "track_pinned_1", "Pinned tracks must never be evicted");
-            assert_ne!(c.file_id, "track_active", "Active track must never be evicted");
+            assert_ne!(
+                c.file_id, "track_pinned_1",
+                "Pinned tracks must never be evicted"
+            );
+            assert_ne!(
+                c.file_id, "track_active",
+                "Active track must never be evicted"
+            );
         }
 
         // track_A was oldest unpinned: its chunks must have been evicted first
@@ -2070,7 +2111,10 @@ mod tests {
         assert_eq!(db.count_cached_chunks_for_file("track_A").unwrap(), 0);
 
         // Pinned track and active track must still have all chunks intact!
-        assert_eq!(db.count_cached_chunks_for_file("track_pinned_1").unwrap(), 2);
+        assert_eq!(
+            db.count_cached_chunks_for_file("track_pinned_1").unwrap(),
+            2
+        );
         assert_eq!(db.count_cached_chunks_for_file("track_active").unwrap(), 2);
 
         // Verify stats after pruning: unpinned bytes are at or below limit
@@ -2119,7 +2163,11 @@ mod tests {
 
         // 1. Initial schema creation seeds 28 curated profiles
         let all_profiles = db.search_autoeq_profiles("").unwrap();
-        assert_eq!(all_profiles.len(), 28, "Must seed 28 curated audiophile profiles");
+        assert_eq!(
+            all_profiles.len(),
+            28,
+            "Must seed 28 curated audiophile profiles"
+        );
 
         // 2. Search by brand
         let sennheiser = db.search_autoeq_profiles("sennheiser").unwrap();
@@ -2133,7 +2181,10 @@ mod tests {
         assert_eq!(titan.len(), 2, "Must find DUNU Titan X and Titan S");
 
         // 4. Fetch specific profile by ID
-        let titan_x = db.get_autoeq_profile("aeq-titanx").unwrap().expect("profile exists");
+        let titan_x = db
+            .get_autoeq_profile("aeq-titanx")
+            .unwrap()
+            .expect("profile exists");
         assert_eq!(titan_x.model, "DUNU Titan X");
         assert_eq!(titan_x.brand, "DUNU");
         assert_eq!(titan_x.source, "oratory1990");
@@ -2154,7 +2205,10 @@ mod tests {
         };
         db.insert_autoeq_profile(&custom).unwrap();
 
-        let fetched_custom = db.get_autoeq_profile("custom-user-eq").unwrap().expect("custom profile exists");
+        let fetched_custom = db
+            .get_autoeq_profile("custom-user-eq")
+            .unwrap()
+            .expect("custom profile exists");
         assert_eq!(fetched_custom.model, "Custom Planar Headphone");
         assert_eq!(fetched_custom.suggested_preamp_db, -3.5);
 
@@ -2164,4 +2218,3 @@ mod tests {
         assert_eq!(search_custom[0].id, "custom-user-eq");
     }
 }
-

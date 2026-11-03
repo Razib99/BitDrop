@@ -1,15 +1,13 @@
-use std::sync::atomic::{AtomicU32, Ordering};
 use crate::api::audio_engine::{
-    enable_hardware_flush_to_zero, ramp_step,
-    CALLBACK_FADE_STEP, CALLBACK_FADE_TARGET, CALLBACK_FLUSH_REQUESTED,
-    CALLBACK_FRAMES_PLAYED, CALLBACK_GATE_OUTPUT, CALLBACK_IS_PLAYING,
-    DSP_TRIPLE_BUFFER, TRACK_ENDED_FLAG, DUCK_MS,
+    enable_hardware_flush_to_zero, ramp_step, CALLBACK_FADE_STEP, CALLBACK_FADE_TARGET,
+    CALLBACK_FLUSH_REQUESTED, CALLBACK_FRAMES_PLAYED, CALLBACK_GATE_OUTPUT, CALLBACK_IS_PLAYING,
+    DSP_TRIPLE_BUFFER, DUCK_MS, TRACK_ENDED_FLAG,
 };
 use crate::dsp::{
-    BoundaryKind, BoundaryMarker, DspPipelineV2,
-    VISUALIZER_CLIPPING, VISUALIZER_HEAD, VISUALIZER_PEAK_L_MILLIDB,
-    VISUALIZER_PEAK_R_MILLIDB, VISUALIZER_RING_SIZE, VISUALIZER_SAMPLES,
+    BoundaryKind, BoundaryMarker, DspPipelineV2, VISUALIZER_CLIPPING, VISUALIZER_HEAD,
+    VISUALIZER_PEAK_L_MILLIDB, VISUALIZER_PEAK_R_MILLIDB, VISUALIZER_RING_SIZE, VISUALIZER_SAMPLES,
 };
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub static ENGINE_UNDERRUNS: AtomicU32 = AtomicU32::new(0);
 
@@ -197,7 +195,8 @@ impl OutputRenderer {
                 chunk.commit_all();
             }
 
-            let played = CALLBACK_FRAMES_PLAYED.fetch_add(frames_to_read as u64, Ordering::SeqCst) + frames_to_read as u64;
+            let played = CALLBACK_FRAMES_PLAYED.fetch_add(frames_to_read as u64, Ordering::SeqCst)
+                + frames_to_read as u64;
 
             // Check boundary markers
             if let Some(bc) = self.boundary_consumer.as_mut() {
