@@ -899,6 +899,35 @@ impl DspPipelineV2 {
         }
         self.install_parameters(&specs, preamp_db, replay_gain_db, track_peak, balance, mono);
     }
+
+    /// Helper to install tone controls (Bass & Treble shelves with Butterworth Q).
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_tone_controls(
+        &mut self,
+        bass_db: f64,
+        treble_db: f64,
+        preamp_db: f64,
+        replay_gain_db: f64,
+        track_peak: f64,
+        balance: f64,
+        mono: bool,
+    ) {
+        let specs = [
+            EqBandSpec {
+                kind: EQ_LOW_SHELF,
+                freq: 105.0,
+                gain_db: bass_db as f32,
+                q: BUTTERWORTH_Q as f32,
+            },
+            EqBandSpec {
+                kind: EQ_HIGH_SHELF,
+                freq: 8000.0,
+                gain_db: treble_db as f32,
+                q: BUTTERWORTH_Q as f32,
+            },
+        ];
+        self.install_parameters(&specs, preamp_db, replay_gain_db, track_peak, balance, mono);
+    }
 }
 
 #[inline]

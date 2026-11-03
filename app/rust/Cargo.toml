@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 crossbeam-channel = "0.5.17"
 flutter_rust_bridge = "=2.0.0"
 lazy_static = "1.5.1"
+sha2 = "0.10"
 
 symphonia = { version = "0.5.3", features = ["all"] }
 
