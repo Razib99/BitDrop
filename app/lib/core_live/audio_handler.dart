@@ -186,7 +186,9 @@ class BitDropAudioHandler extends BaseAudioHandler
         items.isEmpty ||
         _currentIndex < 0 ||
         _currentIndex >= items.length ||
-        _repeatMode == RepeatMode.one) return;
+        _repeatMode == RepeatMode.one) {
+      return;
+    }
     final nextIndex = _currentIndex + 1 < items.length
         ? _currentIndex + 1
         : (_repeatMode == RepeatMode.all ? 0 : null);
@@ -344,7 +346,9 @@ class BitDropAudioHandler extends BaseAudioHandler
     final currentList = queue.value;
     if (currentList.isEmpty ||
         _currentIndex < 0 ||
-        _currentIndex >= currentList.length - 1) return;
+        _currentIndex >= currentList.length - 1) {
+      return;
+    }
 
     _shuffleMode = true;
     final head = currentList.sublist(0, _currentIndex + 1);
