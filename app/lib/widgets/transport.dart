@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core_api/commands.dart';
-import '../core_api/enums.dart';
+import '../core_api/enums.dart' as enums;
 import '../core_api/models.dart';
 import '../providers/core_providers.dart';
 import '../theme/app_theme.dart';
@@ -57,19 +57,19 @@ class TransportControls extends ConsumerWidget {
         ),
         _ToggleIcon(
           icon:
-              queue.repeat == RepeatMode.one ? Icons.repeat_one : Icons.repeat,
-          active: queue.repeat != RepeatMode.off,
+              queue.repeat == enums.RepeatMode.one ? Icons.repeat_one : Icons.repeat,
+          active: queue.repeat != enums.RepeatMode.off,
           tooltip: switch (queue.repeat) {
-            RepeatMode.off => context.l10n.repeatOff,
-            RepeatMode.all => context.l10n.repeatAll,
-            RepeatMode.one => context.l10n.repeatOne,
+            enums.RepeatMode.off => context.l10n.repeatOff,
+            enums.RepeatMode.all => context.l10n.repeatAll,
+            enums.RepeatMode.one => context.l10n.repeatOne,
           },
           onTap: () => sendCommand(
             ref,
             SetRepeat(switch (queue.repeat) {
-              RepeatMode.off => RepeatMode.all,
-              RepeatMode.all => RepeatMode.one,
-              RepeatMode.one => RepeatMode.off,
+              enums.RepeatMode.off => enums.RepeatMode.all,
+              enums.RepeatMode.all => enums.RepeatMode.one,
+              enums.RepeatMode.one => enums.RepeatMode.off,
             }),
           ),
         ),
