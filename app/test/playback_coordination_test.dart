@@ -178,6 +178,26 @@ void main() {
     expect(engine.staged, isNull);
     expect(handler.playbackState.value.playing, isFalse);
   });
+  test(
+      'stop a populated queue, deliver a delayed matching EOF event, and assert that no track opens',
+      () async {
+    await handler.setQueueAndPlay(items, 0);
+    expect(engine.played, ['one']);
+    expect(handler.currentIndex, 0);
+
+    await handler.stop();
+    expect(engine.stops, 1);
+    expect(handler.playbackState.value.playing, isFalse);
+
+    final countBefore = engine.played.length;
+    engine.controller.add(const rust.EngineEvent.trackEnded(fileId: 'one'));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(engine.played.length, countBefore);
+    expect(handler.currentIndex, 0);
+    expect(engine.staged, isNull);
+    expect(handler.playbackState.value.playing, isFalse);
+  });
   test('expired credentials are refreshed and returned to the waiting fetch',
       () async {
     handler.refreshAccessTokenProvider = () async => 'new-credential';

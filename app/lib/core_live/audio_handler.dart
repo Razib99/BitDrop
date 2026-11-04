@@ -468,6 +468,7 @@ class BitDropAudioHandler extends BaseAudioHandler
 
   @override
   Future<void> skipToNext({bool auto = false}) async {
+    if (auto && _stopped) return;
     final items = queue.value;
     if (items.isEmpty) return;
 
