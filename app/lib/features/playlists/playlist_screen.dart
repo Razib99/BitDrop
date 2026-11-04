@@ -30,6 +30,9 @@ class PlaylistScreen extends ConsumerWidget {
     final tracksAsync =
         ref.watch(tracksProvider(TrackQuery(playlistId: playlistId)));
     final settings = ref.watch(settingsValueProvider);
+    final nowPlayingId = ref.watch(nowPlayingProvider).valueOrNull?.track.id;
+    final isPlaybackPlaying =
+        ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
     final l = context.l10n;
 
     if (playlist == null) {
@@ -191,6 +194,8 @@ class PlaylistScreen extends ConsumerWidget {
                   TrackRow(
                     track: tracks[i],
                     badgeVisibility: settings.formatBadges,
+                    isPlaying: tracks[i].id == nowPlayingId,
+                    isDancing: tracks[i].id == nowPlayingId && isPlaybackPlaying,
                     onTap: () => sendCommand(
                       ref,
                       PlayContext(

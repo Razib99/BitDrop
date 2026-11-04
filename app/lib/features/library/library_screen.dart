@@ -324,6 +324,9 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
     final async = ref.watch(tracksProvider(query));
     final settings = ref.watch(settingsValueProvider);
     final selection = ref.watch(selectionProvider);
+    final nowPlayingId = ref.watch(nowPlayingProvider).valueOrNull?.track.id;
+    final isPlaybackPlaying =
+        ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
 
     return async.when(
       skipLoadingOnReload: true,
@@ -346,11 +349,14 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
               itemExtent: 64,
               itemBuilder: (context, i) {
                 final t = paged.items[i];
+                final isPlaying = t.id == nowPlayingId;
                 return TrackRow(
                   track: t,
                   badgeVisibility: settings.formatBadges,
                   selectionMode: selection.isNotEmpty,
                   selected: selection.contains(t.id),
+                  isPlaying: isPlaying,
+                  isDancing: isPlaying && isPlaybackPlaying,
                   onTap: selection.isEmpty
                       ? () => sendCommand(
                             ref,
@@ -647,6 +653,9 @@ class _FavoritesTab extends ConsumerWidget {
     final async = ref.watch(tracksProvider(query));
     final settings = ref.watch(settingsValueProvider);
     final selection = ref.watch(selectionProvider);
+    final nowPlayingId = ref.watch(nowPlayingProvider).valueOrNull?.track.id;
+    final isPlaybackPlaying =
+        ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
     final c = context.c;
 
     return async.when(
@@ -714,11 +723,14 @@ class _FavoritesTab extends ConsumerWidget {
               );
             }
             final t = paged.items[i - 1];
+            final isPlaying = t.id == nowPlayingId;
             return TrackRow(
               track: t,
               badgeVisibility: settings.formatBadges,
               selectionMode: selection.isNotEmpty,
               selected: selection.contains(t.id),
+              isPlaying: isPlaying,
+              isDancing: isPlaying && isPlaybackPlaying,
               onTap: selection.isEmpty
                   ? () => sendCommand(
                         ref,

@@ -483,6 +483,108 @@ class _AudioWaveformBars extends StatelessWidget {
       );
 }
 
+/// Animated 4-bar equalizer that dynamically dances on the active playing song.
+class MiniBarsIndicator extends StatefulWidget {
+  const MiniBarsIndicator({
+    super.key,
+    this.color,
+    this.isDancing = true,
+    this.barWidth = 2.5,
+    this.barSpacing = 2.0,
+    this.maxHeight = 14.0,
+    this.minHeight = 3.5,
+  });
+
+  final Color? color;
+  final bool isDancing;
+  final double barWidth;
+  final double barSpacing;
+  final double maxHeight;
+  final double minHeight;
+
+  @override
+  State<MiniBarsIndicator> createState() => _MiniBarsIndicatorState();
+}
+
+class _MiniBarsIndicatorState extends State<MiniBarsIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+    if (widget.isDancing) {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(MiniBarsIndicator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isDancing != oldWidget.isDancing) {
+      if (widget.isDancing) {
+        _controller.repeat();
+      } else {
+        _controller.stop();
+      }
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.of(context).disableAnimations) {
+      _controller.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+    final color = widget.color ?? c.accent;
+
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final t = widget.isDancing ? _controller.value * 2 * math.pi : 0.0;
+        final spread = widget.maxHeight - widget.minHeight;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _bar(color, widget.isDancing ? (math.sin(t) + 1) / 2 * (spread * 0.78) + widget.minHeight : widget.minHeight + spread * 0.35),
+            SizedBox(width: widget.barSpacing),
+            _bar(color, widget.isDancing ? (math.sin(t + 1.6) + 1) / 2 * spread + widget.minHeight : widget.maxHeight * 0.88),
+            SizedBox(width: widget.barSpacing),
+            _bar(color, widget.isDancing ? (math.sin(t + 3.2) + 1) / 2 * (spread * 0.67) + widget.minHeight : widget.minHeight + spread * 0.55),
+            SizedBox(width: widget.barSpacing),
+            _bar(color, widget.isDancing ? (math.sin(t + 4.8) + 1) / 2 * (spread * 0.89) + widget.minHeight : widget.minHeight + spread * 0.42),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _bar(Color color, double height) => Container(
+        width: widget.barWidth,
+        height: height.clamp(widget.minHeight, widget.maxHeight),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(1.5),
+        ),
+      );
+}
+
 /// High-fidelity audiophile buffering indicator with animated waveform bars,
 /// progress fill gauge, offline detection, and attempt escalation.
 class BufferingIndicator extends StatefulWidget {

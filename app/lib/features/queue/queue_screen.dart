@@ -205,6 +205,8 @@ class _QueueRow extends ConsumerWidget {
     final track = item.track;
     final blocked = track.availability == Availability.unsupported ||
         track.availability == Availability.missing;
+    final isPlaybackPlaying =
+        ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -259,11 +261,33 @@ class _QueueRow extends ConsumerWidget {
                             size: 20, color: c.textTertiary),
                       ),
                     ),
-                  AlbumArtwork(
-                    artwork: track.artwork,
-                    size: Sizes.trackArt,
-                    title: track.albumTitle,
-                    dimmed: blocked,
+                  Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      AlbumArtwork(
+                        artwork: track.artwork,
+                        size: Sizes.trackArt,
+                        title: track.albumTitle,
+                        dimmed: blocked,
+                      ),
+                      if (isCurrent)
+                        Container(
+                          width: Sizes.trackArt,
+                          height: Sizes.trackArt,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.55),
+                            borderRadius: Radii.gridArtR,
+                          ),
+                          child: Center(
+                            child: MiniBarsIndicator(
+                              color: c.accent,
+                              isDancing: isPlaybackPlaying,
+                              maxHeight: 14.0,
+                              minHeight: 3.5,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                   const SizedBox(width: Spacing.sm),
                   Expanded(
@@ -275,9 +299,13 @@ class _QueueRow extends ConsumerWidget {
                           children: [
                             if (isCurrent)
                               Padding(
-                                padding: const EdgeInsets.only(right: 5),
-                                child: Icon(Icons.equalizer,
-                                    size: 15, color: c.accent),
+                                padding: const EdgeInsets.only(right: 6),
+                                child: MiniBarsIndicator(
+                                  color: c.accent,
+                                  isDancing: isPlaybackPlaying,
+                                  maxHeight: 11.0,
+                                  minHeight: 3.0,
+                                ),
                               ),
                             Flexible(
                               child: Text(

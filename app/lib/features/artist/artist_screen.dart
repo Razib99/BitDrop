@@ -29,6 +29,9 @@ class ArtistScreen extends ConsumerWidget {
       TrackQuery(filters: LibraryFilters(artistId: artistId)),
     ));
     final settings = ref.watch(settingsValueProvider);
+    final nowPlayingId = ref.watch(nowPlayingProvider).valueOrNull?.track.id;
+    final isPlaybackPlaying =
+        ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
 
     return Scaffold(
       body: artistAsync.when(
@@ -107,6 +110,8 @@ class ArtistScreen extends ConsumerWidget {
                   itemBuilder: (context, i) => TrackRow(
                     track: popular[i],
                     badgeVisibility: settings.formatBadges,
+                    isPlaying: popular[i].id == nowPlayingId,
+                    isDancing: popular[i].id == nowPlayingId && isPlaybackPlaying,
                     onTap: () => sendCommand(
                       ref,
                       PlayContext(

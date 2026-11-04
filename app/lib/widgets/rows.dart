@@ -27,6 +27,7 @@ class TrackRow extends StatelessWidget {
     this.showArt = true,
     this.showTrackNumber = false,
     this.isPlaying = false,
+    this.isDancing = true,
     this.selected = false,
     this.selectionMode = false,
     this.badgeVisibility = BadgeVisibility.always,
@@ -49,6 +50,7 @@ class TrackRow extends StatelessWidget {
   /// Inside an album, the number replaces the artwork.
   final bool showTrackNumber;
   final bool isPlaying;
+  final bool isDancing;
   final bool selected;
   final bool selectionMode;
   final BadgeVisibility badgeVisibility;
@@ -129,7 +131,14 @@ class TrackRow extends StatelessWidget {
                 SizedBox(
                   width: 28,
                   child: isPlaying
-                      ? Icon(Icons.equalizer, size: 18, color: c.accent)
+                      ? Center(
+                          child: MiniBarsIndicator(
+                            color: c.accent,
+                            isDancing: isDancing,
+                            maxHeight: 12.0,
+                            minHeight: 3.0,
+                          ),
+                        )
                       : Text(
                           '${track.trackNumber ?? '-'}',
                           style: t.monoReadout.copyWith(
@@ -139,11 +148,33 @@ class TrackRow extends StatelessWidget {
                         ),
                 )
               else if (showArt)
-                AlbumArtwork(
-                  artwork: track.artwork,
-                  size: Sizes.trackArt,
-                  title: track.albumTitle,
-                  dimmed: dim,
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    AlbumArtwork(
+                      artwork: track.artwork,
+                      size: Sizes.trackArt,
+                      title: track.albumTitle,
+                      dimmed: dim,
+                    ),
+                    if (isPlaying)
+                      Container(
+                        width: Sizes.trackArt,
+                        height: Sizes.trackArt,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.55),
+                          borderRadius: Radii.gridArtR,
+                        ),
+                        child: Center(
+                          child: MiniBarsIndicator(
+                            color: c.accent,
+                            isDancing: isDancing,
+                            maxHeight: 14.0,
+                            minHeight: 3.5,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               SizedBox(width: showTrackNumber ? Spacing.xs : Spacing.sm),
               Expanded(
@@ -154,15 +185,31 @@ class TrackRow extends StatelessWidget {
                     if (track.tagsPending)
                       const SkeletonLoader(width: 150, height: 14)
                     else
-                      Text(
-                        track.title,
-                        style: t.body.copyWith(
-                          color: titleColor,
-                          fontWeight:
-                              isPlaying ? FontWeight.w600 : FontWeight.w400,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      Row(
+                        children: [
+                          if (isPlaying && !showArt && !showTrackNumber)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: MiniBarsIndicator(
+                                color: c.accent,
+                                isDancing: isDancing,
+                                maxHeight: 11.0,
+                                minHeight: 3.0,
+                              ),
+                            ),
+                          Expanded(
+                            child: Text(
+                              track.title,
+                              style: t.body.copyWith(
+                                color: titleColor,
+                                fontWeight:
+                                    isPlaying ? FontWeight.w600 : FontWeight.w400,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
                     const SizedBox(height: 2),
                     if (_blocked)

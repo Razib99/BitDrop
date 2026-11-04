@@ -231,6 +231,9 @@ class _Results extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsValueProvider);
+    final nowPlayingId = ref.watch(nowPlayingProvider).valueOrNull?.track.id;
+    final isPlaybackPlaying =
+        ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
 
     return ListView(
       padding: const EdgeInsets.only(bottom: Spacing.xxl),
@@ -245,6 +248,8 @@ class _Results extends ConsumerWidget {
             TrackRow(
               track: results.tracks[i],
               badgeVisibility: settings.formatBadges,
+              isPlaying: results.tracks[i].id == nowPlayingId,
+              isDancing: results.tracks[i].id == nowPlayingId && isPlaybackPlaying,
               onTap: () {
                 if (query.trim().isNotEmpty) recordRecentSearch(ref, query);
                 sendCommand(

@@ -86,6 +86,8 @@ class AlbumScreen extends ConsumerWidget {
   ) {
     final settings = ref.watch(settingsValueProvider);
     final nowPlayingId = ref.watch(nowPlayingProvider).valueOrNull?.track.id;
+    final isPlaybackPlaying =
+        ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
     final ids = tracks.map((t) => t.id).toList();
 
     final discs = <int, List<Track>>{};
@@ -108,13 +110,15 @@ class AlbumScreen extends ConsumerWidget {
             final t = entry.value[i];
             // Per-track badges only when the track differs from the album.
             final differs = t.format != album.format;
+            final isPlaying = t.id == nowPlayingId;
             return TrackRow(
               track: t,
               showTrackNumber: true,
               showAlbumLine: false,
               forceShowFormat: differs,
               badgeVisibility: settings.formatBadges,
-              isPlaying: t.id == nowPlayingId,
+              isPlaying: isPlaying,
+              isDancing: isPlaying && isPlaybackPlaying,
               onTap: () => sendCommand(
                 ref,
                 PlayContext(
