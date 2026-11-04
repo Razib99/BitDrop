@@ -233,68 +233,90 @@ pub fn downmix_to_stereo(samples: &[f32], channels: usize) -> Vec<f32> {
 
 const TRIPLE_DIRTY_BIT: u8 = 0x80;
 
-/// Lock-free, wait-free, zero-allocation triple buffer for passing DSP configurations
-/// from the UI/control thread to the real-time audio thread without locking or blocking.
-pub struct TripleBuffer<T: Copy> {
+/// The three slots are shared only by one producer and one consumer.
+struct TripleSlots<T: Copy> {
     buffers: [std::cell::UnsafeCell<T>; 3],
     shared: std::sync::atomic::AtomicU8,
-    write_idx: std::sync::atomic::AtomicU8,
-    read_idx: std::sync::atomic::AtomicU8,
 }
 
-unsafe impl<T: Copy + Send> Send for TripleBuffer<T> {}
-unsafe impl<T: Copy + Sync> Sync for TripleBuffer<T> {}
+// Each slot has exactly one owner. AcqRel exchanges transfer slot ownership;
+// endpoint methods require exclusive access and endpoints cannot be cloned.
+unsafe impl<T: Copy + Send> Send for TripleSlots<T> {}
+unsafe impl<T: Copy + Send> Sync for TripleSlots<T> {}
 
-impl<T: Copy + Default> TripleBuffer<T> {
-    pub fn new(initial: T) -> Self {
-        Self {
-            buffers: [
-                std::cell::UnsafeCell::new(initial),
-                std::cell::UnsafeCell::new(initial),
-                std::cell::UnsafeCell::new(initial),
-            ],
-            shared: std::sync::atomic::AtomicU8::new(2),
-            write_idx: std::sync::atomic::AtomicU8::new(1),
-            read_idx: std::sync::atomic::AtomicU8::new(0),
-        }
-    }
+pub struct TripleProducer<T: Copy> {
+    slots: std::sync::Arc<TripleSlots<T>>,
+    write_idx: usize,
+}
 
-    /// Publish a new snapshot from the producer (control thread).
-    /// Wait-free O(1), zero allocations, zero mutex locks.
-    pub fn publish(&self, value: T) {
-        let w = self.write_idx.load(std::sync::atomic::Ordering::Relaxed) as usize;
+pub struct TripleConsumer<T: Copy> {
+    slots: std::sync::Arc<TripleSlots<T>>,
+    read_idx: usize,
+}
+
+pub fn triple_buffer<T: Copy + Send>(initial: T) -> (TripleProducer<T>, TripleConsumer<T>) {
+    let slots = std::sync::Arc::new(TripleSlots {
+        buffers: std::array::from_fn(|_| std::cell::UnsafeCell::new(initial)),
+        shared: std::sync::atomic::AtomicU8::new(2),
+    });
+    (
+        TripleProducer {
+            slots: slots.clone(),
+            write_idx: 1,
+        },
+        TripleConsumer { slots, read_idx: 0 },
+    )
+}
+
+impl<T: Copy> TripleProducer<T> {
+    pub fn publish(&mut self, value: T) {
         unsafe {
-            *self.buffers[w].get() = value;
+            *self.slots.buffers[self.write_idx].get() = value;
         }
-        let old_shared = self.shared.swap(
-            (w as u8) | TRIPLE_DIRTY_BIT,
+        self.write_idx = (self.slots.shared.swap(
+            self.write_idx as u8 | TRIPLE_DIRTY_BIT,
             std::sync::atomic::Ordering::AcqRel,
-        );
-        let new_w = old_shared & 0x03;
-        self.write_idx
-            .store(new_w, std::sync::atomic::Ordering::Relaxed);
+        ) & 0x03) as usize;
     }
+}
 
-    /// Read the newest published snapshot from the consumer (real-time audio thread).
-    /// Wait-free O(1), zero allocations, zero mutex locks.
-    pub fn read_new(&self) -> Option<T> {
-        let shared = self.shared.load(std::sync::atomic::Ordering::Acquire);
-        if (shared & TRIPLE_DIRTY_BIT) == 0 {
+impl<T: Copy> TripleConsumer<T> {
+    pub fn read_new(&mut self) -> Option<T> {
+        if self.slots.shared.load(std::sync::atomic::Ordering::Acquire) & TRIPLE_DIRTY_BIT == 0 {
             return None;
         }
-        let r = self.read_idx.load(std::sync::atomic::Ordering::Relaxed);
-        let old_shared = self.shared.swap(r, std::sync::atomic::Ordering::AcqRel);
-        let new_r = old_shared & 0x03;
-        self.read_idx
-            .store(new_r, std::sync::atomic::Ordering::Relaxed);
-        let val = unsafe { *self.buffers[new_r as usize].get() };
-        Some(val)
+        self.read_idx = (self
+            .slots
+            .shared
+            .swap(self.read_idx as u8, std::sync::atomic::Ordering::AcqRel)
+            & 0x03) as usize;
+        Some(unsafe { *self.slots.buffers[self.read_idx].get() })
     }
+}
 
-    /// Unconditionally read the current buffer held by the consumer.
-    pub fn read_current(&self) -> T {
-        let r = self.read_idx.load(std::sync::atomic::Ordering::Relaxed) as usize;
-        unsafe { *self.buffers[r].get() }
+/// Control callers serialize publication; the audio callback owns the sole reader.
+/// Reader acquisition and return happen only while constructing/dropping a renderer.
+pub struct DspMailbox {
+    producer: parking_lot::Mutex<TripleProducer<DspConfigSnapshot>>,
+    consumer: parking_lot::Mutex<Option<TripleConsumer<DspConfigSnapshot>>>,
+}
+
+impl DspMailbox {
+    pub fn new(initial: DspConfigSnapshot) -> Self {
+        let (producer, consumer) = triple_buffer(initial);
+        Self {
+            producer: parking_lot::Mutex::new(producer),
+            consumer: parking_lot::Mutex::new(Some(consumer)),
+        }
+    }
+    pub fn publish(&self, snapshot: DspConfigSnapshot) {
+        self.producer.lock().publish(snapshot);
+    }
+    pub fn take_consumer(&self) -> Option<TripleConsumer<DspConfigSnapshot>> {
+        self.consumer.lock().take()
+    }
+    pub fn return_consumer(&self, consumer: TripleConsumer<DspConfigSnapshot>) {
+        *self.consumer.lock() = Some(consumer);
     }
 }
 
@@ -1462,14 +1484,8 @@ mod tests {
 
     #[test]
     fn test_triple_buffer_concurrent() {
-        use std::sync::Arc;
         use std::thread;
-
-        let tb = Arc::new(TripleBuffer::<DspConfigSnapshot>::new(
-            DspConfigSnapshot::default(),
-        ));
-        let tb_prod = Arc::clone(&tb);
-        let tb_cons = Arc::clone(&tb);
+        let (mut tb_prod, mut tb_cons) = triple_buffer(DspConfigSnapshot::default());
 
         let producer = thread::spawn(move || {
             for i in 1..=50_000 {

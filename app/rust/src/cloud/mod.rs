@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod db;
 pub mod flac_parser;
 pub mod media_source;

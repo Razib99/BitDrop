@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -210,9 +211,10 @@ class GoogleDriveService {
   /// Power-user configuration: switch between default `drive.file` and custom GCP OAuth Client ID (F-04).
   Future<void> configureAuth(
       {String? customClientId, bool useFullScope = false}) async {
-    _customClientId = (customClientId != null && customClientId.trim().isNotEmpty)
-        ? customClientId.trim()
-        : null;
+    _customClientId =
+        (customClientId != null && customClientId.trim().isNotEmpty)
+            ? customClientId.trim()
+            : null;
     _useFullScope = useFullScope;
     await signOut();
     _initGoogleSignIn();
@@ -273,13 +275,14 @@ class GoogleDriveService {
   /// token that expires mid-album. A silent re-auth is attempted first, which
   /// also covers the roughly weekly re-consent that Google's testing mode
   /// forces.
-  Future<String?> freshAccessToken() async {
+  Future<String?> freshAccessToken({bool forceRefresh = false}) async {
     if (!isPlatformSupported) return null;
     try {
       var account = _googleSignIn.currentUser;
       account ??= await _googleSignIn.signInSilently();
       if (account == null) return null;
 
+      if (forceRefresh) await account.clearAuthCache();
       final auth = await account.authentication;
       return auth.accessToken;
     } catch (e) {
@@ -296,8 +299,7 @@ class GoogleDriveService {
   Future<List<drive.File>> listChildren(String folderId) async {
     final api = _driveApi;
     if (api == null) {
-      debugPrint('[drive] not signed in');
-      return const [];
+      throw StateError('Not signed in to Google Drive.');
     }
 
     final out = <drive.File>[];
@@ -318,7 +320,7 @@ class GoogleDriveService {
         pageToken = page.nextPageToken;
       } catch (e) {
         debugPrint('[drive] listing $folderId failed: $e');
-        break;
+        rethrow;
       }
     } while (pageToken != null);
 
@@ -334,9 +336,8 @@ class GoogleDriveService {
     String rootName = 'Drive',
     void Function(DriveScanProgress)? onProgress,
   }) async* {
-    final queue = <({String id, String path})>[
-      (id: rootFolderId, path: rootName),
-    ];
+    final queue = Queue<({String id, String path})>()
+      ..add((id: rootFolderId, path: rootName));
 
     // Drive lets a file live in several folders, so a plain walk can revisit
     // the same subtree and emit duplicates.
@@ -345,7 +346,7 @@ class GoogleDriveService {
     var foldersVisited = 0;
 
     while (queue.isNotEmpty) {
-      final folder = queue.removeAt(0);
+      final folder = queue.removeFirst();
       final children = await listChildren(folder.id);
       foldersVisited++;
 

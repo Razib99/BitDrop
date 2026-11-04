@@ -43,9 +43,8 @@ final cloudScanStatusProvider =
 
 /// The signed-in Google account, or null. Drives the Sources screen and the
 /// "needs reconnection" banner.
-final driveAccountProvider = StreamProvider((ref) =>
-    ref.watch(driveServiceProvider).accountStream);
-
+final driveAccountProvider =
+    StreamProvider((ref) => ref.watch(driveServiceProvider).accountStream);
 
 /// The single core instance. In production this is replaced by the
 /// flutter_rust_bridge handle; nothing above this line changes.
@@ -65,7 +64,6 @@ final coreProvider = Provider<BitDropCore>((ref) {
   });
   return core;
 });
-
 
 /// Debug runs may open in a specific scenario (see `DevEnv`).
 final Scenario _startScenario = DevEnv.scenarioId == null
@@ -157,10 +155,13 @@ final settingsProvider =
 final settingsValueProvider = Provider<AppSettings>((ref) {
   return ref.watch(settingsProvider).maybeWhen(
         data: (s) => s,
-        orElse: () => const AppSettings(themeMode: AppThemeMode.system, oledBlack: false, textScale: 1.0, reduceMotion: false),
+        orElse: () => const AppSettings(
+            themeMode: AppThemeMode.system,
+            oledBlack: false,
+            textScale: 1.0,
+            reduceMotion: false),
       );
 });
-
 
 // ---- Query providers -------------------------------------------------------
 
@@ -249,6 +250,7 @@ final searchFiltersProvider =
     StateProvider<SearchFilters>((ref) => const SearchFilters());
 
 final searchResultsProvider = FutureProvider<SearchResults>((ref) async {
+  ref.watch(libraryRevisionProvider);
   final text = ref.watch(searchQueryProvider);
   final filters = ref.watch(searchFiltersProvider);
   ref.watch(scenarioRevisionProvider);
@@ -258,7 +260,15 @@ final searchResultsProvider = FutureProvider<SearchResults>((ref) async {
 
 // ---- Library view state ---------------------------------------------------
 
-enum LibraryTab { tracks, albums, artists, favorites, folders, genres, playlists }
+enum LibraryTab {
+  tracks,
+  albums,
+  artists,
+  favorites,
+  folders,
+  genres,
+  playlists
+}
 
 final libraryTabProvider =
     StateProvider<LibraryTab>((ref) => LibraryTab.tracks);

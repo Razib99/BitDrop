@@ -67,7 +67,8 @@ class LiveBitDropCore implements BitDropCore {
     actual: AudioFormat(codec: Codec.flac, bitDepth: 0, sampleRate: 0),
     dspActive: false,
     volume: VolumeMode.system,
-    explanation: 'Nothing is playing yet, so there is no output path to report.',
+    explanation:
+        'Nothing is playing yet, so there is no output path to report.',
   );
 
   /// What the engine banks before it lets a new track or a landed seek be
@@ -149,12 +150,13 @@ class LiveBitDropCore implements BitDropCore {
     _loadFavoritesAndPinned();
     _loadSettingsAndEq();
 
-    _diagnostics = BehaviorSubject<DiagnosticsSnapshot>.seeded(_computeDiagnostics());
-    _diagnosticsTimer = Timer.periodic(const Duration(seconds: 1), (_) => _pollDiagnostics());
+    _diagnostics =
+        BehaviorSubject<DiagnosticsSnapshot>.seeded(_computeDiagnostics());
+    _diagnosticsTimer =
+        Timer.periodic(const Duration(seconds: 1), (_) => _pollDiagnostics());
 
     _outputProbe.start();
-    _outputProbeSub =
-        _outputProbe.stream.listen((_) => _recomputeSignalPath());
+    _outputProbeSub = _outputProbe.stream.listen((_) => _recomputeSignalPath());
 
     _playbackSub = _audioHandler.playbackState.listen((state) {
       _recomputeSignalPath();
@@ -203,16 +205,17 @@ class LiveBitDropCore implements BitDropCore {
 
       _position.add(PositionInfo(
         positionMs: state.updatePosition.inMilliseconds,
-        durationMs: _audioHandler.mediaItem.value?.duration?.inMilliseconds ?? 0,
+        durationMs:
+            _audioHandler.mediaItem.value?.duration?.inMilliseconds ?? 0,
         bufferAheadMs: aheadMs,
         // Which parts are already on disk. Non-contiguous after a seek,
         // which is exactly what the bar is meant to show.
         cachedRanges: _cachedRanges(),
       ));
     });
-    
+
     _audioHandler.queue.listen((_) => _emitQueue());
-    
+
     _audioHandler.mediaItem.listen((item) {
       if (item != null) {
         final track = _lookupTrack(item.id);
@@ -308,32 +311,43 @@ class LiveBitDropCore implements BitDropCore {
 
   // Intercepted streams
   final _playback = BehaviorSubject<PlaybackState>.seeded(const IdleState());
-  @override Stream<PlaybackState> get playback => _playback.stream;
+  @override
+  Stream<PlaybackState> get playback => _playback.stream;
 
   final _position = BehaviorSubject<PositionInfo>.seeded(PositionInfo.empty);
-  @override Stream<PositionInfo> get position => _position.stream;
+  @override
+  Stream<PositionInfo> get position => _position.stream;
 
   final _nowPlaying = BehaviorSubject<NowPlaying?>.seeded(null);
-  @override Stream<NowPlaying?> get nowPlaying => _nowPlaying.stream;
+  @override
+  Stream<NowPlaying?> get nowPlaying => _nowPlaying.stream;
 
   // Delegated streams
-  @override Stream<SignalPath> get signalPath => _signalPath.stream;
+  @override
+  Stream<SignalPath> get signalPath => _signalPath.stream;
   final _queue = BehaviorSubject<QueueState>.seeded(QueueState.empty);
-  @override Stream<QueueState> get queue => _queue.stream;
-  @override Stream<OutputDevice?> get outputDevice => _outputProbe.stream;
+  @override
+  Stream<QueueState> get queue => _queue.stream;
+  @override
+  Stream<OutputDevice?> get outputDevice => _outputProbe.stream;
   final _defaultSources = BehaviorSubject<List<SourceAccount>>.seeded(const []);
   @override
   Stream<List<SourceAccount>> get sources =>
       _cloud?.sourceAccounts ?? _defaultSources.stream;
   final _syncStatus = BehaviorSubject<SyncStatus>.seeded(SyncStatus.idle);
-  @override Stream<SyncStatus> get syncStatus => _syncStatus.stream;
+  @override
+  Stream<SyncStatus> get syncStatus => _syncStatus.stream;
   final _banners = BehaviorSubject<List<AppBanner>>.seeded(const []);
-  @override Stream<List<AppBanner>> get banners => _banners.stream;
-  final _eq = BehaviorSubject<EqState>.seeded(PersistenceCodec.defaultEqState());
-  @override Stream<EqState> get eq => _eq.stream;
+  @override
+  Stream<List<AppBanner>> get banners => _banners.stream;
+  final _eq =
+      BehaviorSubject<EqState>.seeded(PersistenceCodec.defaultEqState());
+  @override
+  Stream<EqState> get eq => _eq.stream;
   EqState get eqValue => _eq.value;
   final _storage = BehaviorSubject<StorageState>.seeded(_emptyStorage);
-  @override Stream<StorageState> get storage => _storage.stream;
+  @override
+  Stream<StorageState> get storage => _storage.stream;
 
   static const _emptyStorage = StorageState(
     pinnedBytes: 0,
@@ -433,11 +447,14 @@ class LiveBitDropCore implements BitDropCore {
     }
   }
 
-  final _visualizer = BehaviorSubject<VisualizerFrame>.seeded(VisualizerFrame.silent);
-  @override Stream<VisualizerFrame> get visualizer => _visualizer.stream;
+  final _visualizer =
+      BehaviorSubject<VisualizerFrame>.seeded(VisualizerFrame.silent);
+  @override
+  Stream<VisualizerFrame> get visualizer => _visualizer.stream;
 
   late final BehaviorSubject<DiagnosticsSnapshot> _diagnostics;
-  @override Stream<DiagnosticsSnapshot> get diagnostics => _diagnostics.stream;
+  @override
+  Stream<DiagnosticsSnapshot> get diagnostics => _diagnostics.stream;
   final _deviceProfiles = BehaviorSubject<List<DeviceProfile>>.seeded(const [
     DeviceProfile(
       deviceId: 'dev-titanx',
@@ -445,12 +462,14 @@ class LiveBitDropCore implements BitDropCore {
       replayGain: ReplayGainMode.off,
     ),
   ]);
-  @override Stream<List<DeviceProfile>> get deviceProfiles => _deviceProfiles.stream;
+  @override
+  Stream<List<DeviceProfile>> get deviceProfiles => _deviceProfiles.stream;
   final _settings = BehaviorSubject<AppSettings>.seeded(const AppSettings());
-  @override Stream<AppSettings> get settings => _settings.stream;
+  @override
+  Stream<AppSettings> get settings => _settings.stream;
 
   // Delegated queries
-  
+
   /// Resolves an id across every source: cloud first, then the local scan,
   /// then the mock catalogue.
   Track? _lookupTrack(String id) =>
@@ -496,10 +515,12 @@ class LiveBitDropCore implements BitDropCore {
         final raw = jsonDecode(text);
         if (raw is Map) {
           if (raw['tracks'] is List) {
-            _pinnedTrackIds.addAll((raw['tracks'] as List).map((e) => e.toString()));
+            _pinnedTrackIds
+                .addAll((raw['tracks'] as List).map((e) => e.toString()));
           }
           if (raw['albums'] is List) {
-            _pinnedAlbumIds.addAll((raw['albums'] as List).map((e) => e.toString()));
+            _pinnedAlbumIds
+                .addAll((raw['albums'] as List).map((e) => e.toString()));
           }
         }
       }
@@ -557,7 +578,8 @@ class LiveBitDropCore implements BitDropCore {
     try {
       final settingsJson = await rust_cache.cloudDbGetKv(key: 'app_settings');
       if (settingsJson != null && settingsJson.isNotEmpty) {
-        final loadedSettings = PersistenceCodec.deserializeAppSettings(settingsJson);
+        final loadedSettings =
+            PersistenceCodec.deserializeAppSettings(settingsJson);
         _settings.add(loadedSettings);
       }
     } catch (e) {
@@ -565,9 +587,11 @@ class LiveBitDropCore implements BitDropCore {
     }
 
     try {
-      final profilesJson = await rust_cache.cloudDbGetKv(key: 'device_profiles');
+      final profilesJson =
+          await rust_cache.cloudDbGetKv(key: 'device_profiles');
       if (profilesJson != null && profilesJson.isNotEmpty) {
-        final loadedProfiles = PersistenceCodec.deserializeDeviceProfiles(profilesJson);
+        final loadedProfiles =
+            PersistenceCodec.deserializeDeviceProfiles(profilesJson);
         if (loadedProfiles.isNotEmpty) {
           _deviceProfiles.add(loadedProfiles);
         }
@@ -597,7 +621,8 @@ class LiveBitDropCore implements BitDropCore {
 
   Future<void> _saveDeviceProfiles() async {
     try {
-      final json = PersistenceCodec.serializeDeviceProfiles(_deviceProfiles.value);
+      final json =
+          PersistenceCodec.serializeDeviceProfiles(_deviceProfiles.value);
       await rust_cache.cloudDbSetKv(key: 'device_profiles', value: json);
     } catch (e) {
       debugPrint('[persistence] failed to save device profiles: $e');
@@ -608,16 +633,12 @@ class LiveBitDropCore implements BitDropCore {
     if (_pinnedTrackIds.contains(trackId)) return true;
     final chunks = _chunkCacheDir;
     if (chunks == null || sizeBytes <= 0) return false;
-    final idxFile = File('$chunks/$trackId.idx');
-    if (!idxFile.existsSync()) return false;
     try {
-      final lines = idxFile.readAsLinesSync();
-      final unique = lines
-          .map((l) => int.tryParse(l.trim()))
-          .whereType<int>()
-          .toSet();
-      final totalChunks = (sizeBytes + 2097152 - 1) ~/ 2097152;
-      return totalChunks > 0 && unique.length >= totalChunks;
+      return rust_cache.cloudCacheIsComplete(
+        fileId: trackId,
+        cacheDir: chunks,
+        totalSize: BigInt.from(sizeBytes),
+      );
     } catch (_) {
       return false;
     }
@@ -627,12 +648,9 @@ class LiveBitDropCore implements BitDropCore {
     final chunks = _chunkCacheDir;
     if (chunks == null) return;
     try {
-      final sparse = File('$chunks/$fileId.sparse');
-      if (sparse.existsSync()) sparse.deleteSync();
-      final idx = File('$chunks/$fileId.idx');
-      if (idx.existsSync()) idx.deleteSync();
+      rust_cache.cloudCacheRemoveTrack(fileId: fileId, cacheDir: chunks);
     } catch (e) {
-      debugPrint('[download] failed to delete chunk cache for $fileId: $e');
+      debugPrint('[download] failed to remove chunk cache for $fileId: $e');
     }
   }
 
@@ -725,39 +743,14 @@ class LiveBitDropCore implements BitDropCore {
         return;
       }
 
-      final uri = Uri.parse(
-          'https://www.googleapis.com/drive/v3/files/$trackId?alt=media');
-      final client = HttpClient();
-      final request = await client.getUrl(uri);
-      request.headers.set('Authorization', 'Bearer $token');
-      final response = await request.close();
-      if (response.statusCode != 200 && response.statusCode != 206) {
-        debugPrint('[download] HTTP ${response.statusCode} downloading track $trackId');
-        return;
-      }
-
-      final sparseFile = File('$chunksDir/$trackId.sparse');
-      final sink = sparseFile.openWrite();
-      await response.pipe(sink);
-
-      if (!_pinnedTrackIds.contains(trackId)) {
-        if (sparseFile.existsSync()) {
-          try {
-            sparseFile.deleteSync();
-          } catch (_) {}
-        }
-        return;
-      }
-
-      final totalSize = track.sizeBytes;
-      const chunkSize = 2 * 1024 * 1024;
-      final chunkCount =
-          totalSize > 0 ? (totalSize + chunkSize - 1) ~/ chunkSize : 1;
-      final idxLines =
-          '${List.generate(chunkCount, (i) => '$i').join('\n')}\n';
-      final idxFile = File('$chunksDir/$trackId.idx');
-      await idxFile.writeAsString(idxLines);
-      debugPrint('[download] downloaded $trackId ($totalSize bytes, $chunkCount chunks)');
+      await rust_cache.cloudDownloadTrack(
+        fileId: trackId,
+        url: 'https://www.googleapis.com/drive/v3/files/$trackId?alt=media',
+        authToken: token,
+        totalSize: BigInt.from(track.sizeBytes),
+        cacheDir: chunksDir,
+      );
+      if (!_pinnedTrackIds.contains(trackId)) _deleteDiskCacheFor(trackId);
       await refreshStorage();
     } catch (e) {
       debugPrint('[download] error downloading track $trackId: $e');
@@ -872,7 +865,10 @@ class LiveBitDropCore implements BitDropCore {
     }
     return null;
   }
-  @override Future<FolderListing> folder(String? folderId) async => const FolderListing(folderId: null, breadcrumb: [], entries: []);
+
+  @override
+  Future<FolderListing> folder(String? folderId) async =>
+      const FolderListing(folderId: null, breadcrumb: [], entries: []);
   @override
   Future<List<Playlist>> playlists() async {
     final favTracks = _allCandidateTracks
@@ -895,7 +891,9 @@ class LiveBitDropCore implements BitDropCore {
       ),
     ];
   }
-  @override Future<List<String>> genres() async => const [];
+
+  @override
+  Future<List<String>> genres() async => const [];
   @override
   Future<SearchResults> search(String text, SearchFilters f) async {
     final q = text.trim();
@@ -909,7 +907,9 @@ class LiveBitDropCore implements BitDropCore {
       if (fmt.shortLabel.toLowerCase() == lq) return true;
       if (fmt.badgeLabel.toLowerCase() == lq) return true;
       if (lq.endsWith('khz') &&
-          fmt.shortLabel.toLowerCase().contains(lq.replaceAll('khz', '').trim())) {
+          fmt.shortLabel
+              .toLowerCase()
+              .contains(lq.replaceAll('khz', '').trim())) {
         return true;
       }
       return false;
@@ -925,8 +925,12 @@ class LiveBitDropCore implements BitDropCore {
         return false;
       }
       if (f.quality == QualityFilter.hiRes && !t.format.isHiRes) return false;
-      if (f.quality == QualityFilter.cdQuality && !t.format.isCdQuality) return false;
-      if (f.quality == QualityFilter.lossy && t.format.codec.isLossless) return false;
+      if (f.quality == QualityFilter.cdQuality && !t.format.isCdQuality) {
+        return false;
+      }
+      if (f.quality == QualityFilter.lossy && t.format.codec.isLossless) {
+        return false;
+      }
       return true;
     }
 
@@ -935,13 +939,18 @@ class LiveBitDropCore implements BitDropCore {
         return false;
       }
       if (f.quality == QualityFilter.hiRes && !a.format.isHiRes) return false;
-      if (f.quality == QualityFilter.cdQuality && !a.format.isCdQuality) return false;
-      if (f.quality == QualityFilter.lossy && a.format.codec.isLossless) return false;
+      if (f.quality == QualityFilter.cdQuality && !a.format.isCdQuality) {
+        return false;
+      }
+      if (f.quality == QualityFilter.lossy && a.format.codec.isLossless) {
+        return false;
+      }
       return true;
     }
 
     // 1. Tracks from all sources: SQLite FTS5, cloud, local disk, and fallback mock
-    final ftsTracks = _cloud != null ? await _cloud.search(q, limit: 50) : const <Track>[];
+    final ftsTracks =
+        _cloud != null ? await _cloud.search(q, limit: 50) : const <Track>[];
     final cloudMatching = _cloudTracks.where((t) =>
         t.title.toLowerCase().contains(lq) ||
         t.artist.toLowerCase().contains(lq) ||
@@ -982,7 +991,8 @@ class LiveBitDropCore implements BitDropCore {
       if (favAlbum.trackCount > 0) favAlbum,
       ..._cloudAlbums.map(_enrichAlbum),
       if (_realAlbum != null) _enrichAlbum(_realAlbum!),
-      if (_cloudAlbums.isEmpty && _realAlbum == null) ...MockCatalog.albums.map(_enrichAlbum),
+      if (_cloudAlbums.isEmpty && _realAlbum == null)
+        ...MockCatalog.albums.map(_enrichAlbum),
     ];
     for (final a in candidateAlbums) {
       if (seenAlbumIds.add(a.id) && keepAlbum(a)) {
@@ -1016,7 +1026,8 @@ class LiveBitDropCore implements BitDropCore {
       final p = t.folderPath;
       if (p.isNotEmpty && p.toLowerCase().contains(lq)) {
         if (seenFolders.add(p)) {
-          final folderName = p.split('/').where((s) => s.isNotEmpty).lastOrNull ?? p;
+          final folderName =
+              p.split('/').where((s) => s.isNotEmpty).lastOrNull ?? p;
           allFolders.add(FolderEntry(
             id: p,
             name: folderName,
@@ -1029,17 +1040,23 @@ class LiveBitDropCore implements BitDropCore {
 
     // 5. Intelligent Top Result:
     final exactAlbum = allAlbums.cast<Album?>().firstWhere(
-      (a) => a!.title.toLowerCase() == lq || a.title.toLowerCase().startsWith(lq),
-      orElse: () => null,
-    );
+          (a) =>
+              a!.title.toLowerCase() == lq ||
+              a.title.toLowerCase().startsWith(lq),
+          orElse: () => null,
+        );
     final exactArtist = allArtists.cast<Artist?>().firstWhere(
-      (art) => art!.name.toLowerCase() == lq || art.name.toLowerCase().startsWith(lq),
-      orElse: () => null,
-    );
+          (art) =>
+              art!.name.toLowerCase() == lq ||
+              art.name.toLowerCase().startsWith(lq),
+          orElse: () => null,
+        );
     final exactTrack = allTracks.cast<Track?>().firstWhere(
-      (t) => t!.title.toLowerCase() == lq || t.title.toLowerCase().startsWith(lq),
-      orElse: () => null,
-    );
+          (t) =>
+              t!.title.toLowerCase() == lq ||
+              t.title.toLowerCase().startsWith(lq),
+          orElse: () => null,
+        );
 
     final enrichedTracks = allTracks.map(_enrichTrack).toList();
     final enrichedAlbums = allAlbums.map(_enrichAlbum).toList();
@@ -1063,6 +1080,7 @@ class LiveBitDropCore implements BitDropCore {
       folders: allFolders.take(8).toList(),
     );
   }
+
   @override
   Future<List<AutoEqProfile>> searchAutoEq(String model) async {
     try {
@@ -1169,8 +1187,11 @@ class LiveBitDropCore implements BitDropCore {
     final currentIndex = currentItem == null
         ? _audioHandler.currentIndex
         : items.indexOf(currentItem);
-    final tracks =
-        items.map((i) => _lookupTrack(i.id)).whereType<Track>().map(_enrichTrack).toList();
+    final tracks = items
+        .map((i) => _lookupTrack(i.id))
+        .whereType<Track>()
+        .map(_enrichTrack)
+        .toList();
     final queueItems =
         tracks.map((t) => QueueItem(track: t, id: t.id)).toList();
     _queue.add(QueueState(
@@ -1292,7 +1313,8 @@ class LiveBitDropCore implements BitDropCore {
         extras: isCloud
             ? cloudTrackExtras(
                 fileId: t.id,
-                url: 'https://www.googleapis.com/drive/v3/files/${t.id}?alt=media',
+                url:
+                    'https://www.googleapis.com/drive/v3/files/${t.id}?alt=media',
                 sizeBytes: t.sizeBytes,
                 ext: t.format.codec.label.toLowerCase(),
               )
@@ -1311,8 +1333,7 @@ class LiveBitDropCore implements BitDropCore {
         return;
       }
       _currentContextLabel = cmd.contextLabel;
-      final tracks =
-          cmd.trackIds.map(_lookupTrack).whereType<Track>().toList();
+      final tracks = cmd.trackIds.map(_lookupTrack).whereType<Track>().toList();
       debugPrint('[play] PlayContext ${cmd.contextId}: '
           '${cmd.trackIds.length} ids -> ${tracks.length} resolved, '
           'startIndex ${cmd.startIndex}, shuffle: ${cmd.shuffle}');
@@ -1322,7 +1343,7 @@ class LiveBitDropCore implements BitDropCore {
       }
       if (tracks.isNotEmpty) {
         final items = _resolveMediaItems(cmd.trackIds);
-        
+
         await _audioHandler.setQueueAndPlay(
           items,
           cmd.startIndex,
@@ -1474,13 +1495,15 @@ class LiveBitDropCore implements BitDropCore {
       ));
       unawaited(_saveSettings());
     } else if (cmd is SetEqBands) {
-      _eq.add(_eq.value.copyWith(bands: cmd.bands, mode: EqMode.parametric, bypass: false));
+      _eq.add(_eq.value
+          .copyWith(bands: cmd.bands, mode: EqMode.parametric, bypass: false));
       unawaited(_saveEqState());
     } else if (cmd is SetEqMode) {
       _eq.add(_eq.value.copyWith(mode: cmd.mode));
       unawaited(_saveEqState());
     } else if (cmd is SetGraphicGains) {
-      _eq.add(_eq.value.copyWith(graphicGains: cmd.gains, mode: EqMode.graphic, bypass: false));
+      _eq.add(_eq.value.copyWith(
+          graphicGains: cmd.gains, mode: EqMode.graphic, bypass: false));
       unawaited(_saveEqState());
     } else if (cmd is SetBypass) {
       _eq.add(_eq.value.copyWith(bypass: cmd.bypass));
@@ -1500,7 +1523,8 @@ class LiveBitDropCore implements BitDropCore {
       ));
       unawaited(_saveEqState());
     } else if (cmd is SetReplayGain) {
-      _eq.add(_eq.value.copyWith(replayGain: cmd.mode, replayGainPreampDb: cmd.preampDb));
+      _eq.add(_eq.value
+          .copyWith(replayGain: cmd.mode, replayGainPreampDb: cmd.preampDb));
       _settings.add(_settings.value.copyWith(replayGain: cmd.mode));
       unawaited(_saveEqState());
       unawaited(_saveSettings());
@@ -1517,7 +1541,8 @@ class LiveBitDropCore implements BitDropCore {
           return DeviceProfile(
             deviceId: p.deviceId,
             deviceName: p.deviceName,
-            eqPresetName: cmd.assign ? (_eq.value.presetName ?? 'Custom EQ') : null,
+            eqPresetName:
+                cmd.assign ? (_eq.value.presetName ?? 'Custom EQ') : null,
             replayGain: p.replayGain,
             safetyAttenuationDb: p.safetyAttenuationDb,
             preferredVolumeDb: p.preferredVolumeDb,
@@ -1615,12 +1640,14 @@ class LiveBitDropCore implements BitDropCore {
 
     // What actually leaves the engine: the stream's rate, not the file's.
     final actual = source.copyWith(
-      sampleRate:
-          out.outputSampleRate == 0 ? out.sourceSampleRate : out.outputSampleRate,
+      sampleRate: out.outputSampleRate == 0
+          ? out.sourceSampleRate
+          : out.outputSampleRate,
     );
 
     final resampled = actual.sampleRate != source.sampleRate ||
-        (out.hardwareSampleRate != 0 && out.hardwareSampleRate != source.sampleRate);
+        (out.hardwareSampleRate != 0 &&
+            out.hardwareSampleRate != source.sampleRate);
     final dsp = out.dspActive;
 
     // Order matters. A rate change is the most severe truth, so it outranks
@@ -1737,7 +1764,8 @@ class LiveBitDropCore implements BitDropCore {
       return 'Bluetooth re-encodes audio with its own codec (lossy compression), '
           'so lossless bit-perfect playback is not possible over Bluetooth.';
     }
-    if (tier == OutputTier.resampled && actual.sampleRate != source.sampleRate) {
+    if (tier == OutputTier.resampled &&
+        actual.sampleRate != source.sampleRate) {
       return 'This phone mixes all audio at '
           '${actual.sampleRate ~/ 1000} kHz, so your '
           '${source.sampleRate ~/ 1000} kHz file is resampled before it '

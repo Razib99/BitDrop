@@ -18,6 +18,7 @@ pub enum RenderAction {
 }
 
 pub struct OutputRenderer {
+    dsp_config: Option<crate::dsp::TripleConsumer<crate::dsp::DspConfigSnapshot>>,
     pub consumer: Option<rtrb::Consumer<f32>>,
     pub boundary_consumer: Option<rtrb::Consumer<BoundaryMarker>>,
     pub triggered_producer: Option<rtrb::Producer<BoundaryMarker>>,
@@ -35,6 +36,7 @@ impl OutputRenderer {
         triggered_producer: Option<rtrb::Producer<BoundaryMarker>>,
     ) -> Self {
         Self {
+            dsp_config: DSP_TRIPLE_BUFFER.take_consumer(),
             consumer,
             boundary_consumer,
             triggered_producer,
@@ -53,12 +55,16 @@ impl OutputRenderer {
         // 1. Read real-time atomic state flags - ZERO mutex locks on the audio thread!
         let is_playing = CALLBACK_IS_PLAYING.load(Ordering::Acquire);
         let gated = CALLBACK_GATE_OUTPUT.load(Ordering::Acquire);
-        let flush = CALLBACK_FLUSH_REQUESTED.swap(false, Ordering::AcqRel);
+        let flush = CALLBACK_FLUSH_REQUESTED.load(Ordering::Acquire);
         let fade_target = f32::from_bits(CALLBACK_FADE_TARGET.load(Ordering::Relaxed));
         let fade_step = f32::from_bits(CALLBACK_FADE_STEP.load(Ordering::Relaxed));
 
         // 2. Fetch pre-computed DSP snapshot from lock-free Triple Buffer
-        if let Some(snap) = DSP_TRIPLE_BUFFER.read_new() {
+        if let Some(snap) = self
+            .dsp_config
+            .as_mut()
+            .and_then(|reader| reader.read_new())
+        {
             self.dsp.eq_enabled = snap.eq_enabled;
             if snap.sample_rate > 0.0 && (self.dsp.sample_rate - snap.sample_rate).abs() > 0.5 {
                 self.dsp.set_sample_rate(snap.sample_rate);
@@ -95,6 +101,7 @@ impl OutputRenderer {
             if slots > 0 {
                 if let Ok(chunk) = consumer.read_chunk(slots) {
                     chunk.commit_all();
+                    CALLBACK_FRAMES_PLAYED.fetch_add((slots / 2) as u64, Ordering::SeqCst);
                 }
             }
             if let Some(bc) = self.boundary_consumer.as_mut() {
@@ -106,6 +113,7 @@ impl OutputRenderer {
                 }
             }
             TRACK_ENDED_FLAG.store(false, Ordering::Release);
+            CALLBACK_FLUSH_REQUESTED.store(false, Ordering::Release);
         }
 
         let rate = self.dsp.sample_rate as u32;
@@ -302,5 +310,13 @@ impl OutputRenderer {
         }
 
         RenderAction::Continue
+    }
+}
+
+impl Drop for OutputRenderer {
+    fn drop(&mut self) {
+        if let Some(reader) = self.dsp_config.take() {
+            DSP_TRIPLE_BUFFER.return_consumer(reader);
+        }
     }
 }

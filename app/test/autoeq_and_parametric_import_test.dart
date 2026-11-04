@@ -15,17 +15,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUpAll(() async {
-    // Initialize Rust library for testing
-    try {
-      final soPath = File('rust/target/debug/librust_lib_bitdrop.so').existsSync()
-          ? 'rust/target/debug/librust_lib_bitdrop.so'
-          : '${Directory.current.path}/rust/target/debug/librust_lib_bitdrop.so';
-      await RustLib.init(externalLibrary: ExternalLibrary.open(soPath));
-    } catch (_) {
-      try {
-        await RustLib.init();
-      } catch (_) {}
-    }
+    await RustLib.init(
+        externalLibrary: ExternalLibrary.open(
+            '${Directory.current.path}/rust/target/debug/librust_lib_bitdrop.so'));
   });
 
   group('ParametricEqParser Tests', () {
@@ -93,7 +85,9 @@ Filter 6: ON HPQ Fc 20 Hz Gain 0.0 dB Q 0.71
       expect(result.bands[5].enabled, isTrue);
     });
 
-    test('Parses format without preamp and shorthand filter types (LS, HS, LP, HP)', () {
+    test(
+        'Parses format without preamp and shorthand filter types (LS, HS, LP, HP)',
+        () {
       const text = '''
 Filter 1: ON LS Fc 80.0 Hz Gain 4.0 dB Q 0.7
 Filter 2: ON HS Fc 12000.0 Hz Gain -3.0 dB Q 0.7
@@ -122,9 +116,25 @@ Filter 4: ON HP Fc 15.0 Hz Q 0.707
 
     test('Encodes and decodes bands JSON for SQLite roundtrip', () {
       const original = [
-        EqBand(id: 1, type: BiquadType.lowShelf, frequencyHz: 105, gainDb: 3.4, q: 0.7),
-        EqBand(id: 2, type: BiquadType.peak, frequencyHz: 2500, gainDb: -2.5, q: 2.0, enabled: false),
-        EqBand(id: 3, type: BiquadType.highShelf, frequencyHz: 10000, gainDb: 1.5, q: 0.71),
+        EqBand(
+            id: 1,
+            type: BiquadType.lowShelf,
+            frequencyHz: 105,
+            gainDb: 3.4,
+            q: 0.7),
+        EqBand(
+            id: 2,
+            type: BiquadType.peak,
+            frequencyHz: 2500,
+            gainDb: -2.5,
+            q: 2.0,
+            enabled: false),
+        EqBand(
+            id: 3,
+            type: BiquadType.highShelf,
+            frequencyHz: 10000,
+            gainDb: 1.5,
+            q: 0.71),
       ];
 
       final json = ParametricEqParser.encodeBandsJson(original);
@@ -153,14 +163,26 @@ Filter 4: ON HP Fc 15.0 Hz Q 0.707
 
     test('Exports bands and preamp to ParametricEQ format', () {
       const bands = [
-        EqBand(id: 1, type: BiquadType.lowShelf, frequencyHz: 105, gainDb: 3.4, q: 0.7),
-        EqBand(id: 2, type: BiquadType.peak, frequencyHz: 2500, gainDb: -2.5, q: 2.0),
+        EqBand(
+            id: 1,
+            type: BiquadType.lowShelf,
+            frequencyHz: 105,
+            gainDb: 3.4,
+            q: 0.7),
+        EqBand(
+            id: 2,
+            type: BiquadType.peak,
+            frequencyHz: 2500,
+            gainDb: -2.5,
+            q: 2.0),
       ];
 
-      final text = ParametricEqParser.exportToParametricEq(bands: bands, preampDb: -5.0);
+      final text =
+          ParametricEqParser.exportToParametricEq(bands: bands, preampDb: -5.0);
       expect(text, contains('Preamp: -5.0 dB'));
       expect(text, contains('Filter 1: ON LSC Fc 105.0 Hz Gain 3.4 dB Q 0.70'));
-      expect(text, contains('Filter 2: ON PK Fc 2500.0 Hz Gain -2.5 dB Q 2.00'));
+      expect(
+          text, contains('Filter 2: ON PK Fc 2500.0 Hz Gain -2.5 dB Q 2.00'));
 
       // Roundtrip through parse
       final reParsed = ParametricEqParser.parse(text);
@@ -178,7 +200,8 @@ Filter 4: ON HP Fc 15.0 Hz Q 0.707
 
     setUp(() async {
       tempDir = Directory.systemTemp.createTempSync('bitdrop_autoeq_test_');
-      cacheDir = Directory('${tempDir.path}/cache')..createSync(recursive: true);
+      cacheDir = Directory('${tempDir.path}/cache')
+        ..createSync(recursive: true);
       final dbPath = '${cacheDir.path}/library.db';
       await rust_db.cloudLibraryOpen(dbPath: dbPath, cacheDir: cacheDir.path);
 
@@ -199,7 +222,8 @@ Filter 4: ON HP Fc 15.0 Hz Q 0.707
     test('searchAutoEq retrieves profiles from SQLite database', () async {
       // 1. Search all (empty query)
       final all = await liveCore.searchAutoEq('');
-      expect(all.length, greaterThanOrEqualTo(24), reason: 'Must return at least 24 curated profiles');
+      expect(all.length, greaterThanOrEqualTo(24),
+          reason: 'Must return at least 24 curated profiles');
 
       // 2. Search Sennheiser brand
       final sennheiser = await liveCore.searchAutoEq('Sennheiser');
@@ -215,7 +239,8 @@ Filter 4: ON HP Fc 15.0 Hz Q 0.707
       expect(titan.any((p) => p.model == 'DUNU Titan S'), isTrue);
     });
 
-    test('ApplyAutoEqProfile applies curated profile bands and preamp', () async {
+    test('ApplyAutoEqProfile applies curated profile bands and preamp',
+        () async {
       await liveCore.send(const ApplyAutoEqProfile('aeq-titanx'));
 
       final eq = await liveCore.eq.first;
@@ -233,7 +258,9 @@ Filter 4: ON HP Fc 15.0 Hz Q 0.707
       expect(b1.q, 0.70);
     });
 
-    test('ImportParametricEq parses text and updates EQ state with parametric bands', () async {
+    test(
+        'ImportParametricEq parses text and updates EQ state with parametric bands',
+        () async {
       const peacePreset = '''
 Preamp: -4.5 dB
 Filter 1: ON PK Fc 65 Hz Gain 5.2 dB Q 1.41

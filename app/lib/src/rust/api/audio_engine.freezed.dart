@@ -18,6 +18,8 @@ final _privateConstructorUsedError = UnsupportedError(
 mixin _$EngineEvent {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
+    required TResult Function(String fileId, String message) playbackFailed,
+    required TResult Function(BigInt requestId) tokenRefreshRequested,
     required TResult Function(bool isPlaying, bool isBuffering) playbackState,
     required TResult Function(String fileId) trackStarted,
     required TResult Function(String fileId) trackEnded,
@@ -31,6 +33,8 @@ mixin _$EngineEvent {
       throw _privateConstructorUsedError;
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String fileId, String message)? playbackFailed,
+    TResult? Function(BigInt requestId)? tokenRefreshRequested,
     TResult? Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult? Function(String fileId)? trackStarted,
     TResult? Function(String fileId)? trackEnded,
@@ -42,6 +46,8 @@ mixin _$EngineEvent {
       throw _privateConstructorUsedError;
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String fileId, String message)? playbackFailed,
+    TResult Function(BigInt requestId)? tokenRefreshRequested,
     TResult Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult Function(String fileId)? trackStarted,
     TResult Function(String fileId)? trackEnded,
@@ -54,6 +60,9 @@ mixin _$EngineEvent {
       throw _privateConstructorUsedError;
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
+    required TResult Function(EngineEvent_PlaybackFailed value) playbackFailed,
+    required TResult Function(EngineEvent_TokenRefreshRequested value)
+        tokenRefreshRequested,
     required TResult Function(EngineEvent_PlaybackState value) playbackState,
     required TResult Function(EngineEvent_TrackStarted value) trackStarted,
     required TResult Function(EngineEvent_TrackEnded value) trackEnded,
@@ -66,6 +75,9 @@ mixin _$EngineEvent {
       throw _privateConstructorUsedError;
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult? Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult? Function(EngineEvent_PlaybackState value)? playbackState,
     TResult? Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult? Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -76,6 +88,9 @@ mixin _$EngineEvent {
       throw _privateConstructorUsedError;
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
+    TResult Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult Function(EngineEvent_PlaybackState value)? playbackState,
     TResult Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -106,6 +121,407 @@ class _$EngineEventCopyWithImpl<$Res, $Val extends EngineEvent>
 
   /// Create a copy of EngineEvent
   /// with the given fields replaced by the non-null parameter values.
+}
+
+/// @nodoc
+abstract class _$$EngineEvent_PlaybackFailedImplCopyWith<$Res> {
+  factory _$$EngineEvent_PlaybackFailedImplCopyWith(
+          _$EngineEvent_PlaybackFailedImpl value,
+          $Res Function(_$EngineEvent_PlaybackFailedImpl) then) =
+      __$$EngineEvent_PlaybackFailedImplCopyWithImpl<$Res>;
+  @useResult
+  $Res call({String fileId, String message});
+}
+
+/// @nodoc
+class __$$EngineEvent_PlaybackFailedImplCopyWithImpl<$Res>
+    extends _$EngineEventCopyWithImpl<$Res, _$EngineEvent_PlaybackFailedImpl>
+    implements _$$EngineEvent_PlaybackFailedImplCopyWith<$Res> {
+  __$$EngineEvent_PlaybackFailedImplCopyWithImpl(
+      _$EngineEvent_PlaybackFailedImpl _value,
+      $Res Function(_$EngineEvent_PlaybackFailedImpl) _then)
+      : super(_value, _then);
+
+  /// Create a copy of EngineEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? fileId = null,
+    Object? message = null,
+  }) {
+    return _then(_$EngineEvent_PlaybackFailedImpl(
+      fileId: null == fileId
+          ? _value.fileId
+          : fileId // ignore: cast_nullable_to_non_nullable
+              as String,
+      message: null == message
+          ? _value.message
+          : message // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// @nodoc
+
+class _$EngineEvent_PlaybackFailedImpl extends EngineEvent_PlaybackFailed {
+  const _$EngineEvent_PlaybackFailedImpl(
+      {required this.fileId, required this.message})
+      : super._();
+
+  @override
+  final String fileId;
+  @override
+  final String message;
+
+  @override
+  String toString() {
+    return 'EngineEvent.playbackFailed(fileId: $fileId, message: $message)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is _$EngineEvent_PlaybackFailedImpl &&
+            (identical(other.fileId, fileId) || other.fileId == fileId) &&
+            (identical(other.message, message) || other.message == message));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, fileId, message);
+
+  /// Create a copy of EngineEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  @pragma('vm:prefer-inline')
+  _$$EngineEvent_PlaybackFailedImplCopyWith<_$EngineEvent_PlaybackFailedImpl>
+      get copyWith => __$$EngineEvent_PlaybackFailedImplCopyWithImpl<
+          _$EngineEvent_PlaybackFailedImpl>(this, _$identity);
+
+  @override
+  @optionalTypeArgs
+  TResult when<TResult extends Object?>({
+    required TResult Function(String fileId, String message) playbackFailed,
+    required TResult Function(BigInt requestId) tokenRefreshRequested,
+    required TResult Function(bool isPlaying, bool isBuffering) playbackState,
+    required TResult Function(String fileId) trackStarted,
+    required TResult Function(String fileId) trackEnded,
+    required TResult Function(int positionMs, int durationMs) positionUpdate,
+    required TResult Function(
+            int bufferedMs, int fetchesInFlight, BigInt bytesFetched)
+        bufferTelemetry,
+    required TResult Function(int grMillidb, BigInt clippedSamples)
+        limiterTelemetry,
+  }) {
+    return playbackFailed(fileId, message);
+  }
+
+  @override
+  @optionalTypeArgs
+  TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String fileId, String message)? playbackFailed,
+    TResult? Function(BigInt requestId)? tokenRefreshRequested,
+    TResult? Function(bool isPlaying, bool isBuffering)? playbackState,
+    TResult? Function(String fileId)? trackStarted,
+    TResult? Function(String fileId)? trackEnded,
+    TResult? Function(int positionMs, int durationMs)? positionUpdate,
+    TResult? Function(int bufferedMs, int fetchesInFlight, BigInt bytesFetched)?
+        bufferTelemetry,
+    TResult? Function(int grMillidb, BigInt clippedSamples)? limiterTelemetry,
+  }) {
+    return playbackFailed?.call(fileId, message);
+  }
+
+  @override
+  @optionalTypeArgs
+  TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String fileId, String message)? playbackFailed,
+    TResult Function(BigInt requestId)? tokenRefreshRequested,
+    TResult Function(bool isPlaying, bool isBuffering)? playbackState,
+    TResult Function(String fileId)? trackStarted,
+    TResult Function(String fileId)? trackEnded,
+    TResult Function(int positionMs, int durationMs)? positionUpdate,
+    TResult Function(int bufferedMs, int fetchesInFlight, BigInt bytesFetched)?
+        bufferTelemetry,
+    TResult Function(int grMillidb, BigInt clippedSamples)? limiterTelemetry,
+    required TResult orElse(),
+  }) {
+    if (playbackFailed != null) {
+      return playbackFailed(fileId, message);
+    }
+    return orElse();
+  }
+
+  @override
+  @optionalTypeArgs
+  TResult map<TResult extends Object?>({
+    required TResult Function(EngineEvent_PlaybackFailed value) playbackFailed,
+    required TResult Function(EngineEvent_TokenRefreshRequested value)
+        tokenRefreshRequested,
+    required TResult Function(EngineEvent_PlaybackState value) playbackState,
+    required TResult Function(EngineEvent_TrackStarted value) trackStarted,
+    required TResult Function(EngineEvent_TrackEnded value) trackEnded,
+    required TResult Function(EngineEvent_PositionUpdate value) positionUpdate,
+    required TResult Function(EngineEvent_BufferTelemetry value)
+        bufferTelemetry,
+    required TResult Function(EngineEvent_LimiterTelemetry value)
+        limiterTelemetry,
+  }) {
+    return playbackFailed(this);
+  }
+
+  @override
+  @optionalTypeArgs
+  TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult? Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
+    TResult? Function(EngineEvent_PlaybackState value)? playbackState,
+    TResult? Function(EngineEvent_TrackStarted value)? trackStarted,
+    TResult? Function(EngineEvent_TrackEnded value)? trackEnded,
+    TResult? Function(EngineEvent_PositionUpdate value)? positionUpdate,
+    TResult? Function(EngineEvent_BufferTelemetry value)? bufferTelemetry,
+    TResult? Function(EngineEvent_LimiterTelemetry value)? limiterTelemetry,
+  }) {
+    return playbackFailed?.call(this);
+  }
+
+  @override
+  @optionalTypeArgs
+  TResult maybeMap<TResult extends Object?>({
+    TResult Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
+    TResult Function(EngineEvent_PlaybackState value)? playbackState,
+    TResult Function(EngineEvent_TrackStarted value)? trackStarted,
+    TResult Function(EngineEvent_TrackEnded value)? trackEnded,
+    TResult Function(EngineEvent_PositionUpdate value)? positionUpdate,
+    TResult Function(EngineEvent_BufferTelemetry value)? bufferTelemetry,
+    TResult Function(EngineEvent_LimiterTelemetry value)? limiterTelemetry,
+    required TResult orElse(),
+  }) {
+    if (playbackFailed != null) {
+      return playbackFailed(this);
+    }
+    return orElse();
+  }
+}
+
+abstract class EngineEvent_PlaybackFailed extends EngineEvent {
+  const factory EngineEvent_PlaybackFailed(
+      {required final String fileId,
+      required final String message}) = _$EngineEvent_PlaybackFailedImpl;
+  const EngineEvent_PlaybackFailed._() : super._();
+
+  String get fileId;
+  String get message;
+
+  /// Create a copy of EngineEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  _$$EngineEvent_PlaybackFailedImplCopyWith<_$EngineEvent_PlaybackFailedImpl>
+      get copyWith => throw _privateConstructorUsedError;
+}
+
+/// @nodoc
+abstract class _$$EngineEvent_TokenRefreshRequestedImplCopyWith<$Res> {
+  factory _$$EngineEvent_TokenRefreshRequestedImplCopyWith(
+          _$EngineEvent_TokenRefreshRequestedImpl value,
+          $Res Function(_$EngineEvent_TokenRefreshRequestedImpl) then) =
+      __$$EngineEvent_TokenRefreshRequestedImplCopyWithImpl<$Res>;
+  @useResult
+  $Res call({BigInt requestId});
+}
+
+/// @nodoc
+class __$$EngineEvent_TokenRefreshRequestedImplCopyWithImpl<$Res>
+    extends _$EngineEventCopyWithImpl<$Res,
+        _$EngineEvent_TokenRefreshRequestedImpl>
+    implements _$$EngineEvent_TokenRefreshRequestedImplCopyWith<$Res> {
+  __$$EngineEvent_TokenRefreshRequestedImplCopyWithImpl(
+      _$EngineEvent_TokenRefreshRequestedImpl _value,
+      $Res Function(_$EngineEvent_TokenRefreshRequestedImpl) _then)
+      : super(_value, _then);
+
+  /// Create a copy of EngineEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? requestId = null,
+  }) {
+    return _then(_$EngineEvent_TokenRefreshRequestedImpl(
+      requestId: null == requestId
+          ? _value.requestId
+          : requestId // ignore: cast_nullable_to_non_nullable
+              as BigInt,
+    ));
+  }
+}
+
+/// @nodoc
+
+class _$EngineEvent_TokenRefreshRequestedImpl
+    extends EngineEvent_TokenRefreshRequested {
+  const _$EngineEvent_TokenRefreshRequestedImpl({required this.requestId})
+      : super._();
+
+  @override
+  final BigInt requestId;
+
+  @override
+  String toString() {
+    return 'EngineEvent.tokenRefreshRequested(requestId: $requestId)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is _$EngineEvent_TokenRefreshRequestedImpl &&
+            (identical(other.requestId, requestId) ||
+                other.requestId == requestId));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, requestId);
+
+  /// Create a copy of EngineEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  @pragma('vm:prefer-inline')
+  _$$EngineEvent_TokenRefreshRequestedImplCopyWith<
+          _$EngineEvent_TokenRefreshRequestedImpl>
+      get copyWith => __$$EngineEvent_TokenRefreshRequestedImplCopyWithImpl<
+          _$EngineEvent_TokenRefreshRequestedImpl>(this, _$identity);
+
+  @override
+  @optionalTypeArgs
+  TResult when<TResult extends Object?>({
+    required TResult Function(String fileId, String message) playbackFailed,
+    required TResult Function(BigInt requestId) tokenRefreshRequested,
+    required TResult Function(bool isPlaying, bool isBuffering) playbackState,
+    required TResult Function(String fileId) trackStarted,
+    required TResult Function(String fileId) trackEnded,
+    required TResult Function(int positionMs, int durationMs) positionUpdate,
+    required TResult Function(
+            int bufferedMs, int fetchesInFlight, BigInt bytesFetched)
+        bufferTelemetry,
+    required TResult Function(int grMillidb, BigInt clippedSamples)
+        limiterTelemetry,
+  }) {
+    return tokenRefreshRequested(requestId);
+  }
+
+  @override
+  @optionalTypeArgs
+  TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String fileId, String message)? playbackFailed,
+    TResult? Function(BigInt requestId)? tokenRefreshRequested,
+    TResult? Function(bool isPlaying, bool isBuffering)? playbackState,
+    TResult? Function(String fileId)? trackStarted,
+    TResult? Function(String fileId)? trackEnded,
+    TResult? Function(int positionMs, int durationMs)? positionUpdate,
+    TResult? Function(int bufferedMs, int fetchesInFlight, BigInt bytesFetched)?
+        bufferTelemetry,
+    TResult? Function(int grMillidb, BigInt clippedSamples)? limiterTelemetry,
+  }) {
+    return tokenRefreshRequested?.call(requestId);
+  }
+
+  @override
+  @optionalTypeArgs
+  TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String fileId, String message)? playbackFailed,
+    TResult Function(BigInt requestId)? tokenRefreshRequested,
+    TResult Function(bool isPlaying, bool isBuffering)? playbackState,
+    TResult Function(String fileId)? trackStarted,
+    TResult Function(String fileId)? trackEnded,
+    TResult Function(int positionMs, int durationMs)? positionUpdate,
+    TResult Function(int bufferedMs, int fetchesInFlight, BigInt bytesFetched)?
+        bufferTelemetry,
+    TResult Function(int grMillidb, BigInt clippedSamples)? limiterTelemetry,
+    required TResult orElse(),
+  }) {
+    if (tokenRefreshRequested != null) {
+      return tokenRefreshRequested(requestId);
+    }
+    return orElse();
+  }
+
+  @override
+  @optionalTypeArgs
+  TResult map<TResult extends Object?>({
+    required TResult Function(EngineEvent_PlaybackFailed value) playbackFailed,
+    required TResult Function(EngineEvent_TokenRefreshRequested value)
+        tokenRefreshRequested,
+    required TResult Function(EngineEvent_PlaybackState value) playbackState,
+    required TResult Function(EngineEvent_TrackStarted value) trackStarted,
+    required TResult Function(EngineEvent_TrackEnded value) trackEnded,
+    required TResult Function(EngineEvent_PositionUpdate value) positionUpdate,
+    required TResult Function(EngineEvent_BufferTelemetry value)
+        bufferTelemetry,
+    required TResult Function(EngineEvent_LimiterTelemetry value)
+        limiterTelemetry,
+  }) {
+    return tokenRefreshRequested(this);
+  }
+
+  @override
+  @optionalTypeArgs
+  TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult? Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
+    TResult? Function(EngineEvent_PlaybackState value)? playbackState,
+    TResult? Function(EngineEvent_TrackStarted value)? trackStarted,
+    TResult? Function(EngineEvent_TrackEnded value)? trackEnded,
+    TResult? Function(EngineEvent_PositionUpdate value)? positionUpdate,
+    TResult? Function(EngineEvent_BufferTelemetry value)? bufferTelemetry,
+    TResult? Function(EngineEvent_LimiterTelemetry value)? limiterTelemetry,
+  }) {
+    return tokenRefreshRequested?.call(this);
+  }
+
+  @override
+  @optionalTypeArgs
+  TResult maybeMap<TResult extends Object?>({
+    TResult Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
+    TResult Function(EngineEvent_PlaybackState value)? playbackState,
+    TResult Function(EngineEvent_TrackStarted value)? trackStarted,
+    TResult Function(EngineEvent_TrackEnded value)? trackEnded,
+    TResult Function(EngineEvent_PositionUpdate value)? positionUpdate,
+    TResult Function(EngineEvent_BufferTelemetry value)? bufferTelemetry,
+    TResult Function(EngineEvent_LimiterTelemetry value)? limiterTelemetry,
+    required TResult orElse(),
+  }) {
+    if (tokenRefreshRequested != null) {
+      return tokenRefreshRequested(this);
+    }
+    return orElse();
+  }
+}
+
+abstract class EngineEvent_TokenRefreshRequested extends EngineEvent {
+  const factory EngineEvent_TokenRefreshRequested(
+          {required final BigInt requestId}) =
+      _$EngineEvent_TokenRefreshRequestedImpl;
+  const EngineEvent_TokenRefreshRequested._() : super._();
+
+  BigInt get requestId;
+
+  /// Create a copy of EngineEvent
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  _$$EngineEvent_TokenRefreshRequestedImplCopyWith<
+          _$EngineEvent_TokenRefreshRequestedImpl>
+      get copyWith => throw _privateConstructorUsedError;
 }
 
 /// @nodoc
@@ -191,6 +607,8 @@ class _$EngineEvent_PlaybackStateImpl extends EngineEvent_PlaybackState {
   @override
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
+    required TResult Function(String fileId, String message) playbackFailed,
+    required TResult Function(BigInt requestId) tokenRefreshRequested,
     required TResult Function(bool isPlaying, bool isBuffering) playbackState,
     required TResult Function(String fileId) trackStarted,
     required TResult Function(String fileId) trackEnded,
@@ -207,6 +625,8 @@ class _$EngineEvent_PlaybackStateImpl extends EngineEvent_PlaybackState {
   @override
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String fileId, String message)? playbackFailed,
+    TResult? Function(BigInt requestId)? tokenRefreshRequested,
     TResult? Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult? Function(String fileId)? trackStarted,
     TResult? Function(String fileId)? trackEnded,
@@ -221,6 +641,8 @@ class _$EngineEvent_PlaybackStateImpl extends EngineEvent_PlaybackState {
   @override
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String fileId, String message)? playbackFailed,
+    TResult Function(BigInt requestId)? tokenRefreshRequested,
     TResult Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult Function(String fileId)? trackStarted,
     TResult Function(String fileId)? trackEnded,
@@ -239,6 +661,9 @@ class _$EngineEvent_PlaybackStateImpl extends EngineEvent_PlaybackState {
   @override
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
+    required TResult Function(EngineEvent_PlaybackFailed value) playbackFailed,
+    required TResult Function(EngineEvent_TokenRefreshRequested value)
+        tokenRefreshRequested,
     required TResult Function(EngineEvent_PlaybackState value) playbackState,
     required TResult Function(EngineEvent_TrackStarted value) trackStarted,
     required TResult Function(EngineEvent_TrackEnded value) trackEnded,
@@ -254,6 +679,9 @@ class _$EngineEvent_PlaybackStateImpl extends EngineEvent_PlaybackState {
   @override
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult? Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult? Function(EngineEvent_PlaybackState value)? playbackState,
     TResult? Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult? Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -267,6 +695,9 @@ class _$EngineEvent_PlaybackStateImpl extends EngineEvent_PlaybackState {
   @override
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
+    TResult Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult Function(EngineEvent_PlaybackState value)? playbackState,
     TResult Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -369,6 +800,8 @@ class _$EngineEvent_TrackStartedImpl extends EngineEvent_TrackStarted {
   @override
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
+    required TResult Function(String fileId, String message) playbackFailed,
+    required TResult Function(BigInt requestId) tokenRefreshRequested,
     required TResult Function(bool isPlaying, bool isBuffering) playbackState,
     required TResult Function(String fileId) trackStarted,
     required TResult Function(String fileId) trackEnded,
@@ -385,6 +818,8 @@ class _$EngineEvent_TrackStartedImpl extends EngineEvent_TrackStarted {
   @override
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String fileId, String message)? playbackFailed,
+    TResult? Function(BigInt requestId)? tokenRefreshRequested,
     TResult? Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult? Function(String fileId)? trackStarted,
     TResult? Function(String fileId)? trackEnded,
@@ -399,6 +834,8 @@ class _$EngineEvent_TrackStartedImpl extends EngineEvent_TrackStarted {
   @override
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String fileId, String message)? playbackFailed,
+    TResult Function(BigInt requestId)? tokenRefreshRequested,
     TResult Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult Function(String fileId)? trackStarted,
     TResult Function(String fileId)? trackEnded,
@@ -417,6 +854,9 @@ class _$EngineEvent_TrackStartedImpl extends EngineEvent_TrackStarted {
   @override
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
+    required TResult Function(EngineEvent_PlaybackFailed value) playbackFailed,
+    required TResult Function(EngineEvent_TokenRefreshRequested value)
+        tokenRefreshRequested,
     required TResult Function(EngineEvent_PlaybackState value) playbackState,
     required TResult Function(EngineEvent_TrackStarted value) trackStarted,
     required TResult Function(EngineEvent_TrackEnded value) trackEnded,
@@ -432,6 +872,9 @@ class _$EngineEvent_TrackStartedImpl extends EngineEvent_TrackStarted {
   @override
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult? Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult? Function(EngineEvent_PlaybackState value)? playbackState,
     TResult? Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult? Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -445,6 +888,9 @@ class _$EngineEvent_TrackStartedImpl extends EngineEvent_TrackStarted {
   @override
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
+    TResult Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult Function(EngineEvent_PlaybackState value)? playbackState,
     TResult Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -545,6 +991,8 @@ class _$EngineEvent_TrackEndedImpl extends EngineEvent_TrackEnded {
   @override
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
+    required TResult Function(String fileId, String message) playbackFailed,
+    required TResult Function(BigInt requestId) tokenRefreshRequested,
     required TResult Function(bool isPlaying, bool isBuffering) playbackState,
     required TResult Function(String fileId) trackStarted,
     required TResult Function(String fileId) trackEnded,
@@ -561,6 +1009,8 @@ class _$EngineEvent_TrackEndedImpl extends EngineEvent_TrackEnded {
   @override
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String fileId, String message)? playbackFailed,
+    TResult? Function(BigInt requestId)? tokenRefreshRequested,
     TResult? Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult? Function(String fileId)? trackStarted,
     TResult? Function(String fileId)? trackEnded,
@@ -575,6 +1025,8 @@ class _$EngineEvent_TrackEndedImpl extends EngineEvent_TrackEnded {
   @override
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String fileId, String message)? playbackFailed,
+    TResult Function(BigInt requestId)? tokenRefreshRequested,
     TResult Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult Function(String fileId)? trackStarted,
     TResult Function(String fileId)? trackEnded,
@@ -593,6 +1045,9 @@ class _$EngineEvent_TrackEndedImpl extends EngineEvent_TrackEnded {
   @override
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
+    required TResult Function(EngineEvent_PlaybackFailed value) playbackFailed,
+    required TResult Function(EngineEvent_TokenRefreshRequested value)
+        tokenRefreshRequested,
     required TResult Function(EngineEvent_PlaybackState value) playbackState,
     required TResult Function(EngineEvent_TrackStarted value) trackStarted,
     required TResult Function(EngineEvent_TrackEnded value) trackEnded,
@@ -608,6 +1063,9 @@ class _$EngineEvent_TrackEndedImpl extends EngineEvent_TrackEnded {
   @override
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult? Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult? Function(EngineEvent_PlaybackState value)? playbackState,
     TResult? Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult? Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -621,6 +1079,9 @@ class _$EngineEvent_TrackEndedImpl extends EngineEvent_TrackEnded {
   @override
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
+    TResult Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult Function(EngineEvent_PlaybackState value)? playbackState,
     TResult Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -733,6 +1194,8 @@ class _$EngineEvent_PositionUpdateImpl extends EngineEvent_PositionUpdate {
   @override
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
+    required TResult Function(String fileId, String message) playbackFailed,
+    required TResult Function(BigInt requestId) tokenRefreshRequested,
     required TResult Function(bool isPlaying, bool isBuffering) playbackState,
     required TResult Function(String fileId) trackStarted,
     required TResult Function(String fileId) trackEnded,
@@ -749,6 +1212,8 @@ class _$EngineEvent_PositionUpdateImpl extends EngineEvent_PositionUpdate {
   @override
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String fileId, String message)? playbackFailed,
+    TResult? Function(BigInt requestId)? tokenRefreshRequested,
     TResult? Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult? Function(String fileId)? trackStarted,
     TResult? Function(String fileId)? trackEnded,
@@ -763,6 +1228,8 @@ class _$EngineEvent_PositionUpdateImpl extends EngineEvent_PositionUpdate {
   @override
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String fileId, String message)? playbackFailed,
+    TResult Function(BigInt requestId)? tokenRefreshRequested,
     TResult Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult Function(String fileId)? trackStarted,
     TResult Function(String fileId)? trackEnded,
@@ -781,6 +1248,9 @@ class _$EngineEvent_PositionUpdateImpl extends EngineEvent_PositionUpdate {
   @override
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
+    required TResult Function(EngineEvent_PlaybackFailed value) playbackFailed,
+    required TResult Function(EngineEvent_TokenRefreshRequested value)
+        tokenRefreshRequested,
     required TResult Function(EngineEvent_PlaybackState value) playbackState,
     required TResult Function(EngineEvent_TrackStarted value) trackStarted,
     required TResult Function(EngineEvent_TrackEnded value) trackEnded,
@@ -796,6 +1266,9 @@ class _$EngineEvent_PositionUpdateImpl extends EngineEvent_PositionUpdate {
   @override
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult? Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult? Function(EngineEvent_PlaybackState value)? playbackState,
     TResult? Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult? Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -809,6 +1282,9 @@ class _$EngineEvent_PositionUpdateImpl extends EngineEvent_PositionUpdate {
   @override
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
+    TResult Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult Function(EngineEvent_PlaybackState value)? playbackState,
     TResult Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -935,6 +1411,8 @@ class _$EngineEvent_BufferTelemetryImpl extends EngineEvent_BufferTelemetry {
   @override
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
+    required TResult Function(String fileId, String message) playbackFailed,
+    required TResult Function(BigInt requestId) tokenRefreshRequested,
     required TResult Function(bool isPlaying, bool isBuffering) playbackState,
     required TResult Function(String fileId) trackStarted,
     required TResult Function(String fileId) trackEnded,
@@ -951,6 +1429,8 @@ class _$EngineEvent_BufferTelemetryImpl extends EngineEvent_BufferTelemetry {
   @override
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String fileId, String message)? playbackFailed,
+    TResult? Function(BigInt requestId)? tokenRefreshRequested,
     TResult? Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult? Function(String fileId)? trackStarted,
     TResult? Function(String fileId)? trackEnded,
@@ -965,6 +1445,8 @@ class _$EngineEvent_BufferTelemetryImpl extends EngineEvent_BufferTelemetry {
   @override
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String fileId, String message)? playbackFailed,
+    TResult Function(BigInt requestId)? tokenRefreshRequested,
     TResult Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult Function(String fileId)? trackStarted,
     TResult Function(String fileId)? trackEnded,
@@ -983,6 +1465,9 @@ class _$EngineEvent_BufferTelemetryImpl extends EngineEvent_BufferTelemetry {
   @override
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
+    required TResult Function(EngineEvent_PlaybackFailed value) playbackFailed,
+    required TResult Function(EngineEvent_TokenRefreshRequested value)
+        tokenRefreshRequested,
     required TResult Function(EngineEvent_PlaybackState value) playbackState,
     required TResult Function(EngineEvent_TrackStarted value) trackStarted,
     required TResult Function(EngineEvent_TrackEnded value) trackEnded,
@@ -998,6 +1483,9 @@ class _$EngineEvent_BufferTelemetryImpl extends EngineEvent_BufferTelemetry {
   @override
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult? Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult? Function(EngineEvent_PlaybackState value)? playbackState,
     TResult? Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult? Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -1011,6 +1499,9 @@ class _$EngineEvent_BufferTelemetryImpl extends EngineEvent_BufferTelemetry {
   @override
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
+    TResult Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult Function(EngineEvent_PlaybackState value)? playbackState,
     TResult Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -1128,6 +1619,8 @@ class _$EngineEvent_LimiterTelemetryImpl extends EngineEvent_LimiterTelemetry {
   @override
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
+    required TResult Function(String fileId, String message) playbackFailed,
+    required TResult Function(BigInt requestId) tokenRefreshRequested,
     required TResult Function(bool isPlaying, bool isBuffering) playbackState,
     required TResult Function(String fileId) trackStarted,
     required TResult Function(String fileId) trackEnded,
@@ -1144,6 +1637,8 @@ class _$EngineEvent_LimiterTelemetryImpl extends EngineEvent_LimiterTelemetry {
   @override
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(String fileId, String message)? playbackFailed,
+    TResult? Function(BigInt requestId)? tokenRefreshRequested,
     TResult? Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult? Function(String fileId)? trackStarted,
     TResult? Function(String fileId)? trackEnded,
@@ -1158,6 +1653,8 @@ class _$EngineEvent_LimiterTelemetryImpl extends EngineEvent_LimiterTelemetry {
   @override
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
+    TResult Function(String fileId, String message)? playbackFailed,
+    TResult Function(BigInt requestId)? tokenRefreshRequested,
     TResult Function(bool isPlaying, bool isBuffering)? playbackState,
     TResult Function(String fileId)? trackStarted,
     TResult Function(String fileId)? trackEnded,
@@ -1176,6 +1673,9 @@ class _$EngineEvent_LimiterTelemetryImpl extends EngineEvent_LimiterTelemetry {
   @override
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
+    required TResult Function(EngineEvent_PlaybackFailed value) playbackFailed,
+    required TResult Function(EngineEvent_TokenRefreshRequested value)
+        tokenRefreshRequested,
     required TResult Function(EngineEvent_PlaybackState value) playbackState,
     required TResult Function(EngineEvent_TrackStarted value) trackStarted,
     required TResult Function(EngineEvent_TrackEnded value) trackEnded,
@@ -1191,6 +1691,9 @@ class _$EngineEvent_LimiterTelemetryImpl extends EngineEvent_LimiterTelemetry {
   @override
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult? Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult? Function(EngineEvent_PlaybackState value)? playbackState,
     TResult? Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult? Function(EngineEvent_TrackEnded value)? trackEnded,
@@ -1204,6 +1707,9 @@ class _$EngineEvent_LimiterTelemetryImpl extends EngineEvent_LimiterTelemetry {
   @override
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
+    TResult Function(EngineEvent_PlaybackFailed value)? playbackFailed,
+    TResult Function(EngineEvent_TokenRefreshRequested value)?
+        tokenRefreshRequested,
     TResult Function(EngineEvent_PlaybackState value)? playbackState,
     TResult Function(EngineEvent_TrackStarted value)? trackStarted,
     TResult Function(EngineEvent_TrackEnded value)? trackEnded,

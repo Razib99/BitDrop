@@ -1,13 +1,13 @@
 use anyhow::Result;
 use futures_util::StreamExt;
 use parking_lot::{Condvar, Mutex};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, RANGE};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_RANGE, RANGE};
 use std::cmp;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
 use symphonia::core::io::MediaSource;
 
 /// Positional I/O abstraction that enables thread-safe pread/pwrite without seek contention.
@@ -40,6 +40,66 @@ impl PositionalIo for File {
         use std::os::windows::fs::FileExt;
         FileExt::seek_write(self, buf, offset)
     }
+}
+
+fn write_all_at(file: &impl PositionalIo, mut bytes: &[u8], mut offset: u64) -> io::Result<()> {
+    while !bytes.is_empty() {
+        match file.write_at(bytes, offset) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(n) => {
+                bytes = &bytes[n..];
+                offset += n as u64;
+            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+fn read_exact_at(
+    file: &impl PositionalIo,
+    mut bytes: &mut [u8],
+    mut offset: u64,
+) -> io::Result<()> {
+    while !bytes.is_empty() {
+        match file.read_at(bytes, offset) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(n) => {
+                bytes = &mut bytes[n..];
+                offset += n as u64;
+            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+fn validate_range_response(
+    response: &reqwest::Response,
+    start: u64,
+    end: u64,
+    total: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        response.status() == reqwest::StatusCode::PARTIAL_CONTENT,
+        "Expected HTTP 206, received {}",
+        response.status()
+    );
+    let expected = format!("bytes {}-{}/{}", start, end, total);
+    anyhow::ensure!(
+        response
+            .headers()
+            .get(CONTENT_RANGE)
+            .and_then(|h| h.to_str().ok())
+            == Some(expected.as_str()),
+        "Unexpected Content-Range"
+    );
+    if let Some(len) = response.content_length() {
+        anyhow::ensure!(len == end - start + 1, "Unexpected range body length");
+    }
+    Ok(())
 }
 
 pub const CHUNK_SIZE: u64 = 2 * 1024 * 1024; // 2 MB logical chunk unit
@@ -184,19 +244,6 @@ pub fn calculate_nominal_byte_rate(
 
 use std::collections::HashMap;
 
-pub type TokenProviderCallback = Box<dyn Fn() -> Option<String> + Send + Sync>;
-
-/// Global token provider callback for refreshing 401 expired OAuth tokens.
-pub static TOKEN_PROVIDER: Mutex<Option<TokenProviderCallback>> = Mutex::new(None);
-
-pub fn set_token_provider<F>(f: F)
-where
-    F: Fn() -> Option<String> + Send + Sync + 'static,
-{
-    let mut guard = TOKEN_PROVIDER.lock();
-    *guard = Some(Box::new(f));
-}
-
 lazy_static::lazy_static! {
     /// Telemetry cache for UI seek-bar visualization: key = file_id -> (total_bytes, completed_chunk_indices).
     pub static ref CACHED: Mutex<HashMap<String, (u64, Vec<u64>)>> = Mutex::new(HashMap::new());
@@ -216,22 +263,18 @@ lazy_static::lazy_static! {
         .build()
         .expect("Failed to build HTTP client");
     /// Currently active sparse track cache for instantaneous cancellation on seek/skip/stop.
-    static ref ACTIVE_CACHE: Mutex<Option<Arc<SparseTrackCache>>> = Mutex::new(None);
+    static ref ACTIVE_CACHE: Mutex<Weak<SparseTrackCache>> = Mutex::new(Weak::new());
+    static ref OPEN_CACHES: Mutex<HashMap<PathBuf, Weak<SparseTrackCache>>> = Mutex::new(HashMap::new());
+    static ref FETCH_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::new(4);
 }
 
-pub fn set_active_cache(cache: Arc<SparseTrackCache>) {
-    let mut guard = ACTIVE_CACHE.lock();
-    if let Some(old) = guard.replace(cache) {
-        old.active_generation.fetch_add(1, Ordering::SeqCst);
-        old.data_arrived.notify_all();
-    }
+pub fn set_active_cache(cache: Option<&Arc<SparseTrackCache>>) {
+    *ACTIVE_CACHE.lock() = cache.map(Arc::downgrade).unwrap_or_default();
 }
 
 pub fn abort_active_fetches() {
-    let mut guard = ACTIVE_CACHE.lock();
-    if let Some(cache) = guard.take() {
-        cache.active_generation.fetch_add(1, Ordering::SeqCst);
-        cache.data_arrived.notify_all();
+    if let Some(cache) = ACTIVE_CACHE.lock().upgrade() {
+        cache.cancel_fetches();
     }
 }
 
@@ -274,17 +317,115 @@ pub fn bytes_fetched() -> usize {
     BYTES_FETCHED.load(Ordering::Relaxed)
 }
 
+#[repr(u8)]
+#[derive(Clone, Copy)]
+enum ChunkState {
+    Idle,
+    Fetching,
+    Ready,
+    Failed,
+}
+
+pub fn valid_file_id(file_id: &str) -> bool {
+    !file_id.is_empty() && file_id != "." && file_id != ".." && !file_id.contains(['/', '\\'])
+}
+
+/// Live caches are protected from eviction, including metadata reads and preloads.
+pub fn with_live_cache_ids<T>(f: impl FnOnce(Vec<String>) -> T) -> T {
+    let mut caches = OPEN_CACHES.lock();
+    caches.retain(|_, cache| cache.strong_count() > 0);
+    let ids = caches
+        .values()
+        .filter_map(Weak::upgrade)
+        .map(|c| c.file_id.clone())
+        .collect();
+    f(ids)
+}
+
+/// Clears only unused, unpinned audio files while serializing against cache opens.
+pub fn clear_inactive_caches(dirs: &[String]) -> u64 {
+    let mut caches = OPEN_CACHES.lock();
+    caches.retain(|_, cache| cache.strong_count() > 0);
+    let mut protected: std::collections::HashSet<String> = caches
+        .values()
+        .filter_map(Weak::upgrade)
+        .map(|c| c.file_id.clone())
+        .collect();
+    let pinned = crate::api::cloud_library::with_db(|db| Ok(db.get_pinned_tracks()?));
+    // Without the index, pin protection cannot be established.
+    let Ok(pinned) = pinned else {
+        return 0;
+    };
+    protected.extend(pinned);
+    let mut freed = 0;
+    for dir in dirs {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+                continue;
+            };
+            if !matches!(ext, "sparse" | "idx" | "dat" | "tmp") {
+                continue;
+            }
+            let Some(file_id) = path.file_stem().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if protected.contains(file_id) {
+                continue;
+            }
+            let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            if fs::remove_file(&path).is_ok() {
+                freed += len;
+                if ext == "sparse" {
+                    let _ = crate::api::cloud_library::with_db_mut(|db| {
+                        Ok(db.delete_all_cached_chunks(file_id)?)
+                    });
+                    CACHED.lock().remove(file_id);
+                }
+            }
+        }
+    }
+    freed
+}
+
+pub fn remove_inactive_cache(dir: &Path, file_id: &str) -> Result<bool> {
+    anyhow::ensure!(valid_file_id(file_id), "Invalid cloud file identifier");
+    let path = dir.join(format!("{}.sparse", file_id));
+    let mut caches = OPEN_CACHES.lock();
+    if caches.get(&path).and_then(Weak::upgrade).is_some() {
+        return Ok(false);
+    }
+    crate::api::cloud_library::with_db_mut(|db| {
+        db.delete_all_cached_chunks(file_id)?;
+        for path in [path.clone(), dir.join(format!("{}.idx", file_id))] {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(())
+    })
+    .map_err(anyhow::Error::msg)?;
+    caches.remove(&path);
+    CACHED.lock().remove(file_id);
+    Ok(true)
+}
+
 pub struct SparseTrackCache {
     pub file_id: String,
     pub file: File,
     pub total_size: u64,
     pub chunk_written_bytes: Box<[AtomicU32]>,
-    pub chunk_fetching: Box<[AtomicBool]>,
-    pub chunk_failed: Box<[AtomicBool]>,
+    chunk_states: Box<[AtomicU8]>,
+    readers: AtomicUsize,
     pub sync_mutex: Mutex<()>,
     pub data_arrived: Condvar,
     pub active_generation: AtomicU64,
-    pub failed: AtomicBool,
+    generation_changed: tokio::sync::Notify,
     pub db: Option<Arc<parking_lot::Mutex<crate::cloud::db::MetadataDb>>>,
     pub nominal_byte_rate: AtomicU64,
     pub lookahead_secs: AtomicU64,
@@ -323,12 +464,10 @@ impl SparseTrackCache {
 
         let chunk_count = total_size.div_ceil(CHUNK_SIZE) as usize;
         let mut written = Vec::with_capacity(chunk_count);
-        let mut fetching = Vec::with_capacity(chunk_count);
-        let mut failed = Vec::with_capacity(chunk_count);
+        let mut states = Vec::with_capacity(chunk_count);
         for _ in 0..chunk_count {
             written.push(AtomicU32::new(0));
-            fetching.push(AtomicBool::new(false));
-            failed.push(AtomicBool::new(false));
+            states.push(AtomicU8::new(ChunkState::Idle as u8));
         }
 
         let nominal_rate = calculate_nominal_byte_rate(file_id, total_size, db.as_ref());
@@ -338,12 +477,12 @@ impl SparseTrackCache {
             file,
             total_size,
             chunk_written_bytes: written.into_boxed_slice(),
-            chunk_fetching: fetching.into_boxed_slice(),
-            chunk_failed: failed.into_boxed_slice(),
+            chunk_states: states.into_boxed_slice(),
+            readers: AtomicUsize::new(0),
             sync_mutex: Mutex::new(()),
             data_arrived: Condvar::new(),
             active_generation: AtomicU64::new(1),
-            failed: AtomicBool::new(false),
+            generation_changed: tokio::sync::Notify::new(),
             db,
             nominal_byte_rate: AtomicU64::new(nominal_rate),
             lookahead_secs: AtomicU64::new(DEFAULT_LOOKAHEAD_SECS),
@@ -430,6 +569,9 @@ impl SparseTrackCache {
             }
         }
 
+        if index_path.exists() && !cache.get_chunks_for_file(file_id).is_empty() {
+            let _ = fs::remove_file(index_path);
+        }
         Ok(cache)
     }
 
@@ -495,8 +637,10 @@ impl SparseTrackCache {
         let byte_rate = self.nominal_byte_rate.load(Ordering::Relaxed);
         let lookahead = self.lookahead_secs.load(Ordering::Relaxed);
 
-        let runway_bytes = (byte_rate * lookahead).max(2 * CHUNK_SIZE);
-        let target_byte = (current_pos + runway_bytes).min(self.total_size);
+        let runway_bytes = byte_rate.saturating_mul(lookahead).max(2 * CHUNK_SIZE);
+        let target_byte = current_pos
+            .saturating_add(runway_bytes)
+            .min(self.total_size);
 
         let current_chunk = (current_pos / CHUNK_SIZE) as usize;
         let target_chunk = if target_byte > 0 {
@@ -517,268 +661,228 @@ impl SparseTrackCache {
             let chunk_len = ((self.total_size - chunk_start).min(CHUNK_SIZE)) as u32;
             let written = self.chunk_written_bytes[idx].load(Ordering::Acquire);
 
-            if written < chunk_len && !self.chunk_fetching[idx].load(Ordering::Relaxed) {
+            if written < chunk_len {
                 self.trigger_chunk_fetch(idx);
             }
         }
     }
 
+    fn retry_failed_chunks(&self) {
+        for state in &self.chunk_states {
+            let _ = state.compare_exchange(
+                ChunkState::Failed as u8,
+                ChunkState::Idle as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+        }
+    }
+
+    /// Cancellation and byte publication use the wait mutex to prevent lost wakeups.
+    pub fn cancel_fetches(&self) {
+        let _guard = self.sync_mutex.lock();
+        self.active_generation.fetch_add(1, Ordering::SeqCst);
+        self.data_arrived.notify_all();
+        self.generation_changed.notify_waiters();
+    }
+
+    fn publish_bytes(&self, chunk_idx: usize, written: u32) {
+        let _guard = self.sync_mutex.lock();
+        self.chunk_written_bytes[chunk_idx].store(written, Ordering::Release);
+        self.data_arrived.notify_all();
+    }
+
     pub fn trigger_chunk_fetch(self: &Arc<Self>, chunk_idx: usize) {
-        if chunk_idx >= self.chunk_written_bytes.len() {
+        if chunk_idx >= self.chunk_written_bytes.len()
+            || self.chunk_states[chunk_idx]
+                .compare_exchange(
+                    ChunkState::Idle as u8,
+                    ChunkState::Fetching as u8,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+        {
             return;
         }
+        let Some(ctx) = self.fetch_ctx.lock().clone() else {
+            self.chunk_states[chunk_idx].store(ChunkState::Idle as u8, Ordering::Release);
+            return;
+        };
+        let cache = Arc::clone(self);
+        let generation = self.active_generation.load(Ordering::Acquire);
+        // Reserve before spawning, so the scheduler observes queued work as well.
+        FETCHES_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
+        GLOBAL_IO_RT.spawn(async move {
+            let result = cache.fetch_chunk(chunk_idx, generation, &ctx).await;
+            {
+                let _guard = cache.sync_mutex.lock();
+                let state = if generation != cache.active_generation.load(Ordering::Acquire) {
+                    ChunkState::Idle
+                } else if let Err(ref error) = result {
+                    eprintln!(
+                        "[bitdrop] chunk {} of {} failed: {}",
+                        chunk_idx, cache.file_id, error
+                    );
+                    ChunkState::Failed
+                } else {
+                    ChunkState::Ready
+                };
+                cache.chunk_states[chunk_idx].store(state as u8, Ordering::Release);
+                FETCHES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+                cache.data_arrived.notify_all();
+            }
+            // Cancellation does not restart stale work. A reader schedules the new runway.
+            if generation == cache.active_generation.load(Ordering::Acquire) {
+                cache.schedule_read_ahead();
+            }
+        });
+    }
 
-        // Atomic check-and-set: prevent duplicate in-flight fetches for the same chunk
-        if self.chunk_fetching[chunk_idx].swap(true, Ordering::SeqCst) {
-            return; // Already being fetched
+    async fn fetch_chunk(&self, idx: usize, generation: u64, ctx: &FetchContext) -> Result<()> {
+        // Register before checking the generation so cancellation cannot be missed.
+        let changed = self.generation_changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        if self.active_generation.load(Ordering::Acquire) != generation {
+            return Ok(());
+        }
+        tokio::select! {
+            biased;
+            _ = changed => Ok(()),
+            result = async {
+                let _permit = FETCH_SLOTS.acquire().await?;
+                let mut last_error = anyhow::anyhow!("Chunk fetch did not complete");
+                for attempt in 0..4 {
+                    match self.fetch_attempt(idx, ctx).await {
+                        Ok(()) => return Ok(()),
+                        Err(error) => last_error = error,
+                    }
+                    if attempt < 3 {
+                        tokio::time::sleep(std::time::Duration::from_millis([200, 500, 1200][attempt])).await;
+                    }
+                }
+                Err(last_error)
+            } => result,
+        }
+    }
+
+    async fn fetch_attempt(&self, idx: usize, ctx: &FetchContext) -> Result<()> {
+        let start = idx as u64 * CHUNK_SIZE;
+        let len = (self.total_size - start).min(CHUNK_SIZE) as u32;
+        // Resume only after bytes that were actually written; retries never overwrite
+        // bytes that have already been published to the decoder.
+        let mut written = self.chunk_written_bytes[idx].load(Ordering::Acquire);
+        if written < len {
+            let request_start = start + written as u64;
+            let token = self
+                .fetch_ctx
+                .lock()
+                .as_ref()
+                .and_then(|c| c.auth_token.clone());
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                RANGE,
+                HeaderValue::from_str(&format!(
+                    "bytes={}-{}",
+                    request_start,
+                    start + len as u64 - 1
+                ))?,
+            );
+            if let Some(ref token) = token {
+                headers.insert(
+                    AUTHORIZATION,
+                    HeaderValue::from_str(&format!("Bearer {}", token))?,
+                );
+            }
+            let began = std::time::Instant::now();
+            let response = HTTP_CLIENT.get(&ctx.url).headers(headers).send().await?;
+            record_network_request(began.elapsed().as_millis().min(u32::MAX as u128) as u32);
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                if let Some(ref rejected) = token {
+                    if let Some(refreshed) = crate::cloud::auth::refresh_token(rejected).await {
+                        if let Some(context) = self.fetch_ctx.lock().as_mut() {
+                            context.auth_token = Some(refreshed);
+                        }
+                    }
+                }
+                anyhow::bail!("Cloud session expired or authorization was rejected");
+            }
+            validate_range_response(
+                &response,
+                request_start,
+                start + len as u64 - 1,
+                self.total_size,
+            )?;
+            let mut stream = response.bytes_stream();
+            while let Some(bytes) = stream.next().await {
+                let bytes = bytes?;
+                anyhow::ensure!(
+                    bytes.len() <= (len - written) as usize,
+                    "Range response exceeds requested chunk"
+                );
+                write_all_at(&self.file, &bytes, start + written as u64)?;
+                written += bytes.len() as u32;
+                BYTES_FETCHED.fetch_add(bytes.len(), Ordering::Relaxed);
+                self.publish_bytes(idx, written);
+            }
+            anyhow::ensure!(written == len, "Truncated range response");
+            let elapsed_ms = began.elapsed().as_millis();
+            if elapsed_ms > 30 {
+                update_measured_throughput(
+                    ((start + len as u64 - request_start) as u128 * 1000 / elapsed_ms) as u64,
+                );
+            }
         }
 
-        let chunk_start = chunk_idx as u64 * CHUNK_SIZE;
-        let chunk_len = ((self.total_size - chunk_start).min(CHUNK_SIZE)) as u32;
-        let chunk_end = chunk_start + chunk_len as u64 - 1;
-
-        let (url, token, index_path) = {
-            let guard = self.fetch_ctx.lock();
-            match guard.as_ref() {
-                Some(ctx) => (
-                    ctx.url.clone(),
-                    ctx.auth_token.clone(),
-                    ctx.index_path.clone(),
-                ),
-                None => {
-                    self.chunk_fetching[chunk_idx].store(false, Ordering::Release);
-                    return;
+        let mut bytes = vec![0; len as usize];
+        read_exact_at(&self.file, &mut bytes, start)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        self.record_chunk(&crate::cloud::db::CachedChunkRecord {
+            file_id: self.file_id.clone(),
+            chunk_idx: idx as u32,
+            byte_offset: start,
+            byte_len: len,
+            crc32: crc32fast::hash(&bytes),
+            file_mtime: now,
+            last_accessed_ts: now,
+        });
+        {
+            let mut cached = CACHED.lock();
+            if let Some((_, chunks)) = cached.get_mut(&self.file_id) {
+                if !chunks.contains(&(idx as u64)) {
+                    chunks.push(idx as u64);
                 }
             }
-        };
+        }
+        // Legacy indexes are read during migration only. SQLite owns completion state.
+        self.prune_cache(ctx);
+        Ok(())
+    }
 
-        let cache = Arc::clone(self);
-        let file_id = self.file_id.clone();
-        let generation = self.active_generation.load(Ordering::Relaxed);
-
-        GLOBAL_IO_RT.spawn(async move {
-            FETCHES_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
-
-            let backoffs = [
-                std::time::Duration::from_millis(200),
-                std::time::Duration::from_millis(500),
-                std::time::Duration::from_millis(1200),
-            ];
-
-            let mut current_token = token;
-            let mut final_res: Result<()> = Ok(());
-            let chunk_fetch_start = std::time::Instant::now();
-
-            for attempt in 0..=3 {
-                if cache.active_generation.load(Ordering::Relaxed) != generation {
-                    // Superseded by newer track request or seek
-                    FETCHES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
-                    cache.chunk_fetching[chunk_idx].store(false, Ordering::Release);
-                    return;
-                }
-
-                let range_val = format!("bytes={}-{}", chunk_start, chunk_end);
-                let mut headers = HeaderMap::new();
-                if let Ok(hv) = HeaderValue::from_str(&range_val) {
-                    headers.insert(RANGE, hv);
-                }
-
-                if let Some(ref t) = current_token {
-                    if let Ok(hv) = HeaderValue::from_str(&format!("Bearer {}", t)) {
-                        headers.insert(AUTHORIZATION, hv);
+    fn prune_cache(&self, ctx: &FetchContext) {
+        let limit = crate::api::cloud_library::cloud_cache_get_limit();
+        if limit == 0 {
+            return;
+        }
+        with_live_cache_ids(|protected| {
+            let prune = |db: &mut crate::cloud::db::MetadataDb| -> Result<()> {
+                if db.get_cache_stats(&[])?.unpinned_bytes > limit {
+                    let evicted = db.prune_lru_chunks(limit, &protected, Some(&self.file_id))?;
+                    if let Some(dir) = ctx.index_path.parent() {
+                        apply_chunk_evictions(dir, &evicted, db);
                     }
                 }
-
-                let send_res = HTTP_CLIENT.get(&url).headers(headers).send().await;
-                match send_res {
-                    Ok(response) => {
-                        let status = response.status();
-                        // 401 Unauthorized handling: request token refresh and retry
-                        if status.as_u16() == 401 {
-                            eprintln!("[bitdrop] HTTP 401 Unauthorized for chunk {} of {}, requesting token refresh", chunk_idx, file_id);
-                            let refreshed = {
-                                let provider_guard = TOKEN_PROVIDER.lock();
-                                provider_guard.as_ref().and_then(|cb| cb())
-                            };
-                            if let Some(new_token) = refreshed {
-                                current_token = Some(new_token);
-                            }
-                            if let Some(&delay) = backoffs.get(attempt) {
-                                tokio::time::sleep(delay).await;
-                                continue;
-                            } else {
-                                final_res = Err(anyhow::anyhow!("HTTP 401 Unauthorized persistent"));
-                                break;
-                            }
-                        }
-
-                        if !status.is_success() && status.as_u16() != 206 {
-                            final_res = Err(anyhow::anyhow!("HTTP error status: {}", status));
-                            if let Some(&delay) = backoffs.get(attempt) {
-                                tokio::time::sleep(delay).await;
-                                continue;
-                            } else {
-                                break;
-                            }
-                        }
-
-                        let ttfb = chunk_fetch_start.elapsed().as_millis() as u32;
-                        record_network_request(ttfb);
-
-                        let mut stream = response.bytes_stream();
-                        let mut written_in_chunk: u32 = 0;
-                        let mut stream_err = None;
-
-                        while let Some(item) = stream.next().await {
-                            if cache.active_generation.load(Ordering::Relaxed) != generation {
-                                FETCHES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
-                                cache.chunk_fetching[chunk_idx].store(false, Ordering::Release);
-                                return;
-                            }
-
-                            match item {
-                                Ok(bytes) => {
-                                    let slice_len = bytes.len() as u32;
-                                    let write_pos = chunk_start + written_in_chunk as u64;
-
-                                    if let Err(e) = cache.file.write_at(&bytes, write_pos) {
-                                        stream_err = Some(anyhow::anyhow!("Disk write error: {:?}", e));
-                                        break;
-                                    }
-                                    written_in_chunk += slice_len;
-
-                                    cache.chunk_written_bytes[chunk_idx].store(written_in_chunk, Ordering::Release);
-                                    BYTES_FETCHED.fetch_add(slice_len as usize, Ordering::Relaxed);
-
-                                    // Wake up any threads waiting in Read::read() for this slice
-                                    cache.data_arrived.notify_all();
-                                }
-                                Err(e) => {
-                                    stream_err = Some(anyhow::anyhow!("Stream interrupted: {:?}", e));
-                                    break;
-                                }
-                            }
-                        }
-
-                        if let Some(err) = stream_err {
-                            final_res = Err(err);
-                            if attempt < 3 {
-                                tokio::time::sleep(backoffs[attempt]).await;
-                                continue;
-                            } else {
-                                break;
-                            }
-                        }
-
-                        // Chunk completed successfully! Clear any previous failure flags.
-                        if written_in_chunk >= chunk_len {
-                            cache.chunk_written_bytes[chunk_idx].store(chunk_len, Ordering::Release);
-                            cache.chunk_failed[chunk_idx].store(false, Ordering::Release);
-                            cache.failed.store(false, Ordering::Release);
-
-                            // Measure throughput from elapsed time and bytes
-                            let elapsed = chunk_fetch_start.elapsed();
-                            if elapsed.as_millis() > 30 && written_in_chunk > 0 {
-                                let bps = (written_in_chunk as u64 * 1000) / (elapsed.as_millis().max(1) as u64);
-                                update_measured_throughput(bps);
-                            }
-
-                            // Compute CRC32 checksum from disk to verify write integrity
-                            let mut hasher = crc32fast::Hasher::new();
-                            let mut verify_buf = vec![0u8; chunk_len as usize];
-                            let crc = if cache.file.read_at(&mut verify_buf, chunk_start).is_ok() {
-                                hasher.update(&verify_buf);
-                                hasher.finalize()
-                            } else {
-                                0
-                            };
-
-                            let now_ts = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs() as i64;
-
-                            let rec = crate::cloud::db::CachedChunkRecord {
-                                file_id: file_id.clone(),
-                                chunk_idx: chunk_idx as u32,
-                                byte_offset: chunk_start,
-                                byte_len: chunk_len,
-                                crc32: crc,
-                                file_mtime: now_ts,
-                                last_accessed_ts: now_ts,
-                            };
-                            cache.record_chunk(&rec);
-
-                            let mut guard = CACHED.lock();
-                            if let Some((_, ref mut chunks)) = guard.get_mut(&file_id) {
-                                if !chunks.contains(&(chunk_idx as u64)) {
-                                    chunks.push(chunk_idx as u64);
-                                }
-                            }
-                            // Append chunk completion to index file if path exists
-                            if let Ok(mut idx_file) = OpenOptions::new().create(true).append(true).open(&index_path) {
-                                use std::io::Write;
-                                let _ = writeln!(idx_file, "{}", chunk_idx);
-                            }
-
-                            // Automatic background LRU cache pruning if unpinned usage exceeds configured budget
-                            let limit = crate::api::cloud_library::cloud_cache_get_limit();
-                            if limit > 0 {
-                                let fid = file_id.clone();
-                                let idx_p = index_path.clone();
-                                if let Some(db_arc) = &cache.db {
-                                    let mut db = db_arc.lock();
-                                    if let Ok(stats) = db.get_cache_stats(&[]) {
-                                        if stats.unpinned_bytes > limit {
-                                            if let Ok(evicted) = db.prune_lru_chunks(limit, &[], Some(&fid)) {
-                                                if let Some(parent) = idx_p.parent() {
-                                                    apply_chunk_evictions(parent, &evicted, &db);
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    let _ = crate::api::cloud_library::with_db_mut(|db| {
-                                        let stats = db.get_cache_stats(&[])?;
-                                        if stats.unpinned_bytes > limit {
-                                            let evicted = db.prune_lru_chunks(limit, &[], Some(&fid))?;
-                                            if let Some(parent) = idx_p.parent() {
-                                                apply_chunk_evictions(parent, &evicted, db);
-                                            }
-                                        }
-                                        Ok(())
-                                    });
-                                }
-                            }
-                        }
-
-                        final_res = Ok(());
-                        break;
-                    }
-                    Err(e) => {
-                        final_res = Err(anyhow::anyhow!("Connection error: {:?}", e));
-                        if attempt < 3 {
-                            tokio::time::sleep(backoffs[attempt]).await;
-                            continue;
-                        } else {
-                            break;
-                        }
-                    }
-                }
+                Ok(())
+            };
+            if let Some(db) = &self.db {
+                let _ = prune(&mut db.lock());
+            } else {
+                let _ = crate::api::cloud_library::with_db_mut(prune);
             }
-
-            if let Err(e) = final_res {
-                eprintln!("[bitdrop] failed streaming chunk {} for {} after retries: {:?}", chunk_idx, file_id, e);
-                cache.chunk_failed[chunk_idx].store(true, Ordering::Release);
-                cache.failed.store(true, Ordering::Release);
-            }
-
-            cache.chunk_fetching[chunk_idx].store(false, Ordering::Release);
-            FETCHES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
-            cache.data_arrived.notify_all();
-
-            // Refill the 30s runway pipeline immediately
-            cache.schedule_read_ahead();
         });
     }
 }
@@ -802,8 +906,30 @@ impl CloudMediaSource {
         let sparse_path = cache_dir.join(format!("{}.sparse", file_id));
         let index_path = cache_dir.join(format!("{}.idx", file_id));
 
-        let cache =
-            SparseTrackCache::new_with_db(&file_id, &sparse_path, &index_path, total_size, None)?;
+        anyhow::ensure!(total_size > 0, "Cloud file is empty");
+        anyhow::ensure!(valid_file_id(&file_id), "Invalid cloud file identifier");
+        let cache = {
+            let mut caches = OPEN_CACHES.lock();
+            if let Some(cache) = caches.get(&sparse_path).and_then(Weak::upgrade) {
+                anyhow::ensure!(
+                    cache.total_size == total_size,
+                    "Cloud file size changed while open"
+                );
+                cache
+            } else {
+                let cache = SparseTrackCache::new_with_db(
+                    &file_id,
+                    &sparse_path,
+                    &index_path,
+                    total_size,
+                    None,
+                )?;
+                caches.insert(sparse_path, Arc::downgrade(&cache));
+                cache
+            }
+        };
+        cache.readers.fetch_add(1, Ordering::Relaxed);
+        cache.retry_failed_chunks();
 
         cache.set_fetch_context(FetchContext {
             url,
@@ -824,17 +950,19 @@ impl CloudMediaSource {
             guard.insert(file_id.clone(), (total_size, existing));
         }
 
-        set_active_cache(Arc::clone(&cache));
-
         // Proactively schedule initial 30s runway chunks immediately
         cache.schedule_read_ahead();
 
         Ok(Self {
             file_id,
             position: 0,
-            generation: 1,
+            generation: cache.active_generation.load(Ordering::Acquire),
             cache,
         })
+    }
+
+    pub fn seek_to_current_generation(&mut self) {
+        self.generation = self.cache.active_generation.load(Ordering::Acquire);
     }
 
     pub fn cache(&self) -> &Arc<SparseTrackCache> {
@@ -869,7 +997,10 @@ impl CloudMediaSource {
 
     #[inline]
     fn ensure_bytes_available(&self, chunk_idx: usize, needed_end: u32) -> io::Result<()> {
-        // Fast path (Lock-free): requested slice already written to disk / page cache
+        if self.cache.active_generation.load(Ordering::Acquire) != self.generation {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "Read cancelled"));
+        }
+        // Fast path: requested slice already written to disk / page cache
         if self.cache.chunk_written_bytes[chunk_idx].load(Ordering::Acquire) >= needed_end {
             CACHE_HITS.fetch_add(1, Ordering::Relaxed);
             return Ok(());
@@ -886,10 +1017,17 @@ impl CloudMediaSource {
             if self.cache.active_generation.load(Ordering::Relaxed) != self.generation {
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "Track skipped"));
             }
-            if self.cache.chunk_failed[chunk_idx].load(Ordering::Relaxed) {
+            if self.cache.chunk_states[chunk_idx].load(Ordering::Acquire)
+                == ChunkState::Failed as u8
+            {
                 return Err(io::Error::other("Network fetch failed after retries"));
             }
-            self.cache.data_arrived.wait(&mut guard);
+            self.cache
+                .data_arrived
+                .wait_for(&mut guard, std::time::Duration::from_millis(100));
+            drop(guard);
+            self.cache.trigger_chunk_fetch(chunk_idx);
+            guard = self.cache.sync_mutex.lock();
         }
 
         Ok(())
@@ -915,7 +1053,14 @@ impl Read for CloudMediaSource {
         let to_read = buf.len().min(max_readable_in_chunk);
         let needed_end = chunk_offset + (to_read as u32);
 
-        self.ensure_bytes_available(chunk_idx, needed_end)?;
+        if let Err(error) = self.ensure_bytes_available(chunk_idx, needed_end) {
+            if error.kind() == io::ErrorKind::Interrupted {
+                // Surface cancellation once so the decoder can process control commands.
+                // A later read can then join the cache's current fetch generation.
+                self.generation = self.cache.active_generation.load(Ordering::Acquire);
+            }
+            return Err(error);
+        }
 
         // Positional zero-seek read directly from unified kernel page cache
         let bytes_read = self
@@ -959,10 +1104,14 @@ impl Seek for CloudMediaSource {
             .current_position
             .store(new_pos, Ordering::Relaxed);
 
-        if (new_chunk as isize - old_chunk as isize).abs() > 2 {
-            // Large seek: bump generation to cancel distant in-flight fetches
-            self.generation = self.cache.active_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        // Shared readers may still need the existing requests at their own positions.
+        if (new_chunk as isize - old_chunk as isize).abs() > 2
+            && self.cache.readers.load(Ordering::Acquire) == 1
+        {
+            self.cache.cancel_fetches();
         }
+        self.generation = self.cache.active_generation.load(Ordering::Acquire);
+        self.cache.retry_failed_chunks();
 
         self.cache.schedule_read_ahead();
         Ok(self.position)
@@ -981,8 +1130,9 @@ impl MediaSource for CloudMediaSource {
 
 impl Drop for CloudMediaSource {
     fn drop(&mut self) {
-        self.cache.active_generation.fetch_add(1, Ordering::SeqCst);
-        self.cache.data_arrived.notify_all();
+        if self.cache.readers.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.cache.cancel_fetches();
+        }
     }
 }
 
@@ -1035,7 +1185,7 @@ pub fn apply_chunk_evictions<P: AsRef<Path>>(
         }
 
         // Update active cache if it matches
-        if let Some(active) = ACTIVE_CACHE.lock().as_ref() {
+        if let Some(active) = ACTIVE_CACHE.lock().upgrade() {
             if active.file_id == chunk.file_id {
                 let idx = chunk.chunk_idx as usize;
                 if idx < active.chunk_written_bytes.len() {
@@ -1368,3 +1518,7 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
     }
 }
+
+#[cfg(test)]
+#[path = "cache_tests.rs"]
+mod cache_tests;

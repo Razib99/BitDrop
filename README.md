@@ -5,7 +5,7 @@
 [![Core](https://img.shields.io/badge/Core-Rust-orange?logo=rust)]()
 [![UI](https://img.shields.io/badge/UI-Flutter-blue?logo=flutter)]()
 
-**Audiophile Cloud Music Player** — Stream lossless audio (FLAC, ALAC, WAV) directly from personal cloud storage (Google Drive, S3, WebDAV) with high-fidelity output to external USB DACs and IEMs, with zero intermediate servers.
+**Audiophile Cloud Music Player** — Stream lossless audio (FLAC, ALAC, WAV) directly from personal Google Drive storage (S3 and WebDAV are planned) with high-fidelity output to external USB DACs and IEMs, with zero intermediate servers.
 
 ---
 
@@ -23,7 +23,7 @@ Audiophile music enthusiasts frequently run out of phone storage when storing un
 
 ## 🏛️ System Architecture
 
-BitDrop is decoupled into three distinct layers. The **Rust Core** is the single source of truth for all playback state, caching, decoding, and library metadata.
+BitDrop is decoupled into three distinct layers. The **Rust Core** owns decoding, output, cached audio bytes, and library metadata. Dart coordinates queue policy and platform account access. See [ARCHITECTURE.md](ARCHITECTURE.md) for the current implementation.
 
 ```text
 ┌────────────────────────────────────────────────────────┐
@@ -35,9 +35,9 @@ BitDrop is decoupled into three distinct layers. The **Rust Core** is the single
 ┌──────────────────────────▼─────────────────────────────┐
 │              RUST CORE (Single Source of Truth)        │
 │                                                        │
-│  [Async Control & Network IO]                          │
-│  ├── State Machine & Library DB (rusqlite + FTS5)      │
-│  ├── StorageProvider Trait (Google Drive, S3, WebDAV)  │
+│  [Control & Network IO]                          │
+│  ├── Playback State & Library DB (rusqlite + FTS5)      │
+│  ├── Google Drive HTTP Ranges & Token Refresh Events  │
 │  └── Fetch Scheduler & Sparse Disk Cache (Byte Range)  │
 │                                                        │
 │  [Dedicated Decoder Thread (Elevated Audio Priority)]  │
@@ -45,14 +45,14 @@ BitDrop is decoupled into three distinct layers. The **Rust Core** is the single
 │  └── 64-bit Float DSP Engine (Parametric EQ, Dither)   │
 │                                                        │
 │  [Real-Time Output Pipe]                               │
-│  └── Lock-Free SPSC PCM Ring Buffer (rtrb, 0.5–2.0s)   │
+│  └── SPSC PCM Ring Buffer (768,000 interleaved floats)   │
 └──────────────────────────▲─────────────────────────────┘
-                           │ UniFFI / JNI
+                           │ Oboe / CPAL
 ┌──────────────────────────▼─────────────────────────────┐
 │             PLATFORM SHELLS (Kotlin / Swift)           │
-│  Android: Media3 MediaLibraryService, AudioFocus,      │
-│           AudioMixerAttributes, TokenProvider          │
-│  iOS:     AVAudioSession, MPRemoteCommandCenter        │
+│  Android: audio_service transport controls,      │
+│           AudioMixerAttributes, Google account access          │
+│  Other platforms: Flutter shell and CPAL output        │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -76,7 +76,7 @@ Rather than making false promises, BitDrop dynamically detects the operating sys
 ## ⚡ Core Engineering Principles
 
 1. **Strict Zero-Server Policy:** To protect user privacy and avoid costly Google CASA security assessments on `drive.readonly` scopes, zero servers touch user credentials or audio data. All API calls, caching, and token refreshes occur entirely on-device.
-2. **Disk-Based Sparse Cache:** Compressed audio bytes (8–16 MiB chunks) are cached in a sparse file on disk, rather than buffering decompressed PCM in RAM. Seeking, gapless pre-roll, and offline pinning operate directly through the disk cache.
+2. **Disk-Based Sparse Cache:** Compressed audio bytes (2 MiB chunks) are cached in a sparse file on disk, rather than buffering decompressed PCM in RAM. Seeking, gapless pre-roll, and offline pinning operate directly through the disk cache.
 3. **Format-Aware Progressive Header Reader:** Audio metadata is extracted over HTTP range requests by walking container atoms (FLAC/MP4), fetching only metadata blocks and skipping heavy embedded artwork.
 4. **Real-Time Thread Discipline:** The audio output writer/callback thread is completely decoupled from network operations and decoding, adhering to lock-free, zero-allocation real-time safety.
 

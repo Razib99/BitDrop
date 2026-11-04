@@ -918,3 +918,33 @@ fn gate_5_gapless_boundary_continuity() {
         "Gate 5: TrackEnded flag must be set"
     );
 }
+
+#[test]
+fn flushed_frames_preserve_future_boundary_positions() {
+    let _guard = SUITE_MUTEX.lock().unwrap();
+    CALLBACK_FRAMES_PLAYED.store(0, Ordering::SeqCst);
+    CALLBACK_IS_PLAYING.store(true, Ordering::Release);
+    CALLBACK_GATE_OUTPUT.store(false, Ordering::Release);
+    CALLBACK_FADE_TARGET.store(1.0f32.to_bits(), Ordering::Release);
+    CALLBACK_FADE_STEP.store(1.0f32.to_bits(), Ordering::Release);
+    TRACK_ENDED_FLAG.store(false, Ordering::Release);
+    let (mut producer, consumer) = rtrb::RingBuffer::new(32);
+    let (mut markers, boundary_consumer) = rtrb::RingBuffer::new(8);
+    let mut renderer = OutputRenderer::new(48000.0, Some(consumer), Some(boundary_consumer), None);
+    for _ in 0..8 {
+        producer.push(0.25).unwrap();
+    }
+    markers.push(BoundaryMarker::track_ended(4, "old")).unwrap();
+    CALLBACK_FLUSH_REQUESTED.store(true, Ordering::Release);
+    renderer.render_interleaved(&mut [0.0; 4], 2);
+    assert!(!CALLBACK_FLUSH_REQUESTED.load(Ordering::Acquire));
+    assert_eq!(CALLBACK_FRAMES_PLAYED.load(Ordering::Acquire), 4);
+    assert!(!TRACK_ENDED_FLAG.load(Ordering::Acquire));
+    for _ in 0..4 {
+        producer.push(0.25).unwrap();
+    }
+    markers.push(BoundaryMarker::track_ended(6, "new")).unwrap();
+    renderer.render_interleaved(&mut [0.0; 4], 2);
+    assert_eq!(CALLBACK_FRAMES_PLAYED.load(Ordering::Acquire), 6);
+    assert!(TRACK_ENDED_FLAG.load(Ordering::Acquire));
+}

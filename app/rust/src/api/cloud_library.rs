@@ -1335,15 +1335,19 @@ pub fn cloud_cache_prune_now(
 ) -> Result<u64, String> {
     let limit = cloud_cache_get_limit();
     let dir = std::path::PathBuf::from(chunk_dir);
-    with_db_mut(|db| {
-        let evicted = db
-            .prune_lru_chunks(limit, &pinned_file_ids, active_file_id.as_deref())
-            .map_err(anyhow::Error::from)?;
-        let freed_bytes: u64 = evicted.iter().map(|c| c.byte_len as u64).sum();
-        if !evicted.is_empty() {
-            crate::cloud::media_source::apply_chunk_evictions(&dir, &evicted, db);
-        }
-        Ok(freed_bytes)
+    crate::cloud::media_source::with_live_cache_ids(|live| {
+        let mut protected = pinned_file_ids;
+        protected.extend(live);
+        with_db_mut(|db| {
+            let evicted = db
+                .prune_lru_chunks(limit, &protected, active_file_id.as_deref())
+                .map_err(anyhow::Error::from)?;
+            let freed_bytes: u64 = evicted.iter().map(|c| c.byte_len as u64).sum();
+            if !evicted.is_empty() {
+                crate::cloud::media_source::apply_chunk_evictions(&dir, &evicted, db);
+            }
+            Ok(freed_bytes)
+        })
     })
 }
 
@@ -1445,43 +1449,9 @@ pub fn cloud_db_insert_autoeq_profile(profile: AutoEqProfileData) -> Result<(), 
     })
 }
 
-/// Deletes every cached audio chunk and returns the bytes reclaimed.
-///
-/// Only the streamed audio goes: artwork and the library index stay, so the
-/// library still renders and no rescan is needed. A chunk belonging to the
-/// track playing right now is safe to unlink — the open file handle keeps
-/// working, and anything read afterwards is simply fetched again.
+/// Clears unused audio chunks while preserving pins, open sources, artwork and metadata.
 pub fn clear_audio_cache(chunk_dirs: Vec<String>) -> u64 {
-    let mut freed = 0u64;
-
-    for chunk_dir in &chunk_dirs {
-        let Ok(entries) = std::fs::read_dir(chunk_dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !name.ends_with(".dat")
-                && !name.ends_with(".tmp")
-                && !name.ends_with(".sparse")
-                && !name.ends_with(".idx")
-            {
-                continue;
-            }
-            let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            if std::fs::remove_file(entry.path()).is_ok() {
-                freed += len;
-            }
-        }
-    }
-
-    let _ = with_db_mut(|db| {
-        let pinned = db.get_pinned_tracks().unwrap_or_default();
-        let _ = db.prune_lru_chunks(0, &pinned, None);
-        Ok(())
-    });
-
-    crate::cloud::media_source::forget_cached_ranges();
-    freed
+    crate::cloud::media_source::clear_inactive_caches(&chunk_dirs)
 }
 
 #[cfg(test)]
@@ -1518,4 +1488,70 @@ mod tests {
         );
         assert_eq!(url_encode("A. R. Rahman"), "A.+R.+Rahman");
     }
+}
+
+/// Downloads through the same bounded cache writer used by streaming playback.
+pub fn cloud_download_track(
+    file_id: String,
+    url: String,
+    auth_token: Option<String>,
+    total_size: u64,
+    cache_dir: String,
+) -> Result<(), String> {
+    use std::io::Read;
+    let mut source = crate::cloud::media_source::CloudMediaSource::new(
+        file_id.clone(),
+        url,
+        auth_token,
+        total_size,
+        cache_dir.into(),
+    )
+    .map_err(|e| e.to_string())?;
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        if !with_db(|db| db.is_track_pinned(&file_id).map_err(anyhow::Error::from))? {
+            return Ok(());
+        }
+        match source.read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                // Playback seeking cancels shared network work, not the pinned download.
+                source.seek_to_current_generation();
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn cloud_cache_is_complete(file_id: String, cache_dir: String, total_size: u64) -> bool {
+    if total_size == 0 || !crate::cloud::media_source::valid_file_id(&file_id) {
+        return false;
+    }
+    let path = std::path::Path::new(&cache_dir).join(format!("{}.sparse", file_id));
+    if std::fs::metadata(path)
+        .map(|m| m.len() < total_size)
+        .unwrap_or(true)
+    {
+        return false;
+    }
+    with_db(|db| {
+        let chunks = db.get_cached_chunks(&file_id)?;
+        let count = total_size.div_ceil(crate::cloud::media_source::CHUNK_SIZE);
+        Ok(chunks.len() as u64 == count
+            && chunks.iter().all(|c| {
+                let start = c.chunk_idx as u64 * crate::cloud::media_source::CHUNK_SIZE;
+                start < total_size
+                    && c.byte_len as u64
+                        == (total_size - start).min(crate::cloud::media_source::CHUNK_SIZE)
+            }))
+    })
+    .unwrap_or(false)
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn cloud_cache_remove_track(file_id: String, cache_dir: String) -> Result<bool, String> {
+    crate::cloud::media_source::remove_inactive_cache(std::path::Path::new(&cache_dir), &file_id)
+        .map_err(|e| e.to_string())
 }

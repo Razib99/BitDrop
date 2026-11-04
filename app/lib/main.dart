@@ -16,7 +16,7 @@ import 'features/storage/google_drive_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Initialize the Rust FFI backend
   await RustLib.init();
 
@@ -40,7 +40,7 @@ Future<void> main() async {
     debugPrint('[bitdrop] background audio service unavailable: $e\n$st');
     audioHandler = BitDropAudioHandler();
   }
-  
+
   // Stash the handler globally for the provider to pick up
   globalAudioHandler = audioHandler;
 
@@ -56,7 +56,9 @@ Future<void> main() async {
 
   audioHandler
     ..cacheDir = chunkCache.path
-    ..accessTokenProvider = globalDriveService.freshAccessToken;
+    ..accessTokenProvider = globalDriveService.freshAccessToken
+    ..refreshAccessTokenProvider =
+        () => globalDriveService.freshAccessToken(forceRefresh: true);
 
   // The index lives in support rather than cache: the OS may purge the cache
   // directory, and losing the library would force a full rescan of Drive.

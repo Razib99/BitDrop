@@ -10,8 +10,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'audio_engine.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `open_media_source`, `request_load`, `set_ramp`, `stream_opens`
-// These types are ignored because they are not used by any `pub` functions: `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DSP_TRIPLE_BUFFER`, `DecoderCmd`, `EVENT_SINK`, `LOAD_SENDER`, `OpenedTrack`, `PLAYER_STATE`
+// These functions are ignored because they are not marked as `pub`: `emit_event`, `initialize_engine`, `is_current`, `open_media_source`, `request_load`, `set_ramp`, `stage_load`, `stream_opens`
+// These types are ignored because they are not used by any `pub` functions: `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DSP_TRIPLE_BUFFER`, `DecoderCmd`, `EVENT_SINK`, `LOAD_SENDER`, `LoadRequest`, `OpenedTrack`, `PLAYER_STATE`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `default`, `default`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Enables hardware Flush-to-Zero (FTZ) and Denormals-are-Zero (DAZ) mode.
@@ -20,6 +20,10 @@ part 'audio_engine.freezed.dart';
 /// Prevents catastrophic CPU denormal microcode exceptions during filter decays and fades.
 Future<void> enableHardwareFlushToZero() =>
     RustLib.instance.api.crateApiAudioEngineEnableHardwareFlushToZero();
+
+void engineSupplyToken({required BigInt requestId, String? token}) => RustLib
+    .instance.api
+    .crateApiAudioEngineEngineSupplyToken(requestId: requestId, token: token);
 
 /// Per-frame gain change that walks a ramp of `ms` at `sample_rate`.
 Future<double> rampStep({required int ms, required int sampleRate}) =>
@@ -32,6 +36,9 @@ Future<void> publishDspConfig({required PlayerState state}) =>
 
 Future<void> initEngine() =>
     RustLib.instance.api.crateApiAudioEngineInitEngine();
+
+void engineClearNext() =>
+    RustLib.instance.api.crateApiAudioEngineEngineClearNext();
 
 void enginePlay({required String path}) =>
     RustLib.instance.api.crateApiAudioEngineEnginePlay(path: path);
@@ -277,6 +284,13 @@ class EngineDiagnosticsData {
 sealed class EngineEvent with _$EngineEvent {
   const EngineEvent._();
 
+  const factory EngineEvent.playbackFailed({
+    required String fileId,
+    required String message,
+  }) = EngineEvent_PlaybackFailed;
+  const factory EngineEvent.tokenRefreshRequested({
+    required BigInt requestId,
+  }) = EngineEvent_TokenRefreshRequested;
   const factory EngineEvent.playbackState({
     required bool isPlaying,
     required bool isBuffering,

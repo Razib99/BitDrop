@@ -17,8 +17,8 @@ use symphonia::core::probe::Hint;
 
 use crate::cloud::media_source::CloudMediaSource;
 pub use crate::dsp::{
-    downmix_to_stereo, BoundaryKind, BoundaryMarker, DspConfigSnapshot, DspPipelineV2, EqBandSpec,
-    TripleBuffer, VisualizerFrameData, EQ_HIGH_PASS, EQ_HIGH_SHELF, EQ_LOW_PASS, EQ_LOW_SHELF,
+    downmix_to_stereo, BoundaryKind, BoundaryMarker, DspConfigSnapshot, DspMailbox, DspPipelineV2,
+    EqBandSpec, VisualizerFrameData, EQ_HIGH_PASS, EQ_HIGH_SHELF, EQ_LOW_PASS, EQ_LOW_SHELF,
     EQ_PEAK, ISO_10_BAND, MAX_EQ_BANDS,
 };
 use rubato::Resampler;
@@ -43,8 +43,8 @@ pub static DECODE_LOAD_PERMILLE: AtomicU32 = AtomicU32::new(0);
 
 lazy_static::lazy_static! {
     /// Lock-free Triple Buffer for zero-allocation, wait-free DSP snapshots.
-    pub static ref DSP_TRIPLE_BUFFER: TripleBuffer<DspConfigSnapshot> =
-        TripleBuffer::new(DspConfigSnapshot::default());
+    pub static ref DSP_TRIPLE_BUFFER: DspMailbox =
+        DspMailbox::new(DspConfigSnapshot::default());
 }
 
 /// Enables hardware Flush-to-Zero (FTZ) and Denormals-are-Zero (DAZ) mode.
@@ -78,6 +78,13 @@ pub fn enable_hardware_flush_to_zero() {
 
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
+    PlaybackFailed {
+        file_id: String,
+        message: String,
+    },
+    TokenRefreshRequested {
+        request_id: u64,
+    },
     PlaybackState {
         is_playing: bool,
         is_buffering: bool,
@@ -108,14 +115,43 @@ lazy_static::lazy_static! {
     static ref CMD_SENDER: Mutex<Option<crossbeam_channel::Sender<DecoderCmd>>> = Mutex::new(None);
     /// Opening a source is slow and belongs off the decode thread; see the
     /// loader thread in `init_engine`.
-    static ref LOAD_SENDER: Mutex<Option<crossbeam_channel::Sender<DecoderCmd>>> = Mutex::new(None);
+    static ref LOAD_SENDER: Mutex<Option<crossbeam_channel::Sender<LoadRequest>>> = Mutex::new(None);
     static ref EVENT_SINK: Mutex<Option<crate::frb_generated::StreamSink<EngineEvent>>> = Mutex::new(None);
+}
+
+pub(crate) fn emit_event(event: EngineEvent) -> bool {
+    EVENT_SINK
+        .lock()
+        .ok()
+        .and_then(|sink| sink.as_ref().map(|s| s.add(event).is_ok()))
+        .unwrap_or(false)
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_supply_token(request_id: u64, token: Option<String>) {
+    crate::cloud::auth::supply_token(request_id, token);
 }
 
 /// Bumped on every play request. The loader stamps each open with the value
 /// it started under and drops the result if a newer request has landed since,
 /// so a slow track that the user already skipped past never takes over.
 static LOAD_GENERATION: AtomicU64 = AtomicU64::new(0);
+static STAGE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+struct LoadRequest {
+    generation: u64,
+    stage: Option<u64>,
+    command: DecoderCmd,
+}
+
+impl LoadRequest {
+    fn is_current(&self) -> bool {
+        self.generation == LOAD_GENERATION.load(Ordering::Acquire)
+            && self
+                .stage
+                .is_none_or(|stage| stage == STAGE_GENERATION.load(Ordering::Acquire))
+    }
+}
 
 #[cfg(target_os = "android")]
 lazy_static::lazy_static! {
@@ -314,6 +350,7 @@ pub enum DecoderCmd {
 
 /// A decoder set up and ready to pull packets from.
 struct OpenedTrack {
+    cache: Option<std::sync::Arc<crate::cloud::media_source::SparseTrackCache>>,
     format: Box<dyn symphonia::core::formats::FormatReader>,
     decoder: Box<dyn symphonia::core::codecs::Decoder>,
     track_id: u32,
@@ -373,6 +410,7 @@ fn open_media_source(source: Box<dyn MediaSource>, ext: &str) -> Option<OpenedTr
         .unwrap_or_else(|| "UNKNOWN".to_string());
 
     Some(OpenedTrack {
+        cache: None,
         format,
         decoder,
         track_id: track.id,
@@ -442,6 +480,11 @@ impl AudioOutputCallback for PlayerCallback {
 }
 
 pub fn init_engine() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(initialize_engine);
+}
+
+fn initialize_engine() {
     {
         // Derived defaults: a zeroed fade target would mute the output for
         // good, since the ramp would have nowhere to go.
@@ -453,7 +496,7 @@ pub fn init_engine() {
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<DecoderCmd>();
     *CMD_SENDER.lock().unwrap() = Some(cmd_tx);
 
-    let (load_tx, load_rx) = crossbeam_channel::unbounded::<DecoderCmd>();
+    let (load_tx, load_rx) = crossbeam_channel::unbounded::<LoadRequest>();
     *LOAD_SENDER.lock().unwrap() = Some(load_tx);
     let (loaded_tx, loaded_rx) = crossbeam_channel::bounded::<(u64, String, Box<OpenedTrack>)>(2);
 
@@ -463,7 +506,7 @@ pub fn init_engine() {
     let (triggered_tx, mut triggered_rx) =
         rtrb::RingBuffer::<BoundaryMarker>::new(BOUNDARY_QUEUE_CAPACITY);
     let (next_loaded_tx, next_loaded_rx) =
-        crossbeam_channel::bounded::<(String, Box<OpenedTrack>)>(1);
+        crossbeam_channel::unbounded::<(u64, u64, String, Box<OpenedTrack>)>();
 
     #[cfg(not(target_os = "android"))]
     {
@@ -607,14 +650,13 @@ pub fn init_engine() {
     // until the new one is genuinely ready to take over, so the only silence
     // the listener gets is the fade that was asked for.
     thread::spawn(move || {
-        while let Ok(cmd) = load_rx.recv() {
-            let generation = LOAD_GENERATION.load(Ordering::SeqCst);
-            let is_next = matches!(
-                cmd,
-                DecoderCmd::SetNextTrack(_) | DecoderCmd::SetNextCloud { .. }
-            );
-
-            let opened = match cmd {
+        while let Ok(request) = load_rx.recv() {
+            if !request.is_current() {
+                continue;
+            }
+            let generation = request.generation;
+            let stage = request.stage;
+            let opened = match request.command {
                 DecoderCmd::Play(path) | DecoderCmd::SetNextTrack(path) => {
                     let ext = std::path::Path::new(&path)
                         .extension()
@@ -651,7 +693,13 @@ pub fn init_engine() {
                     total_size,
                     PathBuf::from(cache_dir),
                 ) {
-                    Ok(source) => open_media_source(Box::new(source), &ext).map(|t| (file_id, t)),
+                    Ok(source) => {
+                        let cache = std::sync::Arc::clone(source.cache());
+                        open_media_source(Box::new(source), &ext).map(|mut t| {
+                            t.cache = Some(cache);
+                            (file_id, t)
+                        })
+                    }
                     Err(e) => {
                         eprintln!("[bitdrop] could not open cloud track {}: {}", file_id, e);
                         None
@@ -660,9 +708,13 @@ pub fn init_engine() {
                 _ => None,
             };
 
-            if is_next {
-                if let Some((id, track)) = opened {
-                    let _ = next_loaded_tx.send((id, Box::new(track)));
+            if let Some(stage) = stage {
+                if generation == LOAD_GENERATION.load(Ordering::Acquire)
+                    && stage == STAGE_GENERATION.load(Ordering::Acquire)
+                {
+                    if let Some((id, track)) = opened {
+                        let _ = next_loaded_tx.send((generation, stage, id, Box::new(track)));
+                    }
                 }
                 continue;
             }
@@ -680,6 +732,7 @@ pub fn init_engine() {
                 None => {
                     // Nothing is coming to lift the gate, so lift it here.
                     // Otherwise a failed open leaves the output muted for good.
+                    emit_event(EngineEvent::PlaybackFailed { file_id: String::new(), message: "Could not open the requested track. Check the file and cloud connection.".into() });
                     let mut state = PLAYER_STATE.lock().unwrap();
                     state.loading = false;
                     state.gate_output = false;
@@ -704,8 +757,9 @@ pub fn init_engine() {
         let mut pending_out: Option<Vec<f32>> = None;
         let mut current_resampler: Option<(u32, u32, rubato::Async<f64>)> = None;
         let mut resample_in_buf: Vec<f64> = Vec::new();
-        let mut next_track: Option<(String, Box<OpenedTrack>)> = None;
+        let mut next_track: Option<(u64, String, Box<OpenedTrack>)> = None;
         let mut seek_target_frame: Option<u64> = None;
+        let mut pending_start: Option<BoundaryMarker> = None;
 
         /// Consecutive failed reads before a track is given up on. Enough to
         /// ride out a dropped connection, few enough that a genuinely broken
@@ -715,8 +769,18 @@ pub fn init_engine() {
 
         loop {
             // Check for pre-loaded next track staged for gapless transition
-            if let Ok((id, opened)) = next_loaded_rx.try_recv() {
-                next_track = Some((id, opened));
+            if next_track
+                .as_ref()
+                .is_some_and(|(stage, _, _)| *stage != STAGE_GENERATION.load(Ordering::Acquire))
+            {
+                next_track = None;
+            }
+            while let Ok((generation, stage, id, opened)) = next_loaded_rx.try_recv() {
+                if generation == LOAD_GENERATION.load(Ordering::Acquire)
+                    && stage == STAGE_GENERATION.load(Ordering::Acquire)
+                {
+                    next_track = Some((stage, id, opened));
+                }
             }
 
             // Drain everything queued so a burst can be collapsed: dragging
@@ -791,8 +855,6 @@ pub fn init_engine() {
                             set_ramp(&mut state, 1.0, SEEK_FADE_MS);
                         }
 
-                        crate::cloud::media_source::abort_active_fetches();
-
                         if let (Some(format), Some(t)) = (current_format.as_mut(), tb) {
                             let ts = (ms as u64 * t.denom as u64) / (1000 * t.numer as u64);
                             let _ = format.seek(
@@ -852,6 +914,7 @@ pub fn init_engine() {
                     }
 
                     let opened = *opened;
+                    crate::cloud::media_source::set_active_cache(opened.cache.as_ref());
                     tb = opened.time_base;
                     current_track_id = opened.track_id;
                     current_decoder = Some(opened.decoder);
@@ -860,7 +923,6 @@ pub fn init_engine() {
                     pending_out = None;
                     resample_in_buf.clear();
                     current_resampler = None;
-                    next_track = None;
                     seek_target_frame = None;
 
                     let mut state = PLAYER_STATE.lock().unwrap();
@@ -900,7 +962,7 @@ pub fn init_engine() {
                     set_ramp(&mut state, 1.0, FADE_MS);
 
                     // Push TrackStarted boundary marker
-                    let _ = boundary_producer.push(BoundaryMarker::track_started(
+                    pending_start = Some(BoundaryMarker::track_started(
                         decoder_frames_pushed,
                         &current_track_id_str,
                     ));
@@ -911,6 +973,16 @@ pub fn init_engine() {
             if !is_playing || current_format.is_none() {
                 thread::sleep(Duration::from_millis(20));
                 continue;
+            }
+
+            // Wait for the output to discard the old queue before publishing new PCM
+            // or markers. The callback acknowledges only after both queues are drained.
+            if CALLBACK_FLUSH_REQUESTED.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(1));
+                continue;
+            }
+            if let Some(marker) = pending_start.take() {
+                let _ = boundary_producer.push(marker);
             }
 
             // Deliver whatever last round decoded before pulling more.
@@ -948,6 +1020,11 @@ pub fn init_engine() {
                         false
                     }
                     Err(symphonia::core::errors::Error::IoError(e))
+                        if e.kind() == std::io::ErrorKind::Interrupted =>
+                    {
+                        continue;
+                    }
+                    Err(symphonia::core::errors::Error::IoError(e))
                         if e.kind() == std::io::ErrorKind::UnexpectedEof =>
                     {
                         true
@@ -962,7 +1039,17 @@ pub fn init_engine() {
                             thread::sleep(Duration::from_millis(400));
                             continue;
                         }
-                        true
+                        emit_event(EngineEvent::PlaybackFailed { file_id: current_track_id_str.clone(), message: "Playback stopped because the source could not be read. Check your connection and retry.".into() });
+                        current_format = None;
+                        current_decoder = None;
+                        next_track = None;
+                        let mut state = PLAYER_STATE.lock().unwrap();
+                        state.is_playing = false;
+                        state.buffering = false;
+                        state.gate_output = false;
+                        CALLBACK_IS_PLAYING.store(false, Ordering::Release);
+                        CALLBACK_GATE_OUTPUT.store(false, Ordering::Release);
+                        continue;
                     }
                 };
 
@@ -1123,6 +1210,9 @@ pub fn init_engine() {
                     }
                 } else if ended {
                     read_failures = 0;
+                    // A short track may end before reaching the prebuffer threshold.
+                    PLAYER_STATE.lock().unwrap().gate_output = false;
+                    CALLBACK_GATE_OUTPUT.store(false, Ordering::Release);
                     if let Some((_, _, ref mut resampler)) = current_resampler {
                         if !resample_in_buf.is_empty() {
                             let chunk_size = resampler.input_frames_next();
@@ -1164,7 +1254,10 @@ pub fn init_engine() {
 
                     // Check if next track is staged for gapless transition
                     let cur_sr = PLAYER_STATE.lock().unwrap().source_sample_rate;
-                    if let Some((next_id, next_opened)) = next_track.take() {
+                    if let Some((_, next_id, next_opened)) = next_track
+                        .take()
+                        .filter(|(stage, _, _)| *stage == STAGE_GENERATION.load(Ordering::Acquire))
+                    {
                         if next_opened.sample_rate == cur_sr {
                             // TRUE GAPLESS TRANSITION:
                             // Push TrackChanged marker at current pushed frame count.
@@ -1173,6 +1266,9 @@ pub fn init_engine() {
                                 &next_id,
                             ));
 
+                            crate::cloud::media_source::set_active_cache(
+                                next_opened.cache.as_ref(),
+                            );
                             tb = next_opened.time_base;
                             current_track_id = next_opened.track_id;
                             current_decoder = Some(next_opened.decoder);
@@ -1410,11 +1506,33 @@ fn start_stream_watchdog() {
 /// here instead would put the whole open — a probe, and for cloud tracks a
 /// network round trip — into audible silence.
 fn request_load(cmd: DecoderCmd) {
-    LOAD_GENERATION.fetch_add(1, Ordering::SeqCst);
+    let generation = LOAD_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    engine_clear_next();
     PLAYER_STATE.lock().unwrap().loading = true;
     if let Some(sender) = LOAD_SENDER.lock().unwrap().as_ref() {
-        let _ = sender.send(cmd);
+        let _ = sender.send(LoadRequest {
+            generation,
+            stage: None,
+            command: cmd,
+        });
     }
+}
+
+fn stage_load(command: DecoderCmd) {
+    let generation = LOAD_GENERATION.load(Ordering::Acquire);
+    let stage = STAGE_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    if let Some(sender) = LOAD_SENDER.lock().unwrap().as_ref() {
+        let _ = sender.send(LoadRequest {
+            generation,
+            stage: Some(stage),
+            command,
+        });
+    }
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_clear_next() {
+    STAGE_GENERATION.fetch_add(1, Ordering::AcqRel);
 }
 
 #[flutter_rust_bridge::frb(sync)]
@@ -1449,9 +1567,7 @@ pub fn engine_play_cloud(
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_set_next_track(path: String) {
-    if let Some(sender) = LOAD_SENDER.lock().unwrap().as_ref() {
-        let _ = sender.send(DecoderCmd::SetNextTrack(path));
-    }
+    stage_load(DecoderCmd::SetNextTrack(path));
 }
 
 #[flutter_rust_bridge::frb(sync)]
@@ -1463,16 +1579,14 @@ pub fn engine_set_next_cloud(
     cache_dir: String,
     ext: String,
 ) {
-    if let Some(sender) = LOAD_SENDER.lock().unwrap().as_ref() {
-        let _ = sender.send(DecoderCmd::SetNextCloud {
-            file_id,
-            url,
-            auth_token,
-            total_size,
-            cache_dir,
-            ext,
-        });
-    }
+    stage_load(DecoderCmd::SetNextCloud {
+        file_id,
+        url,
+        auth_token,
+        total_size,
+        cache_dir,
+        ext,
+    });
 }
 
 #[flutter_rust_bridge::frb]
@@ -1530,7 +1644,6 @@ pub fn engine_seek(position_ms: u32) {
         }
     }
     TRACK_ENDED_FLAG.store(false, Ordering::Release);
-    CALLBACK_FLUSH_REQUESTED.store(true, Ordering::Release);
     crate::cloud::media_source::abort_active_fetches();
     if let Some(sender) = CMD_SENDER.lock().unwrap().as_ref() {
         let _ = sender.send(DecoderCmd::Seek(position_ms));
@@ -1539,6 +1652,8 @@ pub fn engine_seek(position_ms: u32) {
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_stop() {
+    LOAD_GENERATION.fetch_add(1, Ordering::AcqRel);
+    engine_clear_next();
     {
         let mut state = PLAYER_STATE.lock().unwrap();
         state.is_playing = false;
@@ -1547,7 +1662,6 @@ pub fn engine_stop() {
         state.buffered_ms = 0;
     }
     CALLBACK_IS_PLAYING.store(false, Ordering::Release);
-    CALLBACK_FLUSH_REQUESTED.store(true, Ordering::Release);
     TRACK_ENDED_FLAG.store(false, Ordering::Release);
     crate::cloud::media_source::abort_active_fetches();
     if let Some(sender) = CMD_SENDER.lock().unwrap().as_ref() {

@@ -40,7 +40,7 @@ jobs:
       - name: Clippy Linter (-D warnings)
         run: cargo clippy --manifest-path app/rust/Cargo.toml --all-targets -- -D warnings
 
-      - name: Run Unit & Integration Tests (28 tests)
+      - name: Run Unit & Integration Tests
         run: cargo test --manifest-path app/rust/Cargo.toml
 
       - name: Run Golden Audio CI Suite (Gates 1, 2, 3, 4, 5)
@@ -69,11 +69,20 @@ jobs:
         working-directory: app
         run: flutter pub get
 
+      - name: Install Native Audio Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev pkg-config
+
+      - name: Setup Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Native Library for Integration Tests
+        run: cargo build --manifest-path app/rust/Cargo.toml
+
       - name: Flutter Analyzer (Zero Warnings)
         working-directory: app
         run: flutter analyze
 
-      - name: Flutter Test Suite (93 tests)
+      - name: Flutter Test Suite
         working-directory: app
         run: flutter test --coverage
 

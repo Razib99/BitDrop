@@ -64,10 +64,7 @@ class CloudLibrary {
 
   void _deleteDiskCacheFor(String fileId) {
     try {
-      final sparse = File('$_cacheDir/$fileId.sparse');
-      if (sparse.existsSync()) sparse.deleteSync();
-      final idx = File('$_cacheDir/$fileId.idx');
-      if (idx.existsSync()) idx.deleteSync();
+      rust.cloudCacheRemoveTrack(fileId: fileId, cacheDir: _cacheDir);
     } catch (e) {
       debugPrint('[cloud] failed to delete chunk cache for $fileId: $e');
     }
@@ -113,8 +110,9 @@ class CloudLibrary {
         },
       );
 
-  Track? trackById(String id) =>
-      _tracks.value.cast<Track?>().firstWhere((t) => t!.id == id, orElse: () => null);
+  Track? trackById(String id) => _tracks.value
+      .cast<Track?>()
+      .firstWhere((t) => t!.id == id, orElse: () => null);
 
   /// Where the folder choice is kept. Beside the index, so clearing app data
   /// drops both together and they can never disagree.
@@ -160,28 +158,18 @@ class CloudLibrary {
   /// scan is running is ignored rather than starting a competing walk.
   Future<void> scan({List<DriveFolder>? only}) async {
     if (_scanning) return;
-    if (!_drive.isSignedIn) {
-      _status.add(const SyncStatus(
-        phase: SyncPhase.error,
-        detail: 'Not signed in to Google Drive.',
-      ));
-      return;
-    }
-
-    await open();
-    final targets = only ?? _folders.value;
-    if (targets.isEmpty) {
-      _status.add(const SyncStatus(
-        phase: SyncPhase.error,
-        detail: 'Choose which folders to index first.',
-      ));
-      return;
-    }
-
     _scanning = true;
     _cancel = Completer<void>();
-
     try {
+      if (!_drive.isSignedIn) {
+        throw StateError('Not signed in to Google Drive.');
+      }
+      await open();
+      final targets = only ?? _folders.value;
+      if (targets.isEmpty) {
+        throw StateError('Choose which folders to index first.');
+      }
+      if (_cancel?.isCompleted ?? false) return;
       await _listPass(targets);
       if (_cancel?.isCompleted ?? false) return;
       await _tagPass();
@@ -189,6 +177,10 @@ class CloudLibrary {
       debugPrint('[library] scan failed: $e');
       _status.add(SyncStatus(phase: SyncPhase.error, detail: '$e'));
     } finally {
+      if (_cancel?.isCompleted ?? false) {
+        _status.add(
+            const SyncStatus(phase: SyncPhase.idle, detail: 'Scan cancelled.'));
+      }
       _scanning = false;
       _cancel = null;
     }
@@ -274,7 +266,8 @@ class CloudLibrary {
       }
     }
 
-    _status.add(SyncStatus(phase: SyncPhase.listing, processed: found, total: found));
+    _status.add(
+        SyncStatus(phase: SyncPhase.listing, processed: found, total: found));
   }
 
   /// Pass two: read tags over byte ranges, a few files at a time.
@@ -318,7 +311,8 @@ class CloudLibrary {
     }
 
     await _reload();
-    _status.add(SyncStatus(phase: SyncPhase.idle, processed: total, total: total));
+    _status
+        .add(SyncStatus(phase: SyncPhase.idle, processed: total, total: total));
   }
 
   /// Instant ranked FTS5 search query against SQLite.
@@ -441,8 +435,7 @@ class CloudLibrary {
               : b);
 
       final albumArt = items
-          .firstWhere((t) => t.artwork.uri != null,
-              orElse: () => items.first)
+          .firstWhere((t) => t.artwork.uri != null, orElse: () => items.first)
           .artwork;
 
       if (albumArt.uri != null) {
@@ -457,7 +450,8 @@ class CloudLibrary {
         id: id,
         title: items.first.albumTitle,
         artist: items.first.artist,
-        artistId: 'ca-${items.first.artist.toLowerCase().hashCode.toUnsigned(32).toRadixString(16)}',
+        artistId:
+            'ca-${items.first.artist.toLowerCase().hashCode.toUnsigned(32).toRadixString(16)}',
         trackCount: items.length,
         durationMs: items.fold(0, (s, t) => s + t.durationMs),
         sizeBytes: items.fold(0, (s, t) => s + t.sizeBytes),
@@ -499,8 +493,16 @@ class CloudLibrary {
   /// A deterministic tint so an album looks the same on every launch.
   static int _tintFor(String seed) {
     const palette = [
-      0xFF2E5A7A, 0xFF6B4A3A, 0xFF1F6F6B, 0xFF4A3B6B, 0xFF3E5B2F,
-      0xFF7A3B5C, 0xFF8A6A2F, 0xFF3A6B8A, 0xFF6B5A2F, 0xFF4A4A52,
+      0xFF2E5A7A,
+      0xFF6B4A3A,
+      0xFF1F6F6B,
+      0xFF4A3B6B,
+      0xFF3E5B2F,
+      0xFF7A3B5C,
+      0xFF8A6A2F,
+      0xFF3A6B8A,
+      0xFF6B5A2F,
+      0xFF4A4A52,
     ];
     return palette[seed.hashCode.toUnsigned(32) % palette.length];
   }

@@ -1,3 +1,6 @@
+import 'package:bitdrop/src/rust/frb_generated.dart';
+import 'package:bitdrop/src/rust/api/cloud_library.dart' as rust_cache;
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'dart:io';
 
 import 'package:bitdrop/core_api/commands.dart';
@@ -106,13 +109,13 @@ void main() {
 
     test('Whole album download via Pin/Unpin', () async {
       final albums = await core.albums(const AlbumQuery());
-      final testAlbum = albums.items.firstWhere((a) => a.id != 'album-favorites');
+      final testAlbum =
+          albums.items.firstWhere((a) => a.id != 'album-favorites');
 
       // Pin album
       await core.send(Pin(id: testAlbum.id, kind: 'album'));
 
-      final albumTracks =
-          await core.tracks(TrackQuery(albumId: testAlbum.id));
+      final albumTracks = await core.tracks(TrackQuery(albumId: testAlbum.id));
       expect(albumTracks.items, isNotEmpty);
       for (final t in albumTracks.items) {
         expect(t.availability, Availability.pinned);
@@ -130,14 +133,21 @@ void main() {
   });
 
   group('LiveBitDropCore Cache Purge on Unpin', () {
+    setUpAll(() async {
+      await RustLib.init(
+          externalLibrary: ExternalLibrary.open(
+              '${Directory.current.path}/rust/target/debug/librust_lib_bitdrop.so'));
+    });
     late Directory tempDir;
     late Directory cacheDir;
     late BitDropAudioHandler handler;
     late LiveBitDropCore liveCore;
 
-    setUp(() {
+    setUp(() async {
       tempDir = Directory.systemTemp.createTempSync('bitdrop_unpin_test_');
       cacheDir = Directory('${tempDir.path}/cache')..createSync();
+      await rust_cache.cloudLibraryOpen(
+          dbPath: '${tempDir.path}/library.db', cacheDir: cacheDir.path);
       handler = BitDropAudioHandler();
       final fakeDrive = _FakeDriveService();
       final testCloud = _TestCloudLibrary(
@@ -160,10 +170,14 @@ void main() {
       }
     });
 
-    test('Unpinning track deletes its .sparse and .idx files and restores cloudOnly', () async {
+    test(
+        'Unpinning track deletes its .sparse and .idx files and restores cloudOnly',
+        () async {
       const trackId = 'track_test_123';
-      final sparseFile = File('${cacheDir.path}/$trackId.sparse')..writeAsStringSync('sparse-data');
-      final idxFile = File('${cacheDir.path}/$trackId.idx')..writeAsStringSync('0\n1\n');
+      final sparseFile = File('${cacheDir.path}/$trackId.sparse')
+        ..writeAsStringSync('sparse-data');
+      final idxFile = File('${cacheDir.path}/$trackId.idx')
+        ..writeAsStringSync('0\n1\n');
 
       expect(sparseFile.existsSync(), isTrue);
       expect(idxFile.existsSync(), isTrue);
@@ -181,7 +195,8 @@ void main() {
       expect(idxFile.existsSync(), isFalse);
 
       // Verify favorite status was preserved
-      final favAlbum = await liveCore.tracks(const TrackQuery(albumId: 'album-favorites'));
+      final favAlbum =
+          await liveCore.tracks(const TrackQuery(albumId: 'album-favorites'));
       final found = favAlbum.items.where((t) => t.id == trackId);
       if (found.isNotEmpty) {
         expect(found.first.favorite, isTrue);
@@ -191,10 +206,14 @@ void main() {
 
     test('Unpinning album deletes all tracks sparse and idx files', () async {
       const albumId = 'al-northern';
-      final sparse1 = File('${cacheDir.path}/al-northern-t1.sparse')..writeAsStringSync('data');
-      final idx1 = File('${cacheDir.path}/al-northern-t1.idx')..writeAsStringSync('0\n');
-      final sparse2 = File('${cacheDir.path}/al-northern-t2.sparse')..writeAsStringSync('data');
-      final idx2 = File('${cacheDir.path}/al-northern-t2.idx')..writeAsStringSync('0\n');
+      final sparse1 = File('${cacheDir.path}/al-northern-t1.sparse')
+        ..writeAsStringSync('data');
+      final idx1 = File('${cacheDir.path}/al-northern-t1.idx')
+        ..writeAsStringSync('0\n');
+      final sparse2 = File('${cacheDir.path}/al-northern-t2.sparse')
+        ..writeAsStringSync('data');
+      final idx2 = File('${cacheDir.path}/al-northern-t2.idx')
+        ..writeAsStringSync('0\n');
 
       expect(sparse1.existsSync(), isTrue);
       expect(sparse2.existsSync(), isTrue);

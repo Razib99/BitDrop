@@ -167,15 +167,36 @@ Future<void> cloudDbInsertAutoeqProfile({required AutoEqProfileData profile}) =>
     RustLib.instance.api
         .crateApiCloudLibraryCloudDbInsertAutoeqProfile(profile: profile);
 
-/// Deletes every cached audio chunk and returns the bytes reclaimed.
-///
-/// Only the streamed audio goes: artwork and the library index stay, so the
-/// library still renders and no rescan is needed. A chunk belonging to the
-/// track playing right now is safe to unlink — the open file handle keeps
-/// working, and anything read afterwards is simply fetched again.
+/// Clears unused audio chunks while preserving pins, open sources, artwork and metadata.
 Future<BigInt> clearAudioCache({required List<String> chunkDirs}) =>
     RustLib.instance.api
         .crateApiCloudLibraryClearAudioCache(chunkDirs: chunkDirs);
+
+/// Downloads through the same bounded cache writer used by streaming playback.
+Future<void> cloudDownloadTrack(
+        {required String fileId,
+        required String url,
+        String? authToken,
+        required BigInt totalSize,
+        required String cacheDir}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudDownloadTrack(
+        fileId: fileId,
+        url: url,
+        authToken: authToken,
+        totalSize: totalSize,
+        cacheDir: cacheDir);
+
+bool cloudCacheIsComplete(
+        {required String fileId,
+        required String cacheDir,
+        required BigInt totalSize}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudCacheIsComplete(
+        fileId: fileId, cacheDir: cacheDir, totalSize: totalSize);
+
+bool cloudCacheRemoveTrack(
+        {required String fileId, required String cacheDir}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudCacheRemoveTrack(
+        fileId: fileId, cacheDir: cacheDir);
 
 /// Materialized album summary for instant grid/list rendering.
 class AlbumSummary {
