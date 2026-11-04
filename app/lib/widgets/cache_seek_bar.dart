@@ -11,6 +11,7 @@ import '../providers/core_providers.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import '../util/format.dart';
+import 'indicators.dart';
 
 /// The cache-aware seek bar.
 ///
@@ -59,6 +60,7 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
     final info = ref.watch(positionProvider).valueOrNull ?? PositionInfo.empty;
     final playback = ref.watch(playbackProvider).valueOrNull;
     final buffering = playback is BufferingState ? playback : null;
+    final isLoading = playback is LoadingState;
 
     // Release the hold once the engine reports a position near the target.
     ref.listen(positionProvider, (_, next) {
@@ -151,30 +153,16 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
                 style: context.t.monoReadout.copyWith(color: c.textSecondary),
               ),
               const Spacer(),
-              if (buffering != null)
+              if (buffering != null || isLoading)
                 Flexible(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.downloading, size: 13, color: c.textSecondary),
-                      const SizedBox(width: 4),
-                      Flexible(
-                        child: Text(
-                          'Buffering · '
-                          '${(buffering.bufferedMs / 1000).toStringAsFixed(1)} s '
-                          'of ${(buffering.targetMs / 1000).toStringAsFixed(0)} s',
-                          style: context.t.monoLabel
-                              .copyWith(color: c.textSecondary),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
+                  child: BufferingIndicator(
+                    state: buffering,
+                    isLoading: isLoading,
                   ),
                 )
               else if (info.bufferAheadMs > 0 && info.bufferAheadMs < 6000)
-                Text(
-                  'Buffer ${(info.bufferAheadMs / 1000).toStringAsFixed(1)} s',
-                  style: context.t.monoLabel.copyWith(color: c.textSecondary),
+                Flexible(
+                  child: _LowBufferPill(bufferAheadMs: info.bufferAheadMs),
                 ),
               const Spacer(),
               // Tapping the end time toggles total/remaining.
@@ -283,6 +271,50 @@ class _ScrubBubble extends StatelessWidget {
   }
 }
 
+class _LowBufferPill extends StatelessWidget {
+  const _LowBufferPill({required this.bufferAheadMs});
+
+  final int bufferAheadMs;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+    final sec = (bufferAheadMs / 1000).toStringAsFixed(1);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: c.surface2,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.outline, width: 0.8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 4,
+            height: 4,
+            decoration: BoxDecoration(
+              color: c.textSecondary,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'BUFFER ${sec}s',
+            style: TextStyle(
+              color: c.textSecondary,
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SeekPainter extends CustomPainter {
   _SeekPainter({
     required this.fraction,
@@ -341,14 +373,19 @@ class _SeekPainter extends CustomPainter {
       );
     }
 
-    // Thumb. Grows while dragging; a halo marks a buffering stall.
+    // Thumb. Grows while dragging; a dual halo marks a buffering stall.
     final cx = playedW.clamp(0.0, size.width);
     final cy = size.height / 2;
     if (pulse) {
       canvas.drawCircle(
         Offset(cx, cy),
-        dragging ? 14 : 11,
-        Paint()..color = played.withOpacity(0.22),
+        dragging ? 15 : 12,
+        Paint()..color = played.withOpacity(0.18),
+      );
+      canvas.drawCircle(
+        Offset(cx, cy),
+        dragging ? 11 : 9,
+        Paint()..color = played.withOpacity(0.35),
       );
     }
     canvas.drawCircle(Offset(cx, cy), dragging ? 9 : 7, Paint()..color = thumb);

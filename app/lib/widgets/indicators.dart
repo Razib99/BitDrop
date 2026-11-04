@@ -440,56 +440,178 @@ class _RingPainter extends CustomPainter {
       old.track != track;
 }
 
-/// Buffering caption + pulsing dot. Escalates its wording with [attempt],
-/// matching the copy rule "what happened + what BitDrop is doing".
-class BufferingIndicator extends StatelessWidget {
+/// Animated 4-bar equalizer wave that dances to represent active streaming.
+class _AudioWaveformBars extends StatelessWidget {
+  const _AudioWaveformBars({
+    required this.color,
+    required this.animation,
+  });
+
+  final Color color;
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, _) {
+        final t = animation.value * 2 * math.pi;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _bar((math.sin(t) + 1) / 2 * 7 + 4),
+            const SizedBox(width: 2),
+            _bar((math.sin(t + 1.6) + 1) / 2 * 9 + 4),
+            const SizedBox(width: 2),
+            _bar((math.sin(t + 3.2) + 1) / 2 * 6 + 4),
+            const SizedBox(width: 2),
+            _bar((math.sin(t + 4.8) + 1) / 2 * 8 + 4),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _bar(double height) => Container(
+        width: 2.5,
+        height: height.clamp(3.5, 13.0),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(2),
+        ),
+      );
+}
+
+/// High-fidelity audiophile buffering indicator with animated waveform bars,
+/// progress fill gauge, and attempt escalation.
+class BufferingIndicator extends StatefulWidget {
   const BufferingIndicator({
     super.key,
-    required this.state,
+    this.state,
+    this.isLoading = false,
     this.compact = false,
   });
 
-  final BufferingState state;
+  final BufferingState? state;
+  final bool isLoading;
   final bool compact;
 
-  String messageFor(BuildContext context) => state.attempt >= 2
-      ? context.l10n.bufferingSlow
-      : context.l10n.bufferingLabel;
+  @override
+  State<BufferingIndicator> createState() => _BufferingIndicatorState();
+}
+
+class _BufferingIndicatorState extends State<BufferingIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  String _messageFor(BuildContext context) {
+    if (widget.isLoading) return 'Loading';
+    final state = widget.state;
+    if (state == null) return context.l10n.bufferingLabel;
+    return state.attempt >= 2
+        ? context.l10n.bufferingSlow
+        : context.l10n.bufferingLabel;
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.c;
-    final message = messageFor(context);
-    final detail = '${(state.bufferedMs / 1000).toStringAsFixed(1)} s of '
-        '${(state.targetMs / 1000).toStringAsFixed(0)} s';
+    final state = widget.state;
+    final isSlow = state != null && state.attempt >= 2;
+    final statusColor = isSlow ? const Color(0xFFFFA726) : c.accent;
+
+    final message = _messageFor(context);
+    final int? pct = (state != null && state.targetMs > 0)
+        ? ((state.bufferedMs / state.targetMs) * 100).round().clamp(0, 100)
+        : null;
+
+    final detail = state != null
+        ? '${(state.bufferedMs / 1000).toStringAsFixed(1)} s of ${(state.targetMs / 1000).toStringAsFixed(0)} s'
+        : null;
+
+    final accessibilityLabel = state != null ? '$message, $detail' : message;
+
+    final double? progress = state != null && state.targetMs > 0
+        ? (state.bufferedMs / state.targetMs).clamp(0.0, 1.0)
+        : null;
+
     return Semantics(
       liveRegion: true,
-      label: '$message, $detail',
+      label: accessibilityLabel,
       excludeSemantics: true,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: 12,
-            height: 12,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              value: state.targetMs == 0
-                  ? null
-                  : (state.bufferedMs / state.targetMs).clamp(0.0, 1.0),
-              color: c.accent,
-              backgroundColor: c.outline,
-            ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+        decoration: BoxDecoration(
+          color: statusColor.withOpacity(0.09),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: statusColor.withOpacity(0.28),
+            width: 0.8,
           ),
-          const SizedBox(width: Spacing.xs),
-          Flexible(
-            child: Text(
-              compact ? message : '$message · $detail',
-              style: context.t.bodySmall.copyWith(color: c.textSecondary),
-              overflow: TextOverflow.ellipsis,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _AudioWaveformBars(color: statusColor, animation: _controller),
+            const SizedBox(width: 5.5),
+            Text(
+              message.toUpperCase(),
+              style: TextStyle(
+                color: statusColor,
+                fontSize: 9.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.7,
+                fontFamily: 'monospace',
+              ),
             ),
-          ),
-        ],
+            if (!widget.compact && (pct != null || detail != null)) ...[
+              const SizedBox(width: 4),
+              Text(
+                pct != null ? '$pct%' : detail!,
+                style: TextStyle(
+                  color: isSlow
+                      ? const Color(0xFFFFCC80)
+                      : (c.textSecondary),
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+            if (progress != null && !widget.compact) ...[
+              const SizedBox(width: 5),
+              SizedBox(
+                width: 22,
+                height: 3,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(1.5),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    backgroundColor: statusColor.withOpacity(0.20),
+                    valueColor: AlwaysStoppedAnimation<Color>(statusColor),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
