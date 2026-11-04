@@ -12,13 +12,38 @@ import '../core_api/models.dart';
 /// reports only what the platform states. A capability the device does not
 /// advertise comes back empty and is shown as unknown, never guessed.
 class OutputDeviceProbe {
-  static const _channel = MethodChannel('com.bitdrop/audio_device');
+  static const _defaultChannel = MethodChannel('com.bitdrop/audio_device');
+  final MethodChannel _channel;
+  final bool _autoPoll;
 
-  /// Polled rather than pushed: AudioManager has no callback that covers
-  /// every routing change, and a DAC being plugged in must be noticed.
   Timer? _timer;
   final _controller = StreamController<OutputDevice?>.broadcast();
   OutputDevice? _last;
+
+  /// Invoked when Android sends AudioManager.ACTION_AUDIO_BECOMING_NOISY
+  /// (e.g. wired headphones, USB-C DAC, or Bluetooth earbuds unplugged).
+  VoidCallback? onBecomingNoisy;
+
+  OutputDeviceProbe({
+    MethodChannel channel = _defaultChannel,
+    bool autoPoll = true,
+  })  : _channel = channel,
+        _autoPoll = autoPoll {
+    _initChannelHandler();
+  }
+
+  void _initChannelHandler() {
+    _channel.setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'onDeviceChanged':
+          await _poll();
+          break;
+        case 'onBecomingNoisy':
+          onBecomingNoisy?.call();
+          break;
+      }
+    });
+  }
 
   Stream<OutputDevice?> get stream async* {
     yield _last;
@@ -28,8 +53,10 @@ class OutputDeviceProbe {
   OutputDevice? get current => _last;
 
   void start() {
-    _timer ??= Timer.periodic(const Duration(seconds: 2), (_) => _poll());
-    unawaited(_poll());
+    if (_autoPoll) {
+      _timer ??= Timer.periodic(const Duration(seconds: 2), (_) => _poll());
+      unawaited(_poll());
+    }
   }
 
   Future<void> _poll() async {
@@ -40,6 +67,17 @@ class OutputDeviceProbe {
       _last = device;
       if (!_controller.isClosed) _controller.add(device);
     }
+  }
+
+  @visibleForTesting
+  void emitForTesting(OutputDevice? device) {
+    _last = device;
+    if (!_controller.isClosed) _controller.add(device);
+  }
+
+  @visibleForTesting
+  void simulateBecomingNoisy() {
+    onBecomingNoisy?.call();
   }
 
   Future<OutputDevice?> read() async {

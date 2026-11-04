@@ -57,7 +57,7 @@ class LiveBitDropCore implements BitDropCore {
   /// be read off a bug report.
   int _streamOpens = 0;
 
-  final _outputProbe = OutputDeviceProbe();
+  final OutputDeviceProbe _outputProbe;
   final _signalPath = BehaviorSubject<SignalPath>.seeded(_unknownPath);
 
   static const _unknownPath = SignalPath(
@@ -93,9 +93,11 @@ class LiveBitDropCore implements BitDropCore {
     CloudLibrary? cloudLibrary,
     String? chunkCacheDir,
     String? artworkCacheDir,
+    OutputDeviceProbe? outputProbe,
   })  : _cloud = cloudLibrary,
         _chunkCacheDir = chunkCacheDir,
-        _artworkCacheDir = artworkCacheDir {
+        _artworkCacheDir = artworkCacheDir,
+        _outputProbe = outputProbe ?? OutputDeviceProbe() {
     try {
       rust.initEngine();
     } catch (e) {
@@ -156,7 +158,30 @@ class LiveBitDropCore implements BitDropCore {
         Timer.periodic(const Duration(seconds: 1), (_) => _pollDiagnostics());
 
     _outputProbe.start();
-    _outputProbeSub = _outputProbe.stream.listen((_) => _recomputeSignalPath());
+    DeviceType? previousType = _outputProbe.current?.type;
+    _outputProbeSub = _outputProbe.stream.listen((device) {
+      final newType = device?.type;
+      final wasEarphone = _isEarphone(previousType);
+      final isNowEarphone = _isEarphone(newType);
+
+      if (wasEarphone && !isNowEarphone) {
+        if (_audioHandler.playbackState.value.playing) {
+          debugPrint(
+            '[core] earphone disconnected ($previousType -> $newType): pausing playback',
+          );
+          unawaited(_audioHandler.pause());
+        }
+      }
+      previousType = newType;
+      _recomputeSignalPath();
+    });
+
+    _outputProbe.onBecomingNoisy = () {
+      if (_audioHandler.playbackState.value.playing) {
+        debugPrint('[core] audio becoming noisy: pausing playback');
+        unawaited(_audioHandler.pause());
+      }
+    };
 
     _playbackSub = _audioHandler.playbackState.listen((state) {
       _recomputeSignalPath();
@@ -1887,6 +1912,11 @@ class LiveBitDropCore implements BitDropCore {
       bufferHistory: List.of(_bufferHistory),
     );
   }
+
+  static bool _isEarphone(DeviceType? type) =>
+      type == DeviceType.usb ||
+      type == DeviceType.wiredAnalog ||
+      type == DeviceType.bluetooth;
 
   @override
   void dispose() {

@@ -1,12 +1,18 @@
 package com.bitdrop.bitdrop
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioMixerAttributes
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.annotation.RequiresApi
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -14,28 +20,103 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : AudioServiceActivity() {
 
-    private val channel = "com.bitdrop/audio_device"
+    private val channelName = "com.bitdrop/audio_device"
+    private var methodChannel: MethodChannel? = null
+    private var noisyReceiver: BroadcastReceiver? = null
+    private var audioDeviceCallback: AudioDeviceCallback? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channel)
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "currentOutput" -> result.success(currentOutput())
-                    "getMixerAttributes" -> result.success(getMixerAttributes())
-                    "setPreferredMixerAttributes" -> {
-                        val sampleRate = call.argument<Int>("sampleRate") ?: 44100
-                        val bitDepth = call.argument<Int>("bitDepth") ?: 16
-                        val bitPerfect = call.argument<Boolean>("bitPerfect") ?: true
-                        result.success(setPreferredMixerAttributes(sampleRate, bitDepth, bitPerfect))
-                    }
-                    "clearPreferredMixerAttributes" -> {
-                        result.success(clearPreferredMixerAttributes())
-                    }
-                    else -> result.notImplemented()
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+        methodChannel = channel
+
+        channel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "currentOutput" -> result.success(currentOutput())
+                "getMixerAttributes" -> result.success(getMixerAttributes())
+                "setPreferredMixerAttributes" -> {
+                    val sampleRate = call.argument<Int>("sampleRate") ?: 44100
+                    val bitDepth = call.argument<Int>("bitDepth") ?: 16
+                    val bitPerfect = call.argument<Boolean>("bitPerfect") ?: true
+                    result.success(setPreferredMixerAttributes(sampleRate, bitDepth, bitPerfect))
+                }
+                "clearPreferredMixerAttributes" -> {
+                    result.success(clearPreferredMixerAttributes())
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+        // Real-time audio device connection / disconnection monitoring
+        val deviceCallback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+                runOnUiThread {
+                    methodChannel?.invokeMethod("onDeviceChanged", null)
                 }
             }
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+                runOnUiThread {
+                    methodChannel?.invokeMethod("onDeviceChanged", null)
+                }
+            }
+        }
+        audioDeviceCallback = deviceCallback
+        am.registerAudioDeviceCallback(deviceCallback, Handler(Looper.getMainLooper()))
+
+        // Broadcast receiver for ACTION_AUDIO_BECOMING_NOISY (unplugging earphones/headphones)
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (AudioManager.ACTION_AUDIO_BECOMING_NOISY == intent?.action) {
+                    runOnUiThread {
+                        methodChannel?.invokeMethod("onBecomingNoisy", null)
+                    }
+                }
+            }
+        }
+        noisyReceiver = receiver
+        val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(receiver, filter)
+        }
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        super.cleanUpFlutterEngine(flutterEngine)
+        val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        audioDeviceCallback?.let {
+            am?.unregisterAudioDeviceCallback(it)
+        }
+        audioDeviceCallback = null
+
+        noisyReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
+        }
+        noisyReceiver = null
+        methodChannel = null
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        audioDeviceCallback?.let {
+            am?.unregisterAudioDeviceCallback(it)
+        }
+        audioDeviceCallback = null
+
+        noisyReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
+        }
+        noisyReceiver = null
+        methodChannel = null
     }
 
     private fun getActiveUsbDevice(am: AudioManager): AudioDeviceInfo? {

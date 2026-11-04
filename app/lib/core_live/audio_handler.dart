@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import '../core_api/enums.dart';
 import 'playback_engine.dart';
@@ -30,6 +31,8 @@ Map<String, dynamic> cloudTrackExtras({
 class BitDropAudioHandler extends BaseAudioHandler
     with SeekHandler, QueueHandler {
   StreamSubscription<rust.EngineEvent>? _eventsSubscription;
+  AudioSession? _audioSession;
+  StreamSubscription<void>? _becomingNoisySub;
   int _playGeneration = 0;
   int _stageGeneration = 0;
   bool _stopped = false;
@@ -53,9 +56,39 @@ class BitDropAudioHandler extends BaseAudioHandler
 
   final PlaybackEngine _engine;
 
-  BitDropAudioHandler({PlaybackEngine? engine})
-      : _engine = engine ?? PlaybackEngine() {
+  BitDropAudioHandler({PlaybackEngine? engine, AudioSession? audioSession})
+      : _engine = engine ?? PlaybackEngine(),
+        _audioSession = audioSession {
     _initEngineEventStream();
+    if (audioSession == null) {
+      _initAudioSession();
+    } else {
+      _listenAudioSession(audioSession);
+    }
+  }
+
+  void _initAudioSession() {
+    try {
+      AudioSession.instance.then((session) async {
+        _audioSession = session;
+        await session.configure(const AudioSessionConfiguration.music());
+        _listenAudioSession(session);
+      }).catchError((e) {
+        debugPrint(
+            '[BitDropAudioHandler] AudioSession init skipped (mock/headless): $e');
+      });
+    } catch (e) {
+      debugPrint('[BitDropAudioHandler] AudioSession init error: $e');
+    }
+  }
+
+  void _listenAudioSession(AudioSession session) {
+    _becomingNoisySub?.cancel();
+    _becomingNoisySub = session.becomingNoisyEventStream.listen((_) {
+      debugPrint(
+          '[BitDropAudioHandler] Earphones disconnected (becoming noisy) -> pause');
+      pause();
+    });
   }
 
   void _initEngineEventStream() {
@@ -612,6 +645,9 @@ class BitDropAudioHandler extends BaseAudioHandler
 
   @override
   Future<void> play() async {
+    try {
+      unawaited(_audioSession?.setActive(true));
+    } catch (_) {}
     if (_stopped || _playbackError != null) {
       await _playCurrentIndex();
       _syncState();
@@ -654,6 +690,8 @@ class BitDropAudioHandler extends BaseAudioHandler
 
   Future<void> dispose() async {
     await stop();
+    await _becomingNoisySub?.cancel();
+    _becomingNoisySub = null;
     await _eventsSubscription?.cancel();
     _eventsSubscription = null;
   }
