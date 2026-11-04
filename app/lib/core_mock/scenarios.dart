@@ -68,12 +68,18 @@ class Scenario {
   /// Resolves the actual format for a given source format under this scenario.
   AudioFormat actualFor(AudioFormat source) {
     if (actualOverride != null) {
+      final sr = actualOverride!.sampleRate;
+      final bd = actualOverride!.bitDepth;
+      final ch = actualOverride!.channels > 0 ? actualOverride!.channels : source.channels;
       return source.copyWith(
-        sampleRate: actualOverride!.sampleRate,
-        bitDepth: actualOverride!.bitDepth,
+        sampleRate: sr,
+        bitDepth: bd,
+        bitrateKbps: actualOverride!.bitrateKbps ?? ((bd * sr * ch) ~/ 1000),
       );
     }
-    return source;
+    return source.copyWith(
+      bitrateKbps: (source.bitDepth * source.sampleRate * source.channels) ~/ 1000,
+    );
   }
 }
 

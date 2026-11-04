@@ -1,5 +1,6 @@
 import 'package:bitdrop/core_api/commands.dart';
 import 'package:bitdrop/core_api/enums.dart';
+import 'package:bitdrop/core_api/models.dart';
 import 'package:bitdrop/core_mock/mock_core.dart';
 import 'package:bitdrop/core_mock/scenarios.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -103,5 +104,33 @@ void main() {
           reason: 'scenario "${s.id}" must explain its verdict');
       c.dispose();
     }
+  });
+
+  test('AudioFormat.effectiveBitrateKbps computes PCM rate or preserves custom bitrate', () {
+    const cd = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
+    expect(cd.effectiveBitrateKbps, 1411);
+
+    const hiRes = AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 96000);
+    expect(hiRes.effectiveBitrateKbps, 4608);
+
+    const ultraHiRes = AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 192000);
+    expect(ultraHiRes.effectiveBitrateKbps, 9216);
+
+    const mp3 = AudioFormat(codec: Codec.mp3, bitDepth: 16, sampleRate: 44100, bitrateKbps: 320);
+    expect(mp3.effectiveBitrateKbps, 320);
+  });
+
+  test('SignalPath reports honest bitrates in bit-perfect and resampled scenarios', () {
+    final bp = core.signalPathValue;
+    // The playing track in Scenarios.bitPerfect is 24/192: 24 * 192000 * 2 / 1000 = 9216 kbps
+    expect(bp.actual.sampleRate, 192000);
+    expect(bp.actual.effectiveBitrateKbps, 9216);
+
+    final resampledCore = MockBitDropCore(scenario: Scenarios.resampled);
+    addTearDown(resampledCore.dispose);
+    final resampledPath = resampledCore.signalPathValue;
+    // Resampled scenario outputs 24-bit 48000 Hz: 24 * 48000 * 2 / 1000 = 2304 kbps
+    expect(resampledPath.actual.sampleRate, 48000);
+    expect(resampledPath.actual.effectiveBitrateKbps, 2304);
   });
 }

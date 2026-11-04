@@ -364,7 +364,9 @@ class _MinimalLayout extends ConsumerWidget {
               _TechLine(label: 'OUTPUT', value: signal!.actual.longLabel),
               _TechLine(
                   label: 'BITRATE',
-                  value: Fmt.kbps(signal!.source.bitrateKbps)),
+                  value: Fmt.kbps(signal!.source.effectiveBitrateKbps > 0
+                      ? signal!.source.effectiveBitrateKbps
+                      : signal!.source.bitrateKbps)),
               _TechLine(
                 label: 'DEVICE',
                 value: signal!.device?.name ?? context.l10n.signalNoDevice,
@@ -464,7 +466,9 @@ class _StudioLayout extends ConsumerWidget {
                       label: 'OUTPUT FORMAT', value: signal!.actual.longLabel),
                   _TechLine(
                       label: 'BITRATE',
-                      value: Fmt.kbps(signal!.source.bitrateKbps)),
+                      value: Fmt.kbps(signal!.source.effectiveBitrateKbps > 0
+                          ? signal!.source.effectiveBitrateKbps
+                          : signal!.source.bitrateKbps)),
                   _TechLine(
                     label: 'BUFFER',
                     value: info == null
@@ -658,9 +662,12 @@ class _SignalChip extends StatelessWidget {
     final isNative = signal.tier == OutputTier.nativeRate;
     final isResampled = signal.tier == OutputTier.resampled;
 
-    final detail = isResampled
+    final rateStr = isResampled
         ? '${Fmt.kHzBare(signal.source.sampleRate)} → ${Fmt.kHz(signal.actual.sampleRate)}'
         : signal.actual.shortLabel;
+    final actualKbps = signal.actual.effectiveBitrateKbps;
+    final detail =
+        actualKbps > 0 ? '$rateStr · ${Fmt.kbps(actualKbps)}' : rateStr;
     final device = signal.device?.name;
 
     final Color statusColor = isBitPerfect

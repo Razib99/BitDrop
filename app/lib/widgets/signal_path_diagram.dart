@@ -172,9 +172,9 @@ class SignalPathDiagram extends StatelessWidget {
                 label: 'Decoder',
                 detail: path.decoderLabel ??
                     '${path.source.codec.label} ${path.source.longLabel}',
-                secondary: path.source.bitrateKbps == null
-                    ? null
-                    : '${Fmt.kbps(path.source.bitrateKbps)} source bitrate',
+                secondary: path.source.effectiveBitrateKbps > 0
+                    ? '${Fmt.kbps(path.source.effectiveBitrateKbps)} source bitrate'
+                    : null,
                 color: c.textSecondary,
               ),
               SignalNode(
@@ -221,9 +221,9 @@ class SignalPathDiagram extends StatelessWidget {
                   OutputTier.unknown => 'Unknown',
                 },
                 secondary: path.formatsMatch
-                    ? 'Requested format matched exactly.'
-                    : 'Requested ${path.requested.shortLabel}, '
-                        'got ${path.actual.shortLabel}.',
+                    ? 'Requested format matched exactly${path.actual.effectiveBitrateKbps > 0 ? ' (${Fmt.kbps(path.actual.effectiveBitrateKbps)})' : ''}.'
+                    : 'Requested ${path.requested.shortLabel}${path.requested.effectiveBitrateKbps > 0 ? ' (${Fmt.kbps(path.requested.effectiveBitrateKbps)})' : ''}, '
+                        'got ${path.actual.shortLabel}${path.actual.effectiveBitrateKbps > 0 ? ' (${Fmt.kbps(path.actual.effectiveBitrateKbps)})' : ''}.',
                 color: tierColor,
                 highlighted: !path.formatsMatch,
               ),
@@ -301,10 +301,13 @@ class _VerdictBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.c;
-    final detail = path.tier == OutputTier.resampled
+    final rateStr = path.tier == OutputTier.resampled
         ? '${Fmt.kHzBare(path.source.sampleRate)} → '
             '${Fmt.kHz(path.actual.sampleRate)}'
         : path.actual.shortLabel;
+    final actualKbps = path.actual.effectiveBitrateKbps;
+    final detail =
+        actualKbps > 0 ? '$rateStr · ${Fmt.kbps(actualKbps)}' : rateStr;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: Spacing.md),
@@ -416,6 +419,14 @@ class _RequestedVsActualState extends State<_RequestedVsActual> {
                   _row(context, 'Sample rate', Fmt.kHz(p.requested.sampleRate),
                       Fmt.kHz(p.actual.sampleRate),
                       mismatch: p.requested.sampleRate != p.actual.sampleRate),
+                  _row(
+                    context,
+                    'Bitrate',
+                    Fmt.kbps(p.requested.effectiveBitrateKbps),
+                    Fmt.kbps(p.actual.effectiveBitrateKbps),
+                    mismatch: p.requested.effectiveBitrateKbps !=
+                        p.actual.effectiveBitrateKbps,
+                  ),
                   _row(context, 'Channels', '${p.requested.channels}',
                       '${p.actual.channels}'),
                   _row(

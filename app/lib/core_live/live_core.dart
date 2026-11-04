@@ -1656,18 +1656,27 @@ class LiveBitDropCore implements BitDropCore {
     final device = _outputProbe.current;
     final codec = _codecFromName(out.sourceCodec);
 
+    final track = _nowPlaying.valueOrNull?.track;
+    final sourceBitDepth = out.sourceBits == 0 ? 16 : out.sourceBits;
+    final sourceChannels = out.sourceChannels == 0 ? 2 : out.sourceChannels;
+
     final source = AudioFormat(
       codec: codec,
-      bitDepth: out.sourceBits == 0 ? 16 : out.sourceBits,
+      bitDepth: sourceBitDepth,
       sampleRate: out.sourceSampleRate,
-      channels: out.sourceChannels == 0 ? 2 : out.sourceChannels,
+      bitrateKbps: track?.format.bitrateKbps,
+      channels: sourceChannels,
     );
 
     // What actually leaves the engine: the stream's rate, not the file's.
+    final actualSampleRate = out.outputSampleRate == 0
+        ? out.sourceSampleRate
+        : out.outputSampleRate;
+    final actualBitrate =
+        (sourceBitDepth * actualSampleRate * sourceChannels) ~/ 1000;
     final actual = source.copyWith(
-      sampleRate: out.outputSampleRate == 0
-          ? out.sourceSampleRate
-          : out.outputSampleRate,
+      sampleRate: actualSampleRate,
+      bitrateKbps: actualBitrate,
     );
 
     final resampled = actual.sampleRate != source.sampleRate ||

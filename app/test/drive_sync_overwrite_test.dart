@@ -136,7 +136,10 @@ void main() {
 
       // Now simulate track deleted completely from Drive (pruned)
       testCloud.onFilesPruned?.call(['new_drive_id']);
-      await Future<void>.delayed(const Duration(milliseconds: 150));
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        if (!pinnedFile.readAsStringSync().contains('new_drive_id')) break;
+      }
 
       final favAfterPrune = favFile.readAsStringSync();
       expect(favAfterPrune.contains('new_drive_id'), isFalse);

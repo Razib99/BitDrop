@@ -40,6 +40,20 @@ class AudioFormat {
 
   bool get isCdQuality => bitDepth == 16 && sampleRate == 44100;
 
+  /// Effective bitrate in kilobits per second.
+  ///
+  /// Returns [bitrateKbps] if specified and positive (e.g. from encoded file metadata),
+  /// or computes the uncompressed PCM stream bitrate from [bitDepth], [sampleRate],
+  /// and [channels].
+  int get effectiveBitrateKbps {
+    if (bitrateKbps != null && bitrateKbps! > 0) return bitrateKbps!;
+    if (bitDepth > 0 && sampleRate > 0) {
+      final ch = channels > 0 ? channels : 2;
+      return (bitDepth * sampleRate * ch) ~/ 1000;
+    }
+    return 0;
+  }
+
   static String _rateLabel(int hz) {
     final khz = hz / 1000.0;
     return khz == khz.roundToDouble()
