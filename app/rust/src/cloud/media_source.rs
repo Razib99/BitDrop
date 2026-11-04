@@ -997,13 +997,15 @@ impl CloudMediaSource {
 
     #[inline]
     fn ensure_bytes_available(&self, chunk_idx: usize, needed_end: u32) -> io::Result<()> {
-        if self.cache.active_generation.load(Ordering::Acquire) != self.generation {
-            return Err(io::Error::new(io::ErrorKind::Interrupted, "Read cancelled"));
-        }
-        // Fast path: requested slice already written to disk / page cache
+        // Fast path: requested slice already written to disk / page cache.
+        // Cached data is always valid regardless of generation changes.
         if self.cache.chunk_written_bytes[chunk_idx].load(Ordering::Acquire) >= needed_end {
             CACHE_HITS.fetch_add(1, Ordering::Relaxed);
             return Ok(());
+        }
+
+        if self.cache.active_generation.load(Ordering::Acquire) != self.generation {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "Read cancelled"));
         }
         CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
 
@@ -1053,13 +1055,20 @@ impl Read for CloudMediaSource {
         let to_read = buf.len().min(max_readable_in_chunk);
         let needed_end = chunk_offset + (to_read as u32);
 
-        if let Err(error) = self.ensure_bytes_available(chunk_idx, needed_end) {
-            if error.kind() == io::ErrorKind::Interrupted {
-                // Surface cancellation once so the decoder can process control commands.
-                // A later read can then join the cache's current fetch generation.
-                self.generation = self.cache.active_generation.load(Ordering::Acquire);
+        loop {
+            match self.ensure_bytes_available(chunk_idx, needed_end) {
+                Ok(()) => break,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                    self.generation = self.cache.active_generation.load(Ordering::Acquire);
+                    if self.cache.readers.load(Ordering::Acquire) > 1 {
+                        // In a shared cache, another reader's seek/cancellation does not
+                        // stall this reader. Re-join the active generation and retry.
+                        continue;
+                    }
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
             }
-            return Err(error);
         }
 
         // Positional zero-seek read directly from unified kernel page cache

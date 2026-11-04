@@ -368,13 +368,67 @@ fn a_large_seek_keeps_another_shared_reader_usable() {
     assert_eq!(&bytes, b"audio");
     assert_eq!(playing.position, 5);
 
-    // An explicit cancellation is reported once, then subsequent reads can recover.
+    // In a shared cache, another seek or cancellation does not stall or interrupt active readers.
     cache.cancel_fetches();
     playing.position = 0;
-    assert_eq!(
-        playing.read(&mut bytes).unwrap_err().kind(),
-        io::ErrorKind::Interrupted
-    );
     playing.read_exact(&mut bytes).unwrap();
     assert_eq!(&bytes, b"audio");
+}
+
+#[test]
+fn two_sources_for_one_file_large_seek_on_one_and_continued_reads_from_other() {
+    let dir = TestDir::new();
+    let cache = SparseTrackCache::new_with_db(
+        "two-sources",
+        &dir.0.join("two_sources.sparse"),
+        &dir.0.join("two_sources.idx"),
+        10 * CHUNK_SIZE,
+        Some(Arc::new(Mutex::new(
+            crate::cloud::db::MetadataDb::new_in_memory().unwrap(),
+        ))),
+    )
+    .unwrap();
+    cache.readers.store(2, Ordering::Release);
+    // Write audio data at chunk 0 and chunk 4
+    write_all_at(&cache.file, b"chunk0_audio_data", 0).unwrap();
+    cache.publish_bytes(0, 17);
+    write_all_at(&cache.file, b"chunk4_audio_data", 4 * CHUNK_SIZE).unwrap();
+    cache.publish_bytes(4, 17);
+
+    let mut reader1 = CloudMediaSource {
+        file_id: "two-sources".into(),
+        position: 0,
+        generation: 1,
+        cache: cache.clone(),
+    };
+    let mut reader2 = CloudMediaSource {
+        file_id: "two-sources".into(),
+        position: 0,
+        generation: 1,
+        cache: cache.clone(),
+    };
+
+    // Reader 1 reads initial bytes
+    let mut buf1 = [0u8; 7];
+    reader1.read_exact(&mut buf1).unwrap();
+    assert_eq!(&buf1, b"chunk0_");
+
+    // Reader 2 performs a large seek to chunk 4 (skipping chunks 0..3)
+    reader2.seek(SeekFrom::Start(4 * CHUNK_SIZE)).unwrap();
+    let mut buf2 = [0u8; 7];
+    reader2.read_exact(&mut buf2).unwrap();
+    assert_eq!(&buf2, b"chunk4_");
+
+    // Even if an explicit cancellation occurs on the shared cache
+    cache.cancel_fetches();
+
+    // Reader 1 continues reading without returning Interrupted or stalling
+    let mut buf1_cont = [0u8; 10];
+    reader1.read_exact(&mut buf1_cont).unwrap();
+    assert_eq!(&buf1_cont, b"audio_data");
+
+    // Reader 2 also continues reading smoothly
+    let mut buf2_cont = [0u8; 10];
+    reader2.read_exact(&mut buf2_cont).unwrap();
+    assert_eq!(&buf2_cont, b"audio_data");
 }
