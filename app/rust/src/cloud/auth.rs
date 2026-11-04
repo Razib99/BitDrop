@@ -34,8 +34,10 @@ async fn refresh_token_with(
 ) -> Option<String> {
     let mut last = LAST_REFRESH.lock().await;
     if let Some((old, new, refreshed_at)) = last.as_ref() {
-        // Reuse only long enough to coalesce a burst of simultaneous failures.
-        if old == rejected && refreshed_at.elapsed() < std::time::Duration::from_secs(5) {
+        if new == rejected {
+            *last = None;
+        } else if old == rejected && refreshed_at.elapsed() < std::time::Duration::from_secs(5) {
+            // Reuse only long enough to coalesce a burst of simultaneous failures.
             return Some(new.clone());
         }
     }
@@ -141,5 +143,37 @@ mod tests {
             .await
             .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn refresh_a_to_b_simulate_b_expiring_then_reject_a_again_verifies_new_refresh() {
+        let _guard = TEST_LOCK.lock().await;
+        // Step 1: Refresh A -> B
+        let token_b = refresh_token_with("token-A", Duration::from_secs(1), |id| {
+            supply_token(id, Some("token-B".into()));
+            true
+        })
+        .await;
+        assert_eq!(token_b.as_deref(), Some("token-B"));
+
+        // Step 2: Simulate B expiring (age out past 5-second reuse window)
+        LAST_REFRESH.lock().await.as_mut().unwrap().2 =
+            std::time::Instant::now() - Duration::from_secs(6);
+
+        // Step 3: Reject A again, verify a new platform refresh occurs (yielding token-C)
+        let token_c = refresh_token_with("token-A", Duration::from_secs(1), |id| {
+            supply_token(id, Some("token-C".into()));
+            true
+        })
+        .await;
+        assert_eq!(token_c.as_deref(), Some("token-C"));
+
+        // Step 4: When token-B itself is rejected, verify cached entry is invalidated immediately
+        let token_d = refresh_token_with("token-B", Duration::from_secs(1), |id| {
+            supply_token(id, Some("token-D".into()));
+            true
+        })
+        .await;
+        assert_eq!(token_d.as_deref(), Some("token-D"));
     }
 }
