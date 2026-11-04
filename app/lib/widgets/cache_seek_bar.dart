@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core_api/commands.dart';
+import '../core_api/enums.dart';
 import '../core_api/models.dart';
 import '../providers/core_providers.dart';
 import '../theme/app_theme.dart';
@@ -61,6 +62,10 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
     final playback = ref.watch(playbackProvider).valueOrNull;
     final buffering = playback is BufferingState ? playback : null;
     final isLoading = playback is LoadingState;
+    final isOffline = playback is ErrorState &&
+        (playback.kind == PlaybackErrorKind.network ||
+            playback.message.toLowerCase().contains('offline') ||
+            playback.message.toLowerCase().contains('network'));
 
     // Release the hold once the engine reports a position near the target.
     ref.listen(positionProvider, (_, next) {
@@ -153,16 +158,13 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
                 style: context.t.monoReadout.copyWith(color: c.textSecondary),
               ),
               const Spacer(),
-              if (buffering != null || isLoading)
+              if (buffering != null || isLoading || isOffline)
                 Flexible(
                   child: BufferingIndicator(
                     state: buffering,
                     isLoading: isLoading,
+                    isOffline: isOffline,
                   ),
-                )
-              else if (info.bufferAheadMs > 0 && info.bufferAheadMs < 6000)
-                Flexible(
-                  child: _LowBufferPill(bufferAheadMs: info.bufferAheadMs),
                 ),
               const Spacer(),
               // Tapping the end time toggles total/remaining.
@@ -271,49 +273,6 @@ class _ScrubBubble extends StatelessWidget {
   }
 }
 
-class _LowBufferPill extends StatelessWidget {
-  const _LowBufferPill({required this.bufferAheadMs});
-
-  final int bufferAheadMs;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.c;
-    final sec = (bufferAheadMs / 1000).toStringAsFixed(1);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: c.surface2,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: c.outline, width: 0.8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 4,
-            height: 4,
-            decoration: BoxDecoration(
-              color: c.textSecondary,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            'BUFFER ${sec}s',
-            style: TextStyle(
-              color: c.textSecondary,
-              fontSize: 9,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
-              fontFamily: 'monospace',
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _SeekPainter extends CustomPainter {
   _SeekPainter({

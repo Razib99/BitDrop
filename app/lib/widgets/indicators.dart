@@ -484,17 +484,19 @@ class _AudioWaveformBars extends StatelessWidget {
 }
 
 /// High-fidelity audiophile buffering indicator with animated waveform bars,
-/// progress fill gauge, and attempt escalation.
+/// progress fill gauge, offline detection, and attempt escalation.
 class BufferingIndicator extends StatefulWidget {
   const BufferingIndicator({
     super.key,
     this.state,
     this.isLoading = false,
+    this.isOffline = false,
     this.compact = false,
   });
 
   final BufferingState? state;
   final bool isLoading;
+  final bool isOffline;
   final bool compact;
 
   @override
@@ -521,11 +523,12 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
   }
 
   String _messageFor(BuildContext context) {
+    if (widget.isOffline) return 'No connection';
     if (widget.isLoading) return 'Loading';
     final state = widget.state;
     if (state == null) return context.l10n.bufferingLabel;
     return state.attempt >= 2
-        ? context.l10n.bufferingSlow
+        ? 'Slow connection'
         : context.l10n.bufferingLabel;
   }
 
@@ -533,21 +536,24 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
   Widget build(BuildContext context) {
     final c = context.c;
     final state = widget.state;
-    final isSlow = state != null && state.attempt >= 2;
-    final statusColor = isSlow ? const Color(0xFFFFA726) : c.accent;
+    final isOffline = widget.isOffline;
+    final isSlow = !isOffline && state != null && state.attempt >= 2;
+    final Color statusColor = isOffline
+        ? c.error
+        : (isSlow ? const Color(0xFFFFA726) : c.accent);
 
     final message = _messageFor(context);
-    final int? pct = (state != null && state.targetMs > 0)
+    final int? pct = (!isOffline && state != null && state.targetMs > 0)
         ? ((state.bufferedMs / state.targetMs) * 100).round().clamp(0, 100)
         : null;
 
-    final detail = state != null
+    final detail = (!isOffline && state != null)
         ? '${(state.bufferedMs / 1000).toStringAsFixed(1)} s of ${(state.targetMs / 1000).toStringAsFixed(0)} s'
-        : null;
+        : (isOffline ? 'Offline' : null);
 
     final accessibilityLabel = state != null ? '$message, $detail' : message;
 
-    final double? progress = state != null && state.targetMs > 0
+    final double? progress = (!isOffline && state != null && state.targetMs > 0)
         ? (state.bufferedMs / state.targetMs).clamp(0.0, 1.0)
         : null;
 
@@ -569,7 +575,13 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _AudioWaveformBars(color: statusColor, animation: _controller),
+            if (isOffline)
+              Padding(
+                padding: const EdgeInsets.only(right: 2),
+                child: Icon(Icons.wifi_off_rounded, size: 12, color: statusColor),
+              )
+            else
+              _AudioWaveformBars(color: statusColor, animation: _controller),
             const SizedBox(width: 5.5),
             Text(
               message.toUpperCase(),
