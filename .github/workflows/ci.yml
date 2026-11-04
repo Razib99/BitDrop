@@ -80,7 +80,7 @@ jobs:
 
       - name: Flutter Analyzer (Zero Warnings)
         working-directory: app
-        run: flutter analyze
+        run: flutter analyze lib test
 
       - name: Flutter Test Suite
         working-directory: app

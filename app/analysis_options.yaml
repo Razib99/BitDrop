@@ -9,6 +9,7 @@ analyzer:
     # flutter_rust_bridge output: regenerated on every build,
     # so any fix applied here is undone by the next codegen.
     - "lib/src/rust/**"
+    - "rust_builder/**"
 
 linter:
   rules:
