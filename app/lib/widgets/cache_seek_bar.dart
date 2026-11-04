@@ -151,49 +151,57 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
         ),
         Padding(
           padding: const EdgeInsets.only(top: Spacing.xxs),
-          child: Row(
-            children: [
-              Text(
-                Fmt.duration(_dragFraction != null ? scrubMs : shownMs),
-                style: context.t.monoReadout.copyWith(color: c.textSecondary),
-              ),
-              const Spacer(),
-              if (buffering != null || isLoading || isOffline)
-                Flexible(
-                  child: BufferingIndicator(
-                    state: buffering,
-                    isLoading: isLoading,
-                    isOffline: isOffline,
+          child: SizedBox(
+            height: 22,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    Fmt.duration(_dragFraction != null ? scrubMs : shownMs),
+                    style: context.t.monoReadout.copyWith(color: c.textSecondary),
                   ),
                 ),
-              const Spacer(),
-              // Tapping the end time toggles total/remaining.
-              InkWell(
-                onTap: () => setState(() => _showRemaining = !_showRemaining),
-                borderRadius: Radii.badgeR,
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                  child: Semantics(
-                    button: true,
-                    label: _showRemaining
-                        ? 'Remaining time. Tap for total duration.'
-                        : 'Total duration. Tap for remaining time.',
-                    excludeSemantics: true,
-                    child: Text(
-                      _showRemaining
-                          ? Fmt.remaining(
-                              _dragFraction != null ? scrubMs : shownMs,
-                              duration,
-                            )
-                          : Fmt.duration(duration),
-                      style: context.t.monoReadout
-                          .copyWith(color: c.textSecondary),
+                if (buffering != null || isLoading || isOffline)
+                  Align(
+                    alignment: Alignment.center,
+                    child: BufferingIndicator(
+                      state: buffering,
+                      isLoading: isLoading,
+                      isOffline: isOffline,
+                    ),
+                  ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: InkWell(
+                    onTap: () => setState(() => _showRemaining = !_showRemaining),
+                    borderRadius: Radii.badgeR,
+                    child: Padding(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      child: Semantics(
+                        button: true,
+                        label: _showRemaining
+                            ? 'Remaining time. Tap for total duration.'
+                            : 'Total duration. Tap for remaining time.',
+                        excludeSemantics: true,
+                        child: Text(
+                          _showRemaining
+                              ? Fmt.remaining(
+                                  _dragFraction != null ? scrubMs : shownMs,
+                                  duration,
+                                )
+                              : Fmt.duration(duration),
+                          style: context.t.monoReadout
+                              .copyWith(color: c.textSecondary),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ],

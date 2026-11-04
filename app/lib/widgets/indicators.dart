@@ -460,13 +460,13 @@ class _AudioWaveformBars extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _bar((math.sin(t) + 1) / 2 * 7 + 4),
-            const SizedBox(width: 2),
-            _bar((math.sin(t + 1.6) + 1) / 2 * 9 + 4),
-            const SizedBox(width: 2),
-            _bar((math.sin(t + 3.2) + 1) / 2 * 6 + 4),
-            const SizedBox(width: 2),
-            _bar((math.sin(t + 4.8) + 1) / 2 * 8 + 4),
+            _bar((math.sin(t) + 1) / 2 * 5 + 3),
+            const SizedBox(width: 1.5),
+            _bar((math.sin(t + 1.6) + 1) / 2 * 7 + 3),
+            const SizedBox(width: 1.5),
+            _bar((math.sin(t + 3.2) + 1) / 2 * 4 + 3),
+            const SizedBox(width: 1.5),
+            _bar((math.sin(t + 4.8) + 1) / 2 * 6 + 3),
           ],
         );
       },
@@ -474,11 +474,11 @@ class _AudioWaveformBars extends StatelessWidget {
   }
 
   Widget _bar(double height) => Container(
-        width: 2.5,
-        height: height.clamp(3.5, 13.0),
+        width: 2.0,
+        height: height.clamp(2.5, 10.0),
         decoration: BoxDecoration(
           color: color,
-          borderRadius: BorderRadius.circular(2),
+          borderRadius: BorderRadius.circular(1.0),
         ),
       );
 }
@@ -649,9 +649,9 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
         ? ((state.bufferedMs / state.targetMs) * 100).round().clamp(0, 100)
         : null;
 
-    final detail = (!isOffline && state != null)
-        ? '${(state.bufferedMs / 1000).toStringAsFixed(1)} s of ${(state.targetMs / 1000).toStringAsFixed(0)} s'
-        : (isOffline ? 'Offline' : null);
+    final detail = (!isOffline && state != null && state.bufferedMs > 0)
+        ? '${(state.bufferedMs / 1000).toStringAsFixed(1)}s'
+        : null;
 
     final accessibilityLabel = state != null ? '$message, $detail' : message;
 
@@ -664,10 +664,11 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
       label: accessibilityLabel,
       excludeSemantics: true,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+        height: 20,
+        padding: const EdgeInsets.symmetric(horizontal: 7),
         decoration: BoxDecoration(
           color: statusColor.withOpacity(0.09),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: statusColor.withOpacity(0.28),
             width: 0.8,
@@ -679,43 +680,45 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
           children: [
             if (isOffline)
               Padding(
-                padding: const EdgeInsets.only(right: 2),
-                child: Icon(Icons.wifi_off_rounded, size: 12, color: statusColor),
+                padding: const EdgeInsets.only(right: 3),
+                child: Icon(Icons.wifi_off_rounded, size: 11, color: statusColor),
               )
             else
               _AudioWaveformBars(color: statusColor, animation: _controller),
-            const SizedBox(width: 5.5),
+            const SizedBox(width: 4.5),
             Text(
               message.toUpperCase(),
               style: TextStyle(
                 color: statusColor,
-                fontSize: 9.5,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.7,
+                fontSize: 8.5,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
                 fontFamily: 'monospace',
+                height: 1.1,
               ),
             ),
             if (!widget.compact && (pct != null || detail != null)) ...[
-              const SizedBox(width: 4),
+              const SizedBox(width: 3.5),
               Text(
                 pct != null ? '$pct%' : detail!,
                 style: TextStyle(
                   color: isSlow
                       ? const Color(0xFFFFCC80)
                       : (c.textSecondary),
-                  fontSize: 9.5,
+                  fontSize: 8.5,
                   fontWeight: FontWeight.w600,
                   fontFamily: 'monospace',
+                  height: 1.1,
                 ),
               ),
             ],
             if (progress != null && !widget.compact) ...[
-              const SizedBox(width: 5),
+              const SizedBox(width: 4.5),
               SizedBox(
-                width: 22,
-                height: 3,
+                width: 18,
+                height: 2.5,
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(1.5),
+                  borderRadius: BorderRadius.circular(1.25),
                   child: LinearProgressIndicator(
                     value: progress,
                     backgroundColor: statusColor.withOpacity(0.20),
