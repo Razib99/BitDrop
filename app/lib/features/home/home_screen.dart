@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -284,19 +285,6 @@ class _ContinueListening extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final c = context.c;
-    final info = ref.watch(positionProvider).valueOrNull;
-    final playback =
-        ref.watch(playbackProvider).valueOrNull ?? const IdleState();
-    final signal = ref.watch(signalPathProvider).valueOrNull;
-    final isPlaying = playback.isPlaying;
-    final isBusy = playback.isBusy;
-
-    final durationMs = info?.durationMs ?? nowPlaying.track.durationMs;
-    final positionMs = info?.positionMs ?? 0;
-    final progress = info?.fraction ??
-        (durationMs > 0 ? (positionMs / durationMs).clamp(0.0, 1.0) : 0.0);
-
     return FutureBuilder<Color>(
       future: PosterColor.resolve(nowPlaying.track.artwork,
           title: nowPlaying.track.albumTitle),
@@ -311,355 +299,367 @@ class _ContinueListening extends ConsumerWidget {
             const SectionHeader(title: 'Continue listening'),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: Radii.cardR,
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      posterColor.withOpacity(0.32),
-                      c.surface2.withOpacity(0.92),
-                      c.surface1,
-                    ],
-                    stops: const [0.0, 0.42, 1.0],
-                  ),
-                  border: Border.all(
-                    color: posterColor.withOpacity(0.45),
-                    width: 1.2,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: posterColor.withOpacity(0.24),
-                      blurRadius: 22,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () => context.push(Routes.nowPlaying),
-                    borderRadius: Radii.cardR,
-                    child: Padding(
-                      padding: const EdgeInsets.all(Spacing.sm),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(
-                            children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    AlbumArtwork(
-                                      artwork: nowPlaying.track.artwork,
-                                      size: 64,
-                                      title: nowPlaying.track.albumTitle,
-                                    ),
-                                    if (isPlaying || isBusy)
-                                      Container(
-                                        width: 64,
-                                        height: 64,
-                                        color: Colors.black.withOpacity(0.40),
-                                        alignment: Alignment.center,
-                                        child: MiniBarsIndicator(
-                                          isDancing: isPlaying,
-                                          color: posterColor,
-                                          barWidth: 2.5,
-                                          barSpacing: 2.0,
-                                          maxHeight: 16.0,
-                                          minHeight: 4.0,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: Spacing.sm),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      nowPlaying.track.title,
-                                      style: context.t.titleSmall.copyWith(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      nowPlaying.track.artist,
-                                      style: context.t.bodySmall.copyWith(
-                                        color: c.textPrimary.withOpacity(0.85),
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    const SizedBox(height: 1),
-                                    Text(
-                                      nowPlaying.contextLabel,
-                                      style: context.t.label.copyWith(
-                                        color: c.textSecondary,
-                                        fontSize: 10,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    const SizedBox(height: 5),
-                                    SingleChildScrollView(
-                                      scrollDirection: Axis.horizontal,
-                                      physics:
-                                          const NeverScrollableScrollPhysics(),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          if (signal != null) ...[
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 5,
-                                                      vertical: 1.5),
-                                              decoration: BoxDecoration(
-                                                color: (signal.tier ==
-                                                            OutputTier
-                                                                .bitPerfect
-                                                        ? c.tierBitPerfect
-                                                        : c.tierResampled)
-                                                    .withOpacity(0.16),
-                                                borderRadius:
-                                                    BorderRadius.circular(4),
-                                                border: Border.all(
-                                                  color: (signal.tier ==
-                                                              OutputTier
-                                                                  .bitPerfect
-                                                          ? c.tierBitPerfect
-                                                          : c.tierResampled)
-                                                      .withOpacity(0.35),
-                                                  width: 0.8,
-                                                ),
-                                              ),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Container(
-                                                    width: 5,
-                                                    height: 5,
-                                                    decoration: BoxDecoration(
-                                                      shape: BoxShape.circle,
-                                                      color: signal.tier ==
-                                                              OutputTier
-                                                                  .bitPerfect
-                                                          ? c.tierBitPerfect
-                                                          : c.tierResampled,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 4),
-                                                  Text(
-                                                    signal.tier.label
-                                                        .toUpperCase(),
-                                                    style: context.t.monoReadout
-                                                        .copyWith(
-                                                      fontSize: 9,
-                                                      fontWeight:
-                                                          FontWeight.w700,
-                                                      color: signal.tier ==
-                                                              OutputTier
-                                                                  .bitPerfect
-                                                          ? c.tierBitPerfect
-                                                          : c.tierResampled,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                            const SizedBox(width: 5),
-                                          ],
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 5, vertical: 1.5),
-                                            decoration: BoxDecoration(
-                                              color: c.surface3,
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                              border: Border.all(
-                                                  color: c.outline, width: 0.8),
-                                            ),
-                                            child: Text(
-                                              '${nowPlaying.track.format.codec.name.toUpperCase()} · ${nowPlaying.track.format.bitDepth}/${nowPlaying.track.format.sampleRate ~/ 1000}',
-                                              style: context.t.monoReadout
-                                                  .copyWith(
-                                                fontSize: 9,
-                                                color: posterColor,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 5),
-                                          Text(
-                                            '${nowPlaying.track.format.effectiveBitrateKbps} kbps',
-                                            style:
-                                                context.t.monoReadout.copyWith(
-                                              fontSize: 9,
-                                              color: c.textSecondary,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: Spacing.xs),
-                              IconButton(
-                                onPressed: () {
-                                  HapticFeedback.selectionClick();
-                                  sendCommand(ref, const Previous());
-                                },
-                                icon: const Icon(Icons.skip_previous_rounded),
-                                iconSize: 20,
-                                visualDensity: VisualDensity.compact,
-                                padding: const EdgeInsets.all(Spacing.xs),
-                                tooltip: context.l10n.actionPrevious,
-                              ),
-                              IconButton(
-                                onPressed: () {
-                                  HapticFeedback.mediumImpact();
-                                  sendCommand(
-                                    ref,
-                                    isPlaying ? const Pause() : const Resume(),
-                                  );
-                                },
-                                icon: isBusy
-                                    ? Stack(
-                                        alignment: Alignment.center,
-                                        children: [
-                                          const SizedBox(
-                                            width: 24,
-                                            height: 24,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                          Icon(
-                                            isPlaying
-                                                ? Icons.pause_rounded
-                                                : Icons.play_arrow_rounded,
-                                            size: 14,
-                                            color: Colors.white,
-                                          ),
-                                        ],
-                                      )
-                                    : Icon(
-                                        isPlaying
-                                            ? Icons.pause_rounded
-                                            : Icons.play_arrow_rounded,
-                                        color: Colors.white,
-                                      ),
-                                iconSize: 22,
-                                style: IconButton.styleFrom(
-                                  backgroundColor: posterColor,
-                                  foregroundColor: Colors.white,
-                                  minimumSize: const Size(40, 40),
-                                  padding: EdgeInsets.zero,
-                                  elevation: 4,
-                                  shadowColor: posterColor.withOpacity(0.45),
-                                ),
-                                tooltip: isPlaying
-                                    ? context.l10n.actionPause
-                                    : context.l10n.actionPlay,
-                              ),
-                              IconButton(
-                                onPressed: () {
-                                  HapticFeedback.selectionClick();
-                                  sendCommand(ref, const Next());
-                                },
-                                icon: const Icon(Icons.skip_next_rounded),
-                                iconSize: 20,
-                                visualDensity: VisualDensity.compact,
-                                padding: const EdgeInsets.all(Spacing.xs),
-                                tooltip: context.l10n.actionNext,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: Spacing.sm),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                Fmt.duration(positionMs),
-                                style: context.t.monoReadout.copyWith(
-                                  fontSize: 10,
-                                  color: posterColor,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              Text(
-                                Fmt.duration(durationMs),
-                                style: context.t.monoReadout.copyWith(
-                                  fontSize: 10,
-                                  color: c.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 3),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(2),
-                            child: SizedBox(
-                              height: 3.5,
-                              child: Stack(
-                                children: [
-                                  Container(color: c.surface3),
-                                  if (info != null &&
-                                      info.bufferAheadMs > 0 &&
-                                      durationMs > 0)
-                                    FractionallySizedBox(
-                                      widthFactor:
-                                          ((positionMs + info.bufferAheadMs) /
-                                                  durationMs)
-                                              .clamp(0.0, 1.0),
-                                      child: Container(
-                                        color: posterColor.withOpacity(0.25),
-                                      ),
-                                    ),
-                                  FractionallySizedBox(
-                                    widthFactor: progress.clamp(0.0, 1.0),
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          colors: [
-                                            posterColor.withOpacity(0.85),
-                                            posterColor,
-                                          ],
-                                        ),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color:
-                                                posterColor.withOpacity(0.6),
-                                            blurRadius: 6,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+              child: _ContinueListeningCard(
+                nowPlaying: nowPlaying,
+                posterColor: posterColor,
               ),
             ),
           ],
+        );
+      },
+    );
+  }
+}
+
+class _ContinueListeningCard extends ConsumerStatefulWidget {
+  const _ContinueListeningCard({
+    required this.nowPlaying,
+    required this.posterColor,
+  });
+
+  final NowPlaying nowPlaying;
+  final Color posterColor;
+
+  @override
+  ConsumerState<_ContinueListeningCard> createState() =>
+      _ContinueListeningCardState();
+}
+
+class _ContinueListeningCardState extends ConsumerState<_ContinueListeningCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 7000),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+    final info = ref.watch(positionProvider).valueOrNull;
+    final playback =
+        ref.watch(playbackProvider).valueOrNull ?? const IdleState();
+    final signal = ref.watch(signalPathProvider).valueOrNull;
+    final isPlaying = playback.isPlaying;
+    final isBusy = playback.isBusy;
+
+    final durationMs = info?.durationMs ?? widget.nowPlaying.track.durationMs;
+    final positionMs = info?.positionMs ?? 0;
+    final progress = info?.fraction ??
+        (durationMs > 0 ? (positionMs / durationMs).clamp(0.0, 1.0) : 0.0);
+
+    const frostedWhite = Color(0xFFF1F5F9);
+    const glyphColor = Color(0xFF0F172A);
+
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final t = _controller.value * 2 * math.pi;
+        final driftX = math.sin(t) * 0.15;
+        final driftY = math.cos(t) * 0.12;
+
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: Radii.cardR,
+            gradient: LinearGradient(
+              begin: Alignment(-1.0 + driftX, -1.0 + driftY),
+              end: Alignment(1.0 - driftX, 1.0 - driftY),
+              colors: [
+                widget.posterColor.withOpacity(0.18),
+                c.surface2.withOpacity(0.88),
+                c.surface1,
+              ],
+              stops: const [0.0, 0.45, 1.0],
+            ),
+            border: Border.all(
+              color: widget.posterColor.withOpacity(0.16),
+              width: 1.0,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: widget.posterColor
+                    .withOpacity(0.12 + math.sin(t).abs() * 0.05),
+                blurRadius: 22,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => context.push(Routes.nowPlaying),
+              borderRadius: Radii.cardR,
+              child: Padding(
+                padding: const EdgeInsets.all(Spacing.sm),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              AlbumArtwork(
+                                artwork: widget.nowPlaying.track.artwork,
+                                size: 56,
+                                title: widget.nowPlaying.track.albumTitle,
+                              ),
+                              if (isPlaying || isBusy)
+                                Container(
+                                  width: 56,
+                                  height: 56,
+                                  color: Colors.black.withOpacity(0.40),
+                                  alignment: Alignment.center,
+                                  child: MiniBarsIndicator(
+                                    isDancing: isPlaying,
+                                    color: widget.posterColor,
+                                    barWidth: 2.2,
+                                    barSpacing: 1.8,
+                                    maxHeight: 14.0,
+                                    minHeight: 4.0,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: Spacing.sm),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                widget.nowPlaying.track.title,
+                                style: context.t.titleSmall.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${widget.nowPlaying.track.artist} · ${widget.nowPlaying.contextLabel}',
+                                style: context.t.bodySmall.copyWith(
+                                  color: c.textSecondary,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: Spacing.xs),
+                        IconButton(
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            sendCommand(ref, const Previous());
+                          },
+                          icon: const Icon(Icons.skip_previous_rounded),
+                          iconSize: 20,
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.all(Spacing.xs),
+                          tooltip: context.l10n.actionPrevious,
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            HapticFeedback.mediumImpact();
+                            sendCommand(
+                              ref,
+                              isPlaying ? const Pause() : const Resume(),
+                            );
+                          },
+                          icon: isBusy
+                              ? Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: frostedWhite,
+                                      ),
+                                    ),
+                                    Icon(
+                                      isPlaying
+                                          ? Icons.pause_rounded
+                                          : Icons.play_arrow_rounded,
+                                      size: 13,
+                                      color: glyphColor,
+                                    ),
+                                  ],
+                                )
+                              : Icon(
+                                  isPlaying
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  color: glyphColor,
+                                ),
+                          iconSize: 22,
+                          style: IconButton.styleFrom(
+                            backgroundColor: frostedWhite,
+                            foregroundColor: glyphColor,
+                            minimumSize: const Size(38, 38),
+                            padding: EdgeInsets.zero,
+                            elevation: 1,
+                            shadowColor: Colors.white.withOpacity(0.10),
+                          ),
+                          tooltip: isPlaying
+                              ? context.l10n.actionPause
+                              : context.l10n.actionPlay,
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            sendCommand(ref, const Next());
+                          },
+                          icon: const Icon(Icons.skip_next_rounded),
+                          iconSize: 20,
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.all(Spacing.xs),
+                          tooltip: context.l10n.actionNext,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: Spacing.xs + 3),
+                    Row(
+                      children: [
+                        if (signal != null) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1.5),
+                            decoration: BoxDecoration(
+                              color: (signal.tier == OutputTier.bitPerfect
+                                      ? c.tierBitPerfect
+                                      : c.tierResampled)
+                                  .withOpacity(0.16),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: (signal.tier == OutputTier.bitPerfect
+                                        ? c.tierBitPerfect
+                                        : c.tierResampled)
+                                    .withOpacity(0.35),
+                                width: 0.8,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 5,
+                                  height: 5,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: signal.tier == OutputTier.bitPerfect
+                                        ? c.tierBitPerfect
+                                        : c.tierResampled,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  signal.tier.label.toUpperCase(),
+                                  style: context.t.monoReadout.copyWith(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                    color: signal.tier == OutputTier.bitPerfect
+                                        ? c.tierBitPerfect
+                                        : c.tierResampled,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                        ],
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: c.surface3,
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: c.outline, width: 0.8),
+                          ),
+                          child: Text(
+                            '${widget.nowPlaying.track.format.codec.name.toUpperCase()} · ${widget.nowPlaying.track.format.bitDepth}/${widget.nowPlaying.track.format.sampleRate ~/ 1000}',
+                            style: context.t.monoReadout.copyWith(
+                              fontSize: 9,
+                              color: widget.posterColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          '${widget.nowPlaying.track.format.effectiveBitrateKbps} kbps',
+                          style: context.t.monoReadout.copyWith(
+                            fontSize: 9,
+                            color: c.textSecondary,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          '${Fmt.duration(positionMs)} / ${Fmt.duration(durationMs)}',
+                          style: context.t.monoReadout.copyWith(
+                            fontSize: 10,
+                            color: c.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: SizedBox(
+                        height: 3.5,
+                        child: Stack(
+                          children: [
+                            Container(color: c.surface3),
+                            if (info != null &&
+                                info.bufferAheadMs > 0 &&
+                                durationMs > 0)
+                              FractionallySizedBox(
+                                widthFactor: ((positionMs + info.bufferAheadMs) /
+                                        durationMs)
+                                    .clamp(0.0, 1.0),
+                                child: Container(
+                                  color: widget.posterColor.withOpacity(0.20),
+                                ),
+                              ),
+                            FractionallySizedBox(
+                              widthFactor: progress.clamp(0.0, 1.0),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      widget.posterColor.withOpacity(0.70),
+                                      widget.posterColor,
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         );
       },
     );

@@ -41,7 +41,7 @@ class TransportControls extends ConsumerWidget {
             HapticFeedback.selectionClick();
             sendCommand(ref, const Previous());
           },
-          icon: const Icon(Icons.skip_previous),
+          icon: const Icon(Icons.skip_previous_rounded),
           iconSize: compact ? 28 : 34,
           tooltip: context.l10n.actionPrevious,
         ),
@@ -51,7 +51,7 @@ class TransportControls extends ConsumerWidget {
             HapticFeedback.selectionClick();
             sendCommand(ref, const Next());
           },
-          icon: const Icon(Icons.skip_next),
+          icon: const Icon(Icons.skip_next_rounded),
           iconSize: compact ? 28 : 34,
           tooltip: context.l10n.actionNext,
         ),
@@ -86,7 +86,6 @@ class _PlayButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final c = context.c;
     final state = playback;
     final isPlaying = state is PlayingState;
     final busy = state.isBusy;
@@ -95,15 +94,30 @@ class _PlayButton extends ConsumerWidget {
         ? (state.bufferedMs / state.targetMs).clamp(0.0, 1.0)
         : null;
 
+    // Soft Frosted White with reduced gentle glow
+    const frostedWhite = Color(0xFFF1F5F9);
+    const glyphColor = Color(0xFF0F172A);
+
     return Semantics(
       button: true,
       label: busy
           ? context.l10n.bufferingLabel
           : (isPlaying ? context.l10n.actionPause : context.l10n.actionPlay),
       excludeSemantics: true,
-      child: SizedBox(
+      child: Container(
         width: size,
         height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          boxShadow: [
+            // Reduced, subtle glow per user preference
+            BoxShadow(
+              color: Colors.white.withOpacity(0.09),
+              blurRadius: 8,
+              spreadRadius: 0,
+            ),
+          ],
+        ),
         child: Stack(
           alignment: Alignment.center,
           children: [
@@ -114,12 +128,12 @@ class _PlayButton extends ConsumerWidget {
                 child: CircularProgressIndicator(
                   value: progress,
                   strokeWidth: 3,
-                  color: c.accent,
-                  backgroundColor: c.outline,
+                  color: frostedWhite,
+                  backgroundColor: Colors.white.withOpacity(0.14),
                 ),
               ),
             Material(
-              color: c.accent,
+              color: frostedWhite,
               shape: const CircleBorder(),
               child: InkWell(
                 customBorder: const CircleBorder(),
@@ -131,9 +145,9 @@ class _PlayButton extends ConsumerWidget {
                   width: size - (busy ? 10 : 0),
                   height: size - (busy ? 10 : 0),
                   child: Icon(
-                    isPlaying ? Icons.pause : Icons.play_arrow,
-                    color: c.onAccent,
-                    size: (size - (busy ? 10 : 0)) * 0.5,
+                    isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    color: glyphColor,
+                    size: (size - (busy ? 10 : 0)) * 0.52,
                   ),
                 ),
               ),

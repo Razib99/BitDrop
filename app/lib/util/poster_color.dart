@@ -12,16 +12,16 @@ import '../providers/core_providers.dart';
 class PosterColor {
   static final Map<String, Color> _cache = {};
 
-  /// Normalizes and boosts a base color to produce a radiant, vibrant poster aura.
+  /// Normalizes and softens a base color to produce a gentle, velvety ambient aura.
   static Color enhance(Color base) {
     final hsl = HSLColor.fromColor(base);
     // If the color is grey or almost grayscale, preserve with subtle cool warmth
     if (hsl.saturation < 0.08) {
       return base.withOpacity(1.0);
     }
-    // Boost saturation and normalize lightness for dark mode glow
-    final s = math.max(0.60, math.min(1.0, hsl.saturation * 1.35));
-    final l = hsl.lightness.clamp(0.42, 0.58);
+    // Soft, desaturated luminescence tailored for dark OLED backgrounds
+    final s = (hsl.saturation * 0.72).clamp(0.26, 0.44);
+    final l = hsl.lightness.clamp(0.24, 0.36);
     return hsl.withSaturation(s).withLightness(l).toColor();
   }
 

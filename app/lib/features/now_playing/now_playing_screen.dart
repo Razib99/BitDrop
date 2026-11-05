@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -592,34 +593,15 @@ class _SwipeableArt extends ConsumerWidget {
             child: Stack(
               alignment: Alignment.center,
               children: [
-                // Ambient Glassmorphic Aura Glow behind the music poster
-                Container(
-                  width: size * 0.88,
-                  height: size * 0.88,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(size * 0.12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: posterColor.withOpacity(0.48),
-                        blurRadius: 52,
-                        spreadRadius: 8,
-                        offset: const Offset(0, 10),
-                      ),
-                      BoxShadow(
-                        color: posterColor.withOpacity(0.26),
-                        blurRadius: 90,
-                        spreadRadius: 24,
-                      ),
-                    ],
-                  ),
-                ),
-                // Music Poster with Glassmorphic Accent Border
+                // Option C: Liquid Mesh Aura Drift behind the music poster
+                _LiquidMeshAura(size: size, color: posterColor),
+                // Music Poster with Soft Glassmorphic Accent Border
                 Container(
                   decoration: BoxDecoration(
                     borderRadius: Radii.heroArtR,
                     border: Border.all(
-                      color: posterColor.withOpacity(0.40),
-                      width: 1.5,
+                      color: posterColor.withOpacity(0.18),
+                      width: 1.0,
                     ),
                   ),
                   child: Hero(
@@ -640,6 +622,113 @@ class _SwipeableArt extends ConsumerWidget {
               ],
             ),
           ),
+        );
+      },
+    );
+  }
+}
+
+/// Liquid Mesh Aura Drift: harmonic dual-blob fluid drift creating an organic,
+/// floating ambient backlight behind the music poster.
+class _LiquidMeshAura extends StatefulWidget {
+  const _LiquidMeshAura({
+    required this.size,
+    required this.color,
+  });
+
+  final double size;
+  final Color color;
+
+  @override
+  State<_LiquidMeshAura> createState() => _LiquidMeshAuraState();
+}
+
+class _LiquidMeshAuraState extends State<_LiquidMeshAura>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 7500),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final t = _controller.value * 2 * math.pi;
+        final dx1 = math.sin(t) * 12.0;
+        final dy1 = math.cos(t) * 9.0;
+        final dx2 = -math.cos(t * 0.75) * 14.0;
+        final dy2 = -math.sin(t * 0.75) * 10.0;
+
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            // Soft atmospheric base wash
+            Container(
+              width: widget.size * 0.88,
+              height: widget.size * 0.88,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(widget.size * 0.16),
+                boxShadow: [
+                  BoxShadow(
+                    color: widget.color.withOpacity(0.18),
+                    blurRadius: 75,
+                    spreadRadius: 18,
+                  ),
+                ],
+              ),
+            ),
+            // Primary liquid mesh drift blob
+            Transform.translate(
+              offset: Offset(dx1, dy1),
+              child: Container(
+                width: widget.size * 0.82,
+                height: widget.size * 0.82,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(widget.size * 0.14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: widget.color.withOpacity(0.24),
+                      blurRadius: 48,
+                      spreadRadius: 6,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Secondary counter-drifting harmonic blob
+            Transform.translate(
+              offset: Offset(dx2, dy2),
+              child: Container(
+                width: widget.size * 0.76,
+                height: widget.size * 0.76,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(widget.size * 0.12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: widget.color.withOpacity(0.15),
+                      blurRadius: 62,
+                      spreadRadius: 10,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -945,8 +1034,8 @@ class _AdaptiveBackground extends StatelessWidget {
               center: const Alignment(0.0, -0.45),
               radius: 1.25,
               colors: [
-                posterColor.withOpacity(dark ? 0.35 : 0.22),
-                posterColor.withOpacity(dark ? 0.10 : 0.05),
+                posterColor.withOpacity(dark ? 0.20 : 0.12),
+                posterColor.withOpacity(dark ? 0.05 : 0.02),
                 c.bg,
               ],
               stops: const [0.0, 0.55, 1.0],
