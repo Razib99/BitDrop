@@ -69,13 +69,21 @@ class ExpandingPlayerSheet extends ConsumerWidget {
       );
     }
 
-    final screenHeight = MediaQuery.sizeOf(context).height;
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final topSafeArea = MediaQuery.paddingOf(context).top;
-    final bottomSafeArea = MediaQuery.paddingOf(context).bottom;
+    final size = MediaQuery.sizeOf(context);
+    final screenHeight = size.height;
+    final screenWidth = size.width;
+    final padding = MediaQuery.paddingOf(context);
+    final topSafeArea = padding.top;
+    final bottomSafeArea = padding.bottom;
+    final leftSafeArea = padding.left;
+    final rightSafeArea = padding.right;
+
+    final isLandscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape ||
+        screenWidth > screenHeight;
 
     // Mobile nav bar height including safe area
-    final navBarHeight = useRail ? 0.0 : (80.0 + bottomSafeArea);
+    final navBarHeight = useRail ? 0.0 : (64.0 + bottomSafeArea);
 
     // Compute sheet height and bottom offset
     const miniHeight = Sizes.miniPlayerHeight;
@@ -144,8 +152,8 @@ class ExpandingPlayerSheet extends ConsumerWidget {
                   ),
                 ],
                 gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
+                  begin: isLandscape ? Alignment.centerLeft : Alignment.topCenter,
+                  end: isLandscape ? Alignment.centerRight : Alignment.bottomCenter,
                   colors: [
                     Color.lerp(c.surface2, topColor, p)!,
                     Color.lerp(c.surface2, midColor, p)!,
@@ -182,8 +190,8 @@ class ExpandingPlayerSheet extends ConsumerWidget {
                       ),
                     ),
 
-                    // Top pull handle (centered, visible during full or drag)
-                    if (p > 0.08)
+                    // Top pull handle (centered, visible during full or drag in portrait)
+                    if (p > 0.08 && !isLandscape)
                       Positioned(
                         top: topSafeArea > 0 ? (topSafeArea * (1.0 - p) + 8.0) : 8.0,
                         left: 0,
@@ -207,6 +215,8 @@ class ExpandingPlayerSheet extends ConsumerWidget {
                       _MiniBarLayer(
                         nowPlaying: np,
                         progress: p,
+                        leftSafeArea: leftSafeArea,
+                        rightSafeArea: rightSafeArea,
                       ),
 
                     // ========================================================
@@ -216,8 +226,13 @@ class ExpandingPlayerSheet extends ConsumerWidget {
                       _FullPlayerLayer(
                         nowPlaying: np,
                         progress: p,
+                        screenWidth: screenWidth,
+                        screenHeight: screenHeight,
                         topSafeArea: topSafeArea,
                         bottomSafeArea: bottomSafeArea,
+                        leftSafeArea: leftSafeArea,
+                        rightSafeArea: rightSafeArea,
+                        isLandscape: isLandscape,
                         onCollapse: () => controller.collapse(),
                       ),
 
@@ -228,7 +243,12 @@ class ExpandingPlayerSheet extends ConsumerWidget {
                       nowPlaying: np,
                       progress: p,
                       screenWidth: screenWidth,
+                      screenHeight: screenHeight,
                       topSafeArea: topSafeArea,
+                      bottomSafeArea: bottomSafeArea,
+                      leftSafeArea: leftSafeArea,
+                      rightSafeArea: rightSafeArea,
+                      isLandscape: isLandscape,
                     ),
                   ],
                 ),
@@ -247,10 +267,14 @@ class _MiniBarLayer extends ConsumerWidget {
   const _MiniBarLayer({
     required this.nowPlaying,
     required this.progress,
+    required this.leftSafeArea,
+    required this.rightSafeArea,
   });
 
   final NowPlaying nowPlaying;
   final double progress;
+  final double leftSafeArea;
+  final double rightSafeArea;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -303,7 +327,10 @@ class _MiniBarLayer extends ConsumerWidget {
 
                   // Mini Content Row
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
+                    padding: EdgeInsets.only(
+                      left: leftSafeArea + Spacing.sm,
+                      right: rightSafeArea + Spacing.sm,
+                    ),
                     child: Row(
                       children: [
                         // Space reserved for the morphing artwork anchor
@@ -435,29 +462,55 @@ class _MorphingArtwork extends ConsumerWidget {
     required this.nowPlaying,
     required this.progress,
     required this.screenWidth,
+    required this.screenHeight,
     required this.topSafeArea,
+    required this.bottomSafeArea,
+    required this.leftSafeArea,
+    required this.rightSafeArea,
+    required this.isLandscape,
   });
 
   final NowPlaying nowPlaying;
   final double progress;
   final double screenWidth;
+  final double screenHeight;
   final double topSafeArea;
+  final double bottomSafeArea;
+  final double leftSafeArea;
+  final double rightSafeArea;
+  final bool isLandscape;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final artEase = Curves.easeOutCubic.transform(progress);
 
-    final heroSize = (screenWidth - Spacing.xl * 2).clamp(180.0, 320.0);
+    final double heroSize;
+    final double fullLeft;
+    final double fullTop;
+
+    if (isLandscape) {
+      final availHeight = (screenHeight - topSafeArea - bottomSafeArea - 48.0)
+          .clamp(120.0, 360.0);
+      heroSize = (availHeight - 16.0).clamp(140.0, 270.0);
+      final safeWidth = screenWidth - leftSafeArea - rightSafeArea;
+      final leftPaneWidth = safeWidth * 0.42;
+      fullLeft = leftSafeArea + (leftPaneWidth - heroSize) / 2;
+      fullTop = topSafeArea +
+          48.0 +
+          ((screenHeight - topSafeArea - bottomSafeArea - 48.0) - heroSize) / 2;
+    } else {
+      heroSize = (screenWidth - Spacing.xl * 2).clamp(180.0, 320.0);
+      fullLeft = (screenWidth - heroSize) / 2;
+      fullTop = topSafeArea + 56.0;
+    }
 
     // Mini coordinates
-    const miniLeft = 12.0;
+    final miniLeft = leftSafeArea + 12.0;
     const miniTop = 10.0;
     const miniSize = 44.0;
     const miniRadius = 8.0;
 
     // Full hero coordinates
-    final fullLeft = (screenWidth - heroSize) / 2;
-    final fullTop = topSafeArea + 56.0;
     const fullRadius = Radii.heroArt;
 
     final curLeft = lerpDouble(miniLeft, fullLeft, artEase)!;
@@ -519,15 +572,25 @@ class _FullPlayerLayer extends ConsumerWidget {
   const _FullPlayerLayer({
     required this.nowPlaying,
     required this.progress,
+    required this.screenWidth,
+    required this.screenHeight,
     required this.topSafeArea,
     required this.bottomSafeArea,
+    required this.leftSafeArea,
+    required this.rightSafeArea,
+    required this.isLandscape,
     required this.onCollapse,
   });
 
   final NowPlaying nowPlaying;
   final double progress;
+  final double screenWidth;
+  final double screenHeight;
   final double topSafeArea;
   final double bottomSafeArea;
+  final double leftSafeArea;
+  final double rightSafeArea;
+  final bool isLandscape;
   final VoidCallback onCollapse;
 
   @override
@@ -553,6 +616,131 @@ class _FullPlayerLayer extends ConsumerWidget {
 
     // Bottom Actions (0.80 to 1.0)
     final actionsP = ((progress - 0.80) / 0.20).clamp(0.0, 1.0);
+
+    if (isLandscape) {
+      final safeWidth = screenWidth - leftSafeArea - rightSafeArea;
+      final leftPaneWidth = safeWidth * 0.42;
+      final rightPaneLeft = leftSafeArea + leftPaneWidth + Spacing.md;
+
+      return Stack(
+        children: [
+          // Top Bar (Collapse button, playing from context, menu)
+          Positioned(
+            top: topSafeArea,
+            left: leftSafeArea,
+            right: rightSafeArea,
+            child: Opacity(
+              opacity: topP,
+              child: Transform.translate(
+                offset: Offset(0, (1.0 - topP) * -16.0),
+                child: IgnorePointer(
+                  ignoring: topP < 0.8,
+                  child: NowPlayingTopBar(
+                    nowPlaying: nowPlaying,
+                    onCollapse: onCollapse,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // Right Pane Controls (Side-by-side with album art)
+          Positioned(
+            left: rightPaneLeft,
+            right: rightSafeArea + Spacing.lg,
+            top: topSafeArea + 48.0,
+            bottom: bottomSafeArea + Spacing.xs,
+            child: IgnorePointer(
+              ignoring: progress < 0.75,
+              child: Center(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Title Block
+                      Opacity(
+                        opacity: titleP,
+                        child: Transform.translate(
+                          offset: Offset(0, (1.0 - titleP) * 12.0),
+                          child: NowPlayingTitleBlock(
+                            nowPlaying: nowPlaying,
+                            alignStart: true,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: Spacing.xs),
+
+                      // Bit-Perfect Signal Chip
+                      if (signal != null)
+                        Opacity(
+                          opacity: signalP,
+                          child: Transform.translate(
+                            offset: Offset(0, (1.0 - signalP) * 10.0),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: Spacing.xl),
+                                child: NowPlayingSignalChip(signal: signal),
+                              ),
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: Spacing.xs),
+
+                      // Frosted White Seek Bar
+                      Opacity(
+                        opacity: seekP,
+                        child: Transform.translate(
+                          offset: Offset(0, (1.0 - seekP) * 10.0),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: Spacing.xl),
+                            child: CacheSeekBar(
+                              durationMs: nowPlaying.track.durationMs,
+                              activeColor: const Color(0xFFF1F5F9),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: Spacing.xs),
+
+                      // Transport Controls (compact)
+                      Opacity(
+                        opacity: transportP,
+                        child: Transform.scale(
+                          scale: transportScale,
+                          child: Transform.translate(
+                            offset: Offset(0, (1.0 - transportP) * 10.0),
+                            child: const Padding(
+                              padding:
+                                  EdgeInsets.symmetric(horizontal: Spacing.md),
+                              child: TransportControls(compact: true),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: Spacing.xs),
+
+                      // Bottom Actions (Queue, EQ, Output, Lyrics, More)
+                      Opacity(
+                        opacity: actionsP,
+                        child: Transform.translate(
+                          offset: Offset(0, (1.0 - actionsP) * 8.0),
+                          child: NowPlayingBottomActions(nowPlaying: nowPlaying),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
 
     return Stack(
       children: [
@@ -613,7 +801,8 @@ class _FullPlayerLayer extends ConsumerWidget {
                   child: Transform.translate(
                     offset: Offset(0, (1.0 - seekP) * 12.0),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: Spacing.xl),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: Spacing.xl),
                       child: CacheSeekBar(
                         durationMs: nowPlaying.track.durationMs,
                         activeColor: const Color(0xFFF1F5F9),

@@ -54,7 +54,8 @@ class _AppShellState extends ConsumerState<AppShell>
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
-    final useRail = width >= 840;
+    final shortestSide = MediaQuery.sizeOf(context).shortestSide;
+    final useRail = width >= 840 && shortestSide >= 600;
     final l = context.l10n;
 
     final destinations = <_Dest>[
@@ -73,6 +74,9 @@ class _AppShellState extends ConsumerState<AppShell>
     final sheetController = ref.watch(playerSheetControllerProvider);
     final sheetProgress = sheetController.progress;
 
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final navBarHeight = 64.0 + bottomInset;
+
     final body = Column(
       children: [
         const _BannerStack(),
@@ -81,7 +85,9 @@ class _AppShellState extends ConsumerState<AppShell>
             padding: EdgeInsets.only(
               bottom: useRail
                   ? 0.0
-                  : (isHome ? 80.0 : (80.0 + Sizes.miniPlayerHeight)),
+                  : (isHome
+                      ? navBarHeight
+                      : (navBarHeight + Sizes.miniPlayerHeight)),
             ),
             child: widget.child,
           ),
@@ -138,23 +144,27 @@ class _AppShellState extends ConsumerState<AppShell>
                   bottom: 0,
                   child: Transform.translate(
                     offset: Offset(0, sheetProgress * 120.0),
-                    child: NavigationBar(
-                      selectedIndex: index,
-                      onDestinationSelected: (i) {
-                        if (destinations[i].path == Routes.library) {
-                          ref.read(libraryTabProvider.notifier).state =
-                              LibraryTab.tracks;
-                        }
-                        context.go(destinations[i].path);
-                      },
-                      destinations: [
-                        for (final d in destinations)
-                          NavigationDestination(
-                            icon: Icon(d.icon),
-                            selectedIcon: Icon(d.selectedIcon),
-                            label: d.label,
-                          ),
-                      ],
+                    child: MediaQuery.removePadding(
+                      context: context,
+                      removeTop: true,
+                      child: NavigationBar(
+                        selectedIndex: index,
+                        onDestinationSelected: (i) {
+                          if (destinations[i].path == Routes.library) {
+                            ref.read(libraryTabProvider.notifier).state =
+                                LibraryTab.tracks;
+                          }
+                          context.go(destinations[i].path);
+                        },
+                        destinations: [
+                          for (final d in destinations)
+                            NavigationDestination(
+                              icon: Icon(d.icon),
+                              selectedIcon: Icon(d.selectedIcon),
+                              label: d.label,
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
