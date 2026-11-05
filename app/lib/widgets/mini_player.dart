@@ -33,6 +33,7 @@ class MiniPlayer extends ConsumerWidget {
         ref.watch(playbackProvider).valueOrNull ?? const IdleState();
     final signal = ref.watch(signalPathProvider).valueOrNull;
     final isPlaying = playback is PlayingState;
+    final isBusy = playback is BufferingState || playback is LoadingState;
 
     return Material(
       color: c.surface2,
@@ -53,11 +54,11 @@ class MiniPlayer extends ConsumerWidget {
               return false;
             },
             background: const _SkipHint(
-              icon: Icons.skip_previous,
+              icon: Icons.skip_previous_rounded,
               alignment: Alignment.centerLeft,
             ),
             secondaryBackground: const _SkipHint(
-              icon: Icons.skip_next,
+              icon: Icons.skip_next_rounded,
               alignment: Alignment.centerRight,
             ),
             child: GestureDetector(
@@ -124,31 +125,67 @@ class MiniPlayer extends ConsumerWidget {
                             ],
                           ),
                         ),
-                        if (playback is BufferingState)
-                          Padding(
-                            padding: const EdgeInsets.only(right: Spacing.xs),
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: c.accent,
-                                backgroundColor: c.outline,
-                              ),
-                            ),
-                          ),
+                        IconButton(
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            sendCommand(ref, const Previous());
+                          },
+                          icon: const Icon(Icons.skip_previous_rounded),
+                          iconSize: 22,
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.all(Spacing.xs),
+                          tooltip: context.l10n.actionPrevious,
+                        ),
                         IconButton(
                           onPressed: () {
                             HapticFeedback.mediumImpact();
                             sendCommand(ref,
                                 isPlaying ? const Pause() : const Resume());
                           },
-                          icon:
-                              Icon(isPlaying ? Icons.pause : Icons.play_arrow),
+                          icon: isBusy
+                              ? Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: c.accent,
+                                        backgroundColor: c.outline,
+                                      ),
+                                    ),
+                                    Icon(
+                                      isPlaying
+                                          ? Icons.pause_rounded
+                                          : Icons.play_arrow_rounded,
+                                      size: 13,
+                                      color: c.accent,
+                                    ),
+                                  ],
+                                )
+                              : Icon(
+                                  isPlaying
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                ),
                           iconSize: 28,
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.all(Spacing.xs),
                           tooltip: isPlaying
                               ? context.l10n.actionPause
                               : context.l10n.actionPlay,
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            sendCommand(ref, const Next());
+                          },
+                          icon: const Icon(Icons.skip_next_rounded),
+                          iconSize: 22,
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.all(Spacing.xs),
+                          tooltip: context.l10n.actionNext,
                         ),
                       ],
                     ),
