@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -11,7 +10,7 @@ import '../features/equalizer/autoeq_sheet.dart';
 import '../features/equalizer/equalizer_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/library/library_screen.dart';
-import '../features/now_playing/now_playing_screen.dart';
+import '../providers/player_sheet_provider.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/output/output_screen.dart';
 import '../features/playlists/playlist_screen.dart';
@@ -68,26 +67,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: Routes.nowPlaying,
-        pageBuilder: (context, state) => CustomTransitionPage<void>(
-          key: state.pageKey,
-          child: const NowPlayingScreen(),
-          transitionDuration: const Duration(milliseconds: 300),
-          reverseTransitionDuration: const Duration(milliseconds: 250),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            final curved = CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeOutCubic,
-              reverseCurve: Curves.easeInCubic,
-            );
-            return SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0.0, 1.0),
-                end: Offset.zero,
-              ).animate(curved),
-              child: child,
-            );
-          },
-        ),
+        redirect: (context, state) {
+          ref.read(playerSheetControllerProvider).expand();
+          return Routes.home;
+        },
       ),
       GoRoute(path: Routes.queue, builder: (c, s) => const QueueScreen()),      GoRoute(
         path: Routes.equalizer,

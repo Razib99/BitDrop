@@ -10,6 +10,7 @@ import '../../core_api/models.dart';
 import '../../core_api/queries.dart';
 import '../../l10n/l10n.dart';
 import '../../providers/core_providers.dart';
+import '../../providers/player_sheet_provider.dart';
 import '../storage/google_drive_service.dart';
 import '../../routing/routes.dart';
 import '../../theme/app_theme.dart';
@@ -400,11 +401,18 @@ class _ContinueListeningCardState extends ConsumerState<_ContinueListeningCard>
           ),
           child: Material(
             color: Colors.transparent,
-            child: InkWell(
-              onTap: () => context.push(Routes.nowPlaying),
-              borderRadius: Radii.cardR,
-              child: Padding(
-                padding: const EdgeInsets.all(Spacing.sm),
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onVerticalDragUpdate: (d) {
+                if ((d.primaryDelta ?? 0) < -6) {
+                  ref.read(playerSheetControllerProvider).expand();
+                }
+              },
+              child: InkWell(
+                onTap: () => ref.read(playerSheetControllerProvider).expand(),
+                borderRadius: Radii.cardR,
+                child: Padding(
+                  padding: const EdgeInsets.all(Spacing.sm),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
@@ -663,7 +671,8 @@ class _ContinueListeningCardState extends ConsumerState<_ContinueListeningCard>
               ),
             ),
           ),
-        );
+        ),
+      );
       },
     );
   }

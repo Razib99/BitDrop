@@ -7,6 +7,7 @@ import '../core_api/commands.dart';
 import '../core_api/enums.dart';
 import '../core_api/models.dart';
 import '../providers/core_providers.dart';
+import '../providers/player_sheet_provider.dart';
 import '../routing/routes.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
@@ -64,11 +65,11 @@ class MiniPlayer extends ConsumerWidget {
             child: GestureDetector(
               onVerticalDragEnd: (d) {
                 if ((d.primaryVelocity ?? 0) < -120) {
-                  context.push(Routes.nowPlaying);
+                  ref.read(playerSheetControllerProvider).expand();
                 }
               },
               child: InkWell(
-                onTap: () => context.push(Routes.nowPlaying),
+                onTap: () => ref.read(playerSheetControllerProvider).expand(),
                 onLongPress: () => context.push(Routes.output),
                 child: SizedBox(
                   height: Sizes.miniPlayerHeight,

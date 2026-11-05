@@ -68,7 +68,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     final np = ref.watch(nowPlayingProvider).valueOrNull;
     if (np == null) {
       return Scaffold(
-        appBar: AppBar(leading: const _CollapseButton()),
+        appBar: AppBar(leading: const NowPlayingCollapseButton()),
         body: EmptyState(
           icon: Icons.music_note_outlined,
           title: 'Nothing is playing',
@@ -95,14 +95,14 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
         curve: Curves.easeOutCubic,
         transform: Matrix4.translationValues(0, _dragOffset, 0),
         child: Scaffold(
-          body: _AdaptiveBackground(
+          body: NowPlayingAdaptiveBackground(
             artwork: np.track.artwork,
             trackTitle: np.track.albumTitle,
             enabled: settings.adaptiveColor,
             child: SafeArea(
               child: Column(
                 children: [
-                  _TopBar(nowPlaying: np),
+                  NowPlayingTopBar(nowPlaying: np),
                   Expanded(
                     child: landscape
                         ? _LandscapeLayout(
@@ -128,28 +128,31 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
   }
 }
 
-class _CollapseButton extends StatelessWidget {
-  const _CollapseButton();
+class NowPlayingCollapseButton extends StatelessWidget {
+  const NowPlayingCollapseButton({super.key, this.onPressed});
+
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) => IconButton(
         icon: const Icon(Icons.expand_more),
         tooltip: context.l10n.actionBack,
-        onPressed: () => Navigator.of(context).maybePop(),
+        onPressed: onPressed ?? () => Navigator.of(context).maybePop(),
       );
 }
 
-class _TopBar extends ConsumerWidget {
-  const _TopBar({required this.nowPlaying});
+class NowPlayingTopBar extends ConsumerWidget {
+  const NowPlayingTopBar({super.key, required this.nowPlaying, this.onCollapse});
 
   final NowPlaying nowPlaying;
+  final VoidCallback? onCollapse;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.c;
     return Row(
       children: [
-        const _CollapseButton(),
+        NowPlayingCollapseButton(onPressed: onCollapse),
         Expanded(
           child: InkWell(
             onTap: nowPlaying.contextId == null
@@ -176,14 +179,14 @@ class _TopBar extends ConsumerWidget {
             ),
           ),
         ),
-        _OverflowMenu(nowPlaying: nowPlaying),
+        NowPlayingOverflowMenu(nowPlaying: nowPlaying),
       ],
     );
   }
 }
 
-class _OverflowMenu extends ConsumerWidget {
-  const _OverflowMenu({required this.nowPlaying});
+class NowPlayingOverflowMenu extends ConsumerWidget {
+  const NowPlayingOverflowMenu({super.key, required this.nowPlaying});
 
   final NowPlaying nowPlaying;
 
@@ -309,7 +312,7 @@ class _ClassicLayout extends ConsumerWidget {
         child: Column(
           children: [
             const SizedBox(height: Spacing.md),
-            _SwipeableArt(
+            NowPlayingSwipeableArt(
               nowPlaying: nowPlaying,
               size: (width - Spacing.xl * 2).clamp(120.0, 220.0),
             ),
@@ -330,7 +333,7 @@ class _ClassicLayout extends ConsumerWidget {
               final size = (side < box.maxHeight ? side : box.maxHeight)
                   .clamp(96.0, 420.0);
               return Center(
-                child: _SwipeableArt(
+                child: NowPlayingSwipeableArt(
                   nowPlaying: nowPlaying,
                   size: size.toDouble(),
                 ),
@@ -347,9 +350,9 @@ class _ClassicLayout extends ConsumerWidget {
 
   /// Everything below the artwork, shared by both height strategies.
   List<Widget> _controls(BuildContext context) => [
-        _TitleBlock(nowPlaying: nowPlaying),
+        NowPlayingTitleBlock(nowPlaying: nowPlaying),
         const SizedBox(height: Spacing.sm),
-        if (signal != null) _SignalChip(signal: signal!),
+        if (signal != null) NowPlayingSignalChip(signal: signal!),
         const SizedBox(height: Spacing.md),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: Spacing.xl),
@@ -359,14 +362,14 @@ class _ClassicLayout extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: Spacing.xs),
-        const _VolumeHint(),
+        const NowPlayingVolumeHint(),
         const SizedBox(height: Spacing.sm),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: Spacing.md),
           child: TransportControls(),
         ),
         const SizedBox(height: Spacing.sm),
-        _BottomActions(nowPlaying: nowPlaying),
+        NowPlayingBottomActions(nowPlaying: nowPlaying),
       ];
 }
 
@@ -425,7 +428,7 @@ class _MinimalLayout extends ConsumerWidget {
               const SizedBox(height: Spacing.sm),
               Align(
                 alignment: Alignment.centerLeft,
-                child: _SignalChip(signal: signal!),
+                child: NowPlayingSignalChip(signal: signal!),
               ),
             ],
             const SizedBox(height: Spacing.lg),
@@ -436,7 +439,7 @@ class _MinimalLayout extends ConsumerWidget {
             const SizedBox(height: Spacing.md),
             const TransportControls(compact: true),
             const SizedBox(height: Spacing.md),
-            _BottomActions(nowPlaying: nowPlaying),
+            NowPlayingBottomActions(nowPlaying: nowPlaying),
             const SizedBox(height: Spacing.lg),
           ],
         ),
@@ -489,7 +492,7 @@ class _StudioLayout extends ConsumerWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: Spacing.xs),
-                    if (signal != null) _SignalChip(signal: signal!),
+                    if (signal != null) NowPlayingSignalChip(signal: signal!),
                   ],
                 ),
               ),
@@ -552,7 +555,7 @@ class _StudioLayout extends ConsumerWidget {
           const SizedBox(height: Spacing.xs),
           const TransportControls(compact: true),
           const SizedBox(height: Spacing.xs),
-          _BottomActions(nowPlaying: nowPlaying),
+          NowPlayingBottomActions(nowPlaying: nowPlaying),
           const SizedBox(height: Spacing.md),
         ],
       ),
@@ -581,7 +584,7 @@ class _LandscapeLayout extends ConsumerWidget {
       children: [
         Padding(
           padding: const EdgeInsets.all(Spacing.md),
-          child: _SwipeableArt(
+          child: NowPlayingSwipeableArt(
             nowPlaying: nowPlaying,
             size: artSize.toDouble(),
           ),
@@ -592,12 +595,12 @@ class _LandscapeLayout extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _TitleBlock(nowPlaying: nowPlaying, alignStart: true),
+                NowPlayingTitleBlock(nowPlaying: nowPlaying, alignStart: true),
                 const SizedBox(height: Spacing.xs),
                 if (signal != null)
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: _SignalChip(signal: signal!),
+                    child: NowPlayingSignalChip(signal: signal!),
                   ),
                 const SizedBox(height: Spacing.sm),
                 CacheSeekBar(
@@ -607,7 +610,7 @@ class _LandscapeLayout extends ConsumerWidget {
                 const SizedBox(height: Spacing.sm),
                 const TransportControls(compact: true),
                 const SizedBox(height: Spacing.xs),
-                _BottomActions(nowPlaying: nowPlaying),
+                NowPlayingBottomActions(nowPlaying: nowPlaying),
               ],
             ),
           ),
@@ -619,8 +622,8 @@ class _LandscapeLayout extends ConsumerWidget {
 
 /// Album art with horizontal swipe-to-skip. Double-tap deliberately does
 /// nothing, so a mistaken tap cannot change playback.
-class _SwipeableArt extends ConsumerWidget {
-  const _SwipeableArt({required this.nowPlaying, required this.size});
+class NowPlayingSwipeableArt extends ConsumerWidget {
+  const NowPlayingSwipeableArt({super.key, required this.nowPlaying, required this.size});
 
   final NowPlaying nowPlaying;
   final double size;
@@ -671,8 +674,8 @@ class _SwipeableArt extends ConsumerWidget {
   }
 }
 
-class _TitleBlock extends ConsumerWidget {
-  const _TitleBlock({required this.nowPlaying, this.alignStart = false});
+class NowPlayingTitleBlock extends ConsumerWidget {
+  const NowPlayingTitleBlock({super.key, required this.nowPlaying, this.alignStart = false});
 
   final NowPlaying nowPlaying;
   final bool alignStart;
@@ -727,8 +730,8 @@ class _TitleBlock extends ConsumerWidget {
 }
 
 /// The one-line verdict, tappable into the full Signal Path.
-class _SignalChip extends StatelessWidget {
-  const _SignalChip({required this.signal});
+class NowPlayingSignalChip extends StatelessWidget {
+  const NowPlayingSignalChip({super.key, required this.signal});
 
   final SignalPath signal;
 
@@ -851,8 +854,8 @@ class _SignalChip extends StatelessWidget {
 
 /// In bit-perfect mode BitDrop applies no digital gain, so the user needs to
 /// know where the volume actually lives.
-class _VolumeHint extends ConsumerWidget {
-  const _VolumeHint();
+class NowPlayingVolumeHint extends ConsumerWidget {
+  const NowPlayingVolumeHint({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -883,8 +886,8 @@ class _VolumeHint extends ConsumerWidget {
   }
 }
 
-class _BottomActions extends ConsumerWidget {
-  const _BottomActions({required this.nowPlaying});
+class NowPlayingBottomActions extends ConsumerWidget {
+  const NowPlayingBottomActions({super.key, required this.nowPlaying});
 
   final NowPlaying nowPlaying;
 
@@ -940,8 +943,9 @@ class _BottomActions extends ConsumerWidget {
 /// Spotify-style ambient player window background: soft light flowing from the
 /// album's poster colour at the top, fading smoothly into solid deep background
 /// behind the controls.
-class _AdaptiveBackground extends StatelessWidget {
-  const _AdaptiveBackground({
+class NowPlayingAdaptiveBackground extends StatelessWidget {
+  const NowPlayingAdaptiveBackground({
+    super.key,
     required this.artwork,
     this.trackTitle,
     required this.enabled,

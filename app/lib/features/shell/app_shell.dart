@@ -7,11 +7,12 @@ import '../../core_api/commands.dart';
 import '../../core_api/models.dart';
 import '../../l10n/l10n.dart';
 import '../../providers/core_providers.dart';
+import '../../providers/player_sheet_provider.dart';
 import '../../routing/routes.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/common.dart';
-import '../../widgets/mini_player.dart';
+import '../../widgets/expanding_player_sheet.dart';
 import '../dev/scenario_sheet.dart';
 
 /// Navigation frame: bottom bar on phones, navigation rail at tablet width.
@@ -27,15 +28,34 @@ class AppShell extends ConsumerStatefulWidget {
   ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends ConsumerState<AppShell> {
+class _AppShellState extends ConsumerState<AppShell>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _playerAnimController;
+  late final PlayerSheetController _sheetController;
+
+  @override
+  void initState() {
+    super.initState();
+    _playerAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+    );
+    _sheetController = ref.read(playerSheetControllerProvider);
+    _sheetController.attach(_playerAnimController);
+  }
+
+  @override
+  void dispose() {
+    _sheetController.detach(_playerAnimController);
+    _playerAnimController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final useRail = width >= 840;
     final l = context.l10n;
-
-    // One-shot core events become snackbars.
-    
 
     final destinations = <_Dest>[
       _Dest(Routes.home, Icons.home_outlined, Icons.home, l.navHome),
@@ -50,62 +70,104 @@ class _AppShellState extends ConsumerState<AppShell> {
     var index = destinations.indexWhere((d) => location.startsWith(d.path));
     if (index < 0) index = 0;
 
+    final sheetController = ref.watch(playerSheetControllerProvider);
+    final sheetProgress = sheetController.progress;
+
     final body = Column(
       children: [
         const _BannerStack(),
-        Expanded(child: widget.child),
+        Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(
+              bottom: useRail
+                  ? 0.0
+                  : (isHome ? 80.0 : (80.0 + Sizes.miniPlayerHeight)),
+            ),
+            child: widget.child,
+          ),
+        ),
       ],
     );
 
     return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: useRail
-            ? Row(
+      extendBody: true,
+      body: useRail
+          ? SafeArea(
+              bottom: false,
+              child: Row(
                 children: [
                   _Rail(
                     destinations: destinations,
                     index: index,
                     onSelect: (i) {
                       if (destinations[i].path == Routes.library) {
-                        ref.read(libraryTabProvider.notifier).state = LibraryTab.tracks;
+                        ref.read(libraryTabProvider.notifier).state =
+                            LibraryTab.tracks;
                       }
                       context.go(destinations[i].path);
                     },
                   ),
                   VerticalDivider(width: 1, color: context.c.outline),
-                  Expanded(child: body),
-                ],
-              )
-            : body,
-      ),
-      bottomNavigationBar: (!isHome || !useRail)
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (!isHome) const MiniPlayer(),
-                if (!useRail)
-                  NavigationBar(
-                    selectedIndex: index,
-                    onDestinationSelected: (i) {
-                      if (destinations[i].path == Routes.library) {
-                        ref.read(libraryTabProvider.notifier).state = LibraryTab.tracks;
-                      }
-                      context.go(destinations[i].path);
-                    },
-                    destinations: [
-                      for (final d in destinations)
-                        NavigationDestination(
-                          icon: Icon(d.icon),
-                          selectedIcon: Icon(d.selectedIcon),
-                          label: d.label,
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        body,
+                        ExpandingPlayerSheet(
+                          isHome: isHome,
+                          useRail: true,
                         ),
-                    ],
+                      ],
+                    ),
                   ),
-              ],
+                ],
+              ),
             )
-          : null,
-      floatingActionButton: kDebugMode
+          : Stack(
+              children: [
+                // 1. Full page content (banner stack + child)
+                Positioned.fill(
+                  child: SafeArea(
+                    bottom: false,
+                    child: body,
+                  ),
+                ),
+
+                // 2. Navigation bar, translating down off screen as sheet expands
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Transform.translate(
+                    offset: Offset(0, sheetProgress * 120.0),
+                    child: NavigationBar(
+                      selectedIndex: index,
+                      onDestinationSelected: (i) {
+                        if (destinations[i].path == Routes.library) {
+                          ref.read(libraryTabProvider.notifier).state =
+                              LibraryTab.tracks;
+                        }
+                        context.go(destinations[i].path);
+                      },
+                      destinations: [
+                        for (final d in destinations)
+                          NavigationDestination(
+                            icon: Icon(d.icon),
+                            selectedIcon: Icon(d.selectedIcon),
+                            label: d.label,
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // 3. Persistent Morphing Expanding Player Sheet
+                ExpandingPlayerSheet(
+                  isHome: isHome,
+                  useRail: false,
+                ),
+              ],
+            ),
+      floatingActionButton: kDebugMode && sheetController.isCollapsed
           ? Padding(
               padding: EdgeInsets.only(
                 bottom: MediaQuery.sizeOf(context).height * 0.08,
