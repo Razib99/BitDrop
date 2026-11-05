@@ -44,15 +44,29 @@ class ExpandingPlayerSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final np = ref.watch(nowPlayingProvider).valueOrNull;
-    if (np == null) return const SizedBox.shrink();
-
     final controller = ref.watch(playerSheetControllerProvider);
     final p = controller.progress;
+
+    if (np == null) {
+      return const Positioned(
+        left: 0,
+        bottom: 0,
+        width: 0,
+        height: 0,
+        child: SizedBox.shrink(),
+      );
+    }
 
     // When on Home screen and fully collapsed, the sheet is hidden so the
     // "Continue Listening" card in the feed takes pride of place.
     if (isHome && controller.isCollapsed) {
-      return const SizedBox.shrink();
+      return const Positioned(
+        left: 0,
+        bottom: 0,
+        width: 0,
+        height: 0,
+        child: SizedBox.shrink(),
+      );
     }
 
     final screenHeight = MediaQuery.sizeOf(context).height;
@@ -82,24 +96,30 @@ class ExpandingPlayerSheet extends ConsumerWidget {
     }
 
     if (currentHeight <= 0.001) {
-      return const SizedBox.shrink();
+      return const Positioned(
+        left: 0,
+        bottom: 0,
+        width: 0,
+        height: 0,
+        child: SizedBox.shrink(),
+      );
     }
 
     final c = context.c;
     final dark = Theme.of(context).brightness == Brightness.dark;
 
-    return PopScope(
-      canPop: controller.isCollapsed,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && !controller.isCollapsed) {
-          controller.collapse();
-        }
-      },
-      child: Positioned(
-        left: 0,
-        right: 0,
-        bottom: bottomOffset,
-        height: currentHeight,
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: bottomOffset,
+      height: currentHeight,
+      child: PopScope(
+        canPop: controller.isCollapsed,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop && !controller.isCollapsed) {
+            controller.collapse();
+          }
+        },
         child: FutureBuilder<Color>(
           future: PosterColor.resolve(np.track.artwork, title: np.track.albumTitle),
           initialData: PosterColor.of(np.track.artwork, title: np.track.albumTitle),

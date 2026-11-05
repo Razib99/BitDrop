@@ -123,6 +123,8 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
           label: 'Playback position',
           value: '${Fmt.duration(scrubMs)} of ${Fmt.duration(duration)}'
               '${willStream ? ', will stream' : ', cached'}',
+          increasedValue: '${Fmt.duration((scrubMs + 10000).clamp(0, duration))} of ${Fmt.duration(duration)}',
+          decreasedValue: '${Fmt.duration((scrubMs - 10000).clamp(0, duration))} of ${Fmt.duration(duration)}',
           onIncrease: () => _seekBy(10000, duration),
           onDecrease: () => _seekBy(-10000, duration),
           excludeSemantics: true,

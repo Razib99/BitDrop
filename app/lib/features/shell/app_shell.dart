@@ -123,13 +123,12 @@ class _AppShellState extends ConsumerState<AppShell>
               ),
             )
           : Stack(
+              fit: StackFit.expand,
               children: [
                 // 1. Full page content (banner stack + child)
-                Positioned.fill(
-                  child: SafeArea(
-                    bottom: false,
-                    child: body,
-                  ),
+                SafeArea(
+                  bottom: false,
+                  child: body,
                 ),
 
                 // 2. Navigation bar, translating down off screen as sheet expands

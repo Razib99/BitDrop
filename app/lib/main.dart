@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,12 +14,43 @@ import 'package:path_provider/path_provider.dart';
 
 import 'core_live/cloud_library.dart';
 import 'features/storage/google_drive_service.dart';
+import 'util/file_logger.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  logToFile('main() started');
+
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    logToFile('FLUTTER_ERROR: ${details.exceptionAsString()}\n${details.stack}');
+    debugPrint('FLUTTER_ERROR: ${details.exceptionAsString()}\n${details.stack}');
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    logToFile('PLATFORM_ERROR: $error\n$stack');
+    debugPrint('PLATFORM_ERROR: $error\n$stack');
+    return true;
+  };
+  ErrorWidget.builder = (FlutterErrorDetails details) {
+    logToFile('ErrorWidget rendered: ${details.exceptionAsString()}\n${details.stack}');
+    return Material(
+      color: const Color(0xFF14161A),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SingleChildScrollView(
+            child: Text(
+              'UI Error:\n${details.exceptionAsString()}\n\n${details.stack}',
+              style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+            ),
+          ),
+        ),
+      ),
+    );
+  };
 
   // Initialize the Rust FFI backend
   await RustLib.init();
+  logToFile('RustLib.init() completed');
 
   // Initialize the Android Background Audio Service.
   //
@@ -70,9 +102,12 @@ Future<void> main() async {
     dbPath: '${supportDir.path}/library.db',
     cacheDir: '${cacheRoot.path}/tag_cache',
   );
+  logToFile('Opening CloudLibrary');
   try {
     await globalCloudLibrary.open();
-  } catch (e) {
+    logToFile('CloudLibrary opened successfully');
+  } catch (e, st) {
+    logToFile('[library] open failed: $e\n$st');
     debugPrint('[library] open failed: $e');
   }
 
@@ -82,5 +117,7 @@ Future<void> main() async {
     statusBarColor: Colors.transparent,
     systemNavigationBarColor: Colors.transparent,
   ));
+  logToFile('Calling runApp(BitDropApp)');
   runApp(const ProviderScope(child: BitDropApp()));
+  logToFile('runApp completed');
 }
