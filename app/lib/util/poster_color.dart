@@ -25,11 +25,24 @@ class PosterColor {
     return hsl.withSaturation(s).withLightness(l).toColor();
   }
 
+  static String _cacheKey(Artwork artwork, String? title) {
+    if (artwork.uri != null && artwork.uri!.isNotEmpty) {
+      return artwork.uri!;
+    }
+    final t = title ?? '';
+    return '${artwork.seed}_$t';
+  }
+
   /// Synchronous color provider: returns cached or enhanced dominantColor immediately.
-  static Color of(Artwork artwork) {
-    final key = artwork.uri ?? '${artwork.seed}';
+  static Color of(Artwork artwork, {String? title}) {
+    final key = _cacheKey(artwork, title);
     if (_cache.containsKey(key)) {
       return _cache[key]!;
+    }
+    // Also check seed-only key if available
+    final seedKey = '${artwork.seed}';
+    if (_cache.containsKey(seedKey)) {
+      return _cache[seedKey]!;
     }
     final enhanced = enhance(Color(artwork.dominantColor));
     _cache[key] = enhanced;
@@ -61,7 +74,7 @@ class PosterColor {
   /// Asynchronously extracts the true dominant color from image bytes if available,
   /// falling back to the enhanced dominantColor.
   static Future<Color> resolve(Artwork artwork, {String? title}) async {
-    final key = artwork.uri ?? '${artwork.seed}_$title';
+    final key = _cacheKey(artwork, title);
     if (_cache.containsKey(key)) {
       return _cache[key]!;
     }
@@ -76,6 +89,8 @@ class PosterColor {
           if (extracted != null) {
             final enhanced = enhance(extracted);
             _cache[key] = enhanced;
+            // Also store under seed key for fallback sharing
+            _cache['${artwork.seed}'] = enhanced;
             return enhanced;
           }
         }

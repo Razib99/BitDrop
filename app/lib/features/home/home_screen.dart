@@ -285,13 +285,15 @@ class _ContinueListening extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final title = nowPlaying.track.albumTitle;
+    final initialColor =
+        PosterColor.of(nowPlaying.track.artwork, title: title);
+
     return FutureBuilder<Color>(
-      future: PosterColor.resolve(nowPlaying.track.artwork,
-          title: nowPlaying.track.albumTitle),
-      initialData: PosterColor.of(nowPlaying.track.artwork),
+      future: PosterColor.resolve(nowPlaying.track.artwork, title: title),
+      initialData: initialColor,
       builder: (context, snapshot) {
-        final posterColor =
-            snapshot.data ?? PosterColor.of(nowPlaying.track.artwork);
+        final posterColor = snapshot.data ?? initialColor;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -369,7 +371,8 @@ class _ContinueListeningCardState extends ConsumerState<_ContinueListeningCard>
         final driftX = math.sin(t) * 0.15;
         final driftY = math.cos(t) * 0.12;
 
-        return Container(
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
           decoration: BoxDecoration(
             borderRadius: Radii.cardR,
             gradient: LinearGradient(

@@ -24,9 +24,14 @@ import 'indicators.dart';
 /// This widget is the *only* place that subscribes to [positionProvider], so a
 /// 30 Hz position tick repaints this subtree and nothing else.
 class CacheSeekBar extends ConsumerStatefulWidget {
-  const CacheSeekBar({super.key, required this.durationMs});
+  const CacheSeekBar({
+    super.key,
+    required this.durationMs,
+    this.activeColor,
+  });
 
   final int durationMs;
+  final Color? activeColor;
 
   @override
   ConsumerState<CacheSeekBar> createState() => _CacheSeekBarState();
@@ -138,10 +143,14 @@ class _CacheSeekBarState extends ConsumerState<CacheSeekBar> {
                   fraction: fraction,
                   durationMs: duration,
                   ranges: info.cachedRanges,
-                  played: c.accent,
-                  cached: c.cacheFill,
-                  track: c.outline,
-                  thumb: c.accent,
+                  played: widget.activeColor ?? c.accent,
+                  cached: widget.activeColor != null
+                      ? Colors.white.withOpacity(0.35)
+                      : c.cacheFill,
+                  track: widget.activeColor != null
+                      ? Colors.white.withOpacity(0.18)
+                      : c.outline,
+                  thumb: widget.activeColor ?? c.accent,
                   dragging: _dragFraction != null,
                   pulse: buffering != null || _pendingMs != null,
                 ),

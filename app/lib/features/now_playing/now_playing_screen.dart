@@ -27,11 +27,44 @@ import 'track_info_sheet.dart';
 ///
 /// Nothing here computes a quality claim: the signal chip and every readout
 /// render what [signalPathProvider] emits.
-class NowPlayingScreen extends ConsumerWidget {
+class NowPlayingScreen extends ConsumerStatefulWidget {
   const NowPlayingScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<NowPlayingScreen> createState() => _NowPlayingScreenState();
+}
+
+class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
+  double _dragOffset = 0.0;
+  bool _isDragging = false;
+
+  void _onVerticalDragStart(DragStartDetails details) {
+    _isDragging = true;
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails details) {
+    final delta = details.primaryDelta ?? 0.0;
+    if (delta > 0 || _dragOffset > 0) {
+      setState(() {
+        _dragOffset = math.max(0.0, _dragOffset + delta);
+      });
+    }
+  }
+
+  void _onVerticalDragEnd(DragEndDetails details) {
+    _isDragging = false;
+    final velocity = details.primaryVelocity ?? 0.0;
+    if (_dragOffset > 90 || velocity > 320) {
+      Navigator.of(context).maybePop();
+    } else {
+      setState(() {
+        _dragOffset = 0.0;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final np = ref.watch(nowPlayingProvider).valueOrNull;
     if (np == null) {
       return Scaffold(
@@ -51,31 +84,43 @@ class NowPlayingScreen extends ConsumerWidget {
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
 
-    return Scaffold(
-      body: _AdaptiveBackground(
-        artwork: np.track.artwork,
-        trackTitle: np.track.albumTitle,
-        enabled: settings.adaptiveColor,
-        child: SafeArea(
-          child: Column(
-            children: [
-              _TopBar(nowPlaying: np),
-              Expanded(
-                child: landscape
-                    ? _LandscapeLayout(
-                        nowPlaying: np,
-                        signal: signal,
-                        style: settings.nowPlayingStyle)
-                    : switch (settings.nowPlayingStyle) {
-                        NowPlayingStyle.classic =>
-                          _ClassicLayout(nowPlaying: np, signal: signal),
-                        NowPlayingStyle.minimal =>
-                          _MinimalLayout(nowPlaying: np, signal: signal),
-                        NowPlayingStyle.studio =>
-                          _StudioLayout(nowPlaying: np, signal: signal),
-                      },
+    return GestureDetector(
+      onVerticalDragStart: _onVerticalDragStart,
+      onVerticalDragUpdate: _onVerticalDragUpdate,
+      onVerticalDragEnd: _onVerticalDragEnd,
+      behavior: HitTestBehavior.translucent,
+      child: AnimatedContainer(
+        duration:
+            _isDragging ? Duration.zero : const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        transform: Matrix4.translationValues(0, _dragOffset, 0),
+        child: Scaffold(
+          body: _AdaptiveBackground(
+            artwork: np.track.artwork,
+            trackTitle: np.track.albumTitle,
+            enabled: settings.adaptiveColor,
+            child: SafeArea(
+              child: Column(
+                children: [
+                  _TopBar(nowPlaying: np),
+                  Expanded(
+                    child: landscape
+                        ? _LandscapeLayout(
+                            nowPlaying: np,
+                            signal: signal,
+                            style: settings.nowPlayingStyle)
+                        : switch (settings.nowPlayingStyle) {
+                            NowPlayingStyle.classic =>
+                              _ClassicLayout(nowPlaying: np, signal: signal),
+                            NowPlayingStyle.minimal =>
+                              _MinimalLayout(nowPlaying: np, signal: signal),
+                            NowPlayingStyle.studio =>
+                              _StudioLayout(nowPlaying: np, signal: signal),
+                          },
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -308,7 +353,10 @@ class _ClassicLayout extends ConsumerWidget {
         const SizedBox(height: Spacing.md),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: Spacing.xl),
-          child: CacheSeekBar(durationMs: nowPlaying.track.durationMs),
+          child: CacheSeekBar(
+            durationMs: nowPlaying.track.durationMs,
+            activeColor: const Color(0xFFF1F5F9),
+          ),
         ),
         const SizedBox(height: Spacing.xs),
         const _VolumeHint(),
@@ -381,7 +429,10 @@ class _MinimalLayout extends ConsumerWidget {
               ),
             ],
             const SizedBox(height: Spacing.lg),
-            CacheSeekBar(durationMs: track.durationMs),
+            CacheSeekBar(
+              durationMs: track.durationMs,
+              activeColor: const Color(0xFFF1F5F9),
+            ),
             const SizedBox(height: Spacing.md),
             const TransportControls(compact: true),
             const SizedBox(height: Spacing.md),
@@ -494,7 +545,10 @@ class _StudioLayout extends ConsumerWidget {
               ),
             ),
           const SizedBox(height: Spacing.sm),
-          CacheSeekBar(durationMs: nowPlaying.track.durationMs),
+          CacheSeekBar(
+            durationMs: nowPlaying.track.durationMs,
+            activeColor: const Color(0xFFF1F5F9),
+          ),
           const SizedBox(height: Spacing.xs),
           const TransportControls(compact: true),
           const SizedBox(height: Spacing.xs),
@@ -546,7 +600,10 @@ class _LandscapeLayout extends ConsumerWidget {
                     child: _SignalChip(signal: signal!),
                   ),
                 const SizedBox(height: Spacing.sm),
-                CacheSeekBar(durationMs: nowPlaying.track.durationMs),
+                CacheSeekBar(
+                  durationMs: nowPlaying.track.durationMs,
+                  activeColor: const Color(0xFFF1F5F9),
+                ),
                 const SizedBox(height: Spacing.sm),
                 const TransportControls(compact: true),
                 const SizedBox(height: Spacing.xs),
@@ -570,167 +627,46 @@ class _SwipeableArt extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return FutureBuilder<Color>(
-      future: PosterColor.resolve(nowPlaying.track.artwork,
-          title: nowPlaying.track.albumTitle),
-      initialData: PosterColor.of(nowPlaying.track.artwork),
-      builder: (context, snapshot) {
-        final posterColor =
-            snapshot.data ?? PosterColor.of(nowPlaying.track.artwork);
-
-        return GestureDetector(
-          onHorizontalDragEnd: (d) {
-            final v = d.primaryVelocity ?? 0;
-            if (v < -180) {
-              sendCommand(ref, const Next());
-            } else if (v > 180) {
-              sendCommand(ref, const Previous());
-            }
-          },
-          onLongPress: () =>
-              context.push(Routes.album(nowPlaying.track.albumId)),
-          child: Center(
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                // Option C: Liquid Mesh Aura Drift behind the music poster
-                _LiquidMeshAura(size: size, color: posterColor),
-                // Music Poster with Soft Glassmorphic Accent Border
-                Container(
-                  decoration: BoxDecoration(
-                    borderRadius: Radii.heroArtR,
-                    border: Border.all(
-                      color: posterColor.withOpacity(0.18),
-                      width: 1.0,
-                    ),
-                  ),
-                  child: Hero(
-                    tag: 'art-${nowPlaying.track.albumId}',
-                    child: AnimatedSwitcher(
-                      duration: Motion.emphasized,
-                      switchInCurve: Motion.enter,
-                      child: AlbumArtwork(
-                        key: ValueKey(nowPlaying.track.id),
-                        artwork: nowPlaying.track.artwork,
-                        size: size,
-                        title: nowPlaying.track.albumTitle,
-                        borderRadius: Radii.heroArtR,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+    return GestureDetector(
+      onHorizontalDragEnd: (d) {
+        final v = d.primaryVelocity ?? 0;
+        if (v < -180) {
+          sendCommand(ref, const Next());
+        } else if (v > 180) {
+          sendCommand(ref, const Previous());
+        }
+      },
+      onLongPress: () =>
+          context.push(Routes.album(nowPlaying.track.albumId)),
+      child: Center(
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: Radii.heroArtR,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.48),
+                blurRadius: 36,
+                spreadRadius: 2,
+                offset: const Offset(0, 16),
+              ),
+            ],
+          ),
+          child: Hero(
+            tag: 'art-${nowPlaying.track.albumId}',
+            child: AnimatedSwitcher(
+              duration: Motion.emphasized,
+              switchInCurve: Motion.enter,
+              child: AlbumArtwork(
+                key: ValueKey(nowPlaying.track.id),
+                artwork: nowPlaying.track.artwork,
+                size: size,
+                title: nowPlaying.track.albumTitle,
+                borderRadius: Radii.heroArtR,
+              ),
             ),
           ),
-        );
-      },
-    );
-  }
-}
-
-/// Liquid Mesh Aura Drift: harmonic dual-blob fluid drift creating an organic,
-/// floating ambient backlight behind the music poster.
-class _LiquidMeshAura extends StatefulWidget {
-  const _LiquidMeshAura({
-    required this.size,
-    required this.color,
-  });
-
-  final double size;
-  final Color color;
-
-  @override
-  State<_LiquidMeshAura> createState() => _LiquidMeshAuraState();
-}
-
-class _LiquidMeshAuraState extends State<_LiquidMeshAura>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 7500),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        final t = _controller.value * 2 * math.pi;
-        final dx1 = math.sin(t) * 12.0;
-        final dy1 = math.cos(t) * 9.0;
-        final dx2 = -math.cos(t * 0.75) * 14.0;
-        final dy2 = -math.sin(t * 0.75) * 10.0;
-
-        return Stack(
-          alignment: Alignment.center,
-          children: [
-            // Soft atmospheric base wash
-            Container(
-              width: widget.size * 0.88,
-              height: widget.size * 0.88,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(widget.size * 0.16),
-                boxShadow: [
-                  BoxShadow(
-                    color: widget.color.withOpacity(0.18),
-                    blurRadius: 75,
-                    spreadRadius: 18,
-                  ),
-                ],
-              ),
-            ),
-            // Primary liquid mesh drift blob
-            Transform.translate(
-              offset: Offset(dx1, dy1),
-              child: Container(
-                width: widget.size * 0.82,
-                height: widget.size * 0.82,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(widget.size * 0.14),
-                  boxShadow: [
-                    BoxShadow(
-                      color: widget.color.withOpacity(0.24),
-                      blurRadius: 48,
-                      spreadRadius: 6,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            // Secondary counter-drifting harmonic blob
-            Transform.translate(
-              offset: Offset(dx2, dy2),
-              child: Container(
-                width: widget.size * 0.76,
-                height: widget.size * 0.76,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(widget.size * 0.12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: widget.color.withOpacity(0.15),
-                      blurRadius: 62,
-                      spreadRadius: 10,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+        ),
+      ),
     );
   }
 }
@@ -1001,6 +937,9 @@ class _BottomActions extends ConsumerWidget {
 
 /// Tints the background from the album's vibrant poster colour, radiating
 /// an ambient aura that flows through the music player window.
+/// Spotify-style ambient player window background: soft light flowing from the
+/// album's poster colour at the top, fading smoothly into solid deep background
+/// behind the controls.
 class _AdaptiveBackground extends StatelessWidget {
   const _AdaptiveBackground({
     required this.artwork,
@@ -1023,22 +962,27 @@ class _AdaptiveBackground extends StatelessWidget {
 
     return FutureBuilder<Color>(
       future: PosterColor.resolve(artwork, title: trackTitle),
-      initialData: PosterColor.of(artwork),
+      initialData: PosterColor.of(artwork, title: trackTitle),
       builder: (context, snapshot) {
-        final posterColor = snapshot.data ?? PosterColor.of(artwork);
+        final posterColor =
+            snapshot.data ?? PosterColor.of(artwork, title: trackTitle);
+
+        final topColor = Color.lerp(posterColor, c.bg, dark ? 0.38 : 0.20)!;
+        final midColor = Color.lerp(posterColor, c.bg, dark ? 0.72 : 0.60)!;
 
         return AnimatedContainer(
           duration: Motion.emphasized,
           decoration: BoxDecoration(
-            gradient: RadialGradient(
-              center: const Alignment(0.0, -0.45),
-              radius: 1.25,
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
               colors: [
-                posterColor.withOpacity(dark ? 0.20 : 0.12),
-                posterColor.withOpacity(dark ? 0.05 : 0.02),
+                topColor,
+                midColor,
+                c.bg,
                 c.bg,
               ],
-              stops: const [0.0, 0.55, 1.0],
+              stops: const [0.0, 0.42, 0.78, 1.0],
             ),
           ),
           child: child,
