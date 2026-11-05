@@ -645,23 +645,10 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
         : (isSlow ? const Color(0xFFFFA726) : c.accent);
 
     final message = _messageFor(context);
-    final int? pct = (!isOffline && state != null && state.targetMs > 0)
-        ? ((state.bufferedMs / state.targetMs) * 100).round().clamp(0, 100)
-        : null;
-
-    final detail = (!isOffline && state != null && state.bufferedMs > 0)
-        ? '${(state.bufferedMs / 1000).toStringAsFixed(1)}s'
-        : null;
-
-    final accessibilityLabel = state != null ? '$message, $detail' : message;
-
-    final double? progress = (!isOffline && state != null && state.targetMs > 0)
-        ? (state.bufferedMs / state.targetMs).clamp(0.0, 1.0)
-        : null;
 
     return Semantics(
       liveRegion: true,
-      label: accessibilityLabel,
+      label: message,
       excludeSemantics: true,
       child: Container(
         height: 20,
@@ -697,36 +684,6 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
                 height: 1.1,
               ),
             ),
-            if (!widget.compact && (pct != null || detail != null)) ...[
-              const SizedBox(width: 3.5),
-              Text(
-                pct != null ? '$pct%' : detail!,
-                style: TextStyle(
-                  color: isSlow
-                      ? const Color(0xFFFFCC80)
-                      : (c.textSecondary),
-                  fontSize: 8.5,
-                  fontWeight: FontWeight.w600,
-                  fontFamily: 'monospace',
-                  height: 1.1,
-                ),
-              ),
-            ],
-            if (progress != null && !widget.compact) ...[
-              const SizedBox(width: 4.5),
-              SizedBox(
-                width: 18,
-                height: 2.5,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(1.25),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    backgroundColor: statusColor.withOpacity(0.20),
-                    valueColor: AlwaysStoppedAnimation<Color>(statusColor),
-                  ),
-                ),
-              ),
-            ],
           ],
         ),
       ),

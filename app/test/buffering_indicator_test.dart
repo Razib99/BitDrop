@@ -17,7 +17,7 @@ Widget _buildWrapper(Widget child) {
 }
 
 void main() {
-  testWidgets('renders Buffering state with percentage and waveform', (tester) async {
+  testWidgets('renders Buffering state with animated waveform', (tester) async {
     const state = BufferingState(
       bufferedMs: 3600,
       targetMs: 10000,
@@ -28,7 +28,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.text('BUFFERING'), findsOneWidget);
-    expect(find.text('36%'), findsOneWidget);
     expect(find.byIcon(Icons.wifi_off_rounded), findsNothing);
   });
 
