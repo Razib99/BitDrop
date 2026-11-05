@@ -11,6 +11,7 @@ import '../../providers/player_sheet_provider.dart';
 import '../../routing/routes.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
+import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/common.dart';
 import '../../widgets/expanding_player_sheet.dart';
 import '../dev/scenario_sheet.dart';
@@ -58,12 +59,27 @@ class _AppShellState extends ConsumerState<AppShell>
     final useRail = width >= 840 && shortestSide >= 600;
     final l = context.l10n;
 
-    final destinations = <_Dest>[
-      _Dest(Routes.home, Icons.home_outlined, Icons.home, l.navHome),
-      _Dest(Routes.library, Icons.library_music_outlined, Icons.library_music,
-          l.navLibrary),
-      _Dest(Routes.search, Icons.search_outlined, Icons.search, l.navSearch),
-      _Dest(Routes.sources, Icons.cloud_outlined, Icons.cloud, l.navSources),
+    final destinations = <BitDropNavDestination>[
+      BitDropNavDestination(
+        path: Routes.home,
+        icon: Icons.home_outlined,
+        label: l.navHome,
+      ),
+      BitDropNavDestination(
+        path: Routes.library,
+        icon: Icons.library_music_outlined,
+        label: l.navLibrary,
+      ),
+      BitDropNavDestination(
+        path: Routes.search,
+        icon: Icons.search_rounded,
+        label: l.navSearch,
+      ),
+      BitDropNavDestination(
+        path: Routes.sources,
+        icon: Icons.cloud_outlined,
+        label: l.navSources,
+      ),
     ];
 
     final location = GoRouterState.of(context).uri.path;
@@ -152,7 +168,7 @@ class _AppShellState extends ConsumerState<AppShell>
                     child: MediaQuery.removePadding(
                       context: context,
                       removeTop: true,
-                      child: NavigationBar(
+                      child: BitDropBottomNavBar(
                         selectedIndex: index,
                         onDestinationSelected: (i) {
                           if (destinations[i].path == Routes.library) {
@@ -161,14 +177,7 @@ class _AppShellState extends ConsumerState<AppShell>
                           }
                           context.go(destinations[i].path);
                         },
-                        destinations: [
-                          for (final d in destinations)
-                            NavigationDestination(
-                              icon: Icon(d.icon),
-                              selectedIcon: Icon(d.selectedIcon),
-                              label: d.label,
-                            ),
-                        ],
+                        destinations: destinations,
                       ),
                     ),
                   ),
@@ -194,14 +203,6 @@ class _AppShellState extends ConsumerState<AppShell>
   }
 }
 
-class _Dest {
-  const _Dest(this.path, this.icon, this.selectedIcon, this.label);
-  final String path;
-  final IconData icon;
-  final IconData selectedIcon;
-  final String label;
-}
-
 class _Rail extends StatelessWidget {
   const _Rail({
     required this.destinations,
@@ -209,7 +210,7 @@ class _Rail extends StatelessWidget {
     required this.onSelect,
   });
 
-  final List<_Dest> destinations;
+  final List<BitDropNavDestination> destinations;
   final int index;
   final ValueChanged<int> onSelect;
 
@@ -222,7 +223,7 @@ class _Rail extends StatelessWidget {
           for (final d in destinations)
             NavigationRailDestination(
               icon: Icon(d.icon),
-              selectedIcon: Icon(d.selectedIcon),
+              selectedIcon: Icon(d.icon),
               label: Text(d.label),
             ),
         ],

@@ -1,5 +1,6 @@
 import 'package:bitdrop/app.dart';
 import 'package:bitdrop/features/home/home_screen.dart';
+import 'package:bitdrop/widgets/bottom_nav_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,7 +11,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 120));
 
     expect(find.text('BitDrop'), findsWidgets);
-    final navBars = find.byType(NavigationBar);
+    final navBars = find.byType(BitDropBottomNavBar);
     expect(navBars, findsOneWidget);
     expect(tester.getSize(navBars.first).width, greaterThan(0.0));
     expect(tester.getSize(navBars.first).height, greaterThan(0.0));
