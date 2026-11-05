@@ -1,7 +1,7 @@
 name: bitdrop
 description: "BitDrop — audiophile cloud music player. UI prototype against the BitDropCore contract."
 publish_to: 'none'
-version: 0.1.0+2007
+version: 0.1.0+2008
 
 environment:
   sdk: ^3.5.3

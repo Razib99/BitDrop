@@ -46,6 +46,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     ];
 
     final location = GoRouterState.of(context).uri.path;
+    final isHome = location == Routes.home || location == '/';
     var index = destinations.indexWhere((d) => location.startsWith(d.path));
     if (index < 0) index = 0;
 
@@ -78,30 +79,32 @@ class _AppShellState extends ConsumerState<AppShell> {
               )
             : body,
       ),
-      bottomNavigationBar: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const MiniPlayer(),
-          if (!useRail)
-            NavigationBar(
-              selectedIndex: index,
-              onDestinationSelected: (i) {
-                if (destinations[i].path == Routes.library) {
-                  ref.read(libraryTabProvider.notifier).state = LibraryTab.tracks;
-                }
-                context.go(destinations[i].path);
-              },
-              destinations: [
-                for (final d in destinations)
-                  NavigationDestination(
-                    icon: Icon(d.icon),
-                    selectedIcon: Icon(d.selectedIcon),
-                    label: d.label,
+      bottomNavigationBar: (!isHome || !useRail)
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!isHome) const MiniPlayer(),
+                if (!useRail)
+                  NavigationBar(
+                    selectedIndex: index,
+                    onDestinationSelected: (i) {
+                      if (destinations[i].path == Routes.library) {
+                        ref.read(libraryTabProvider.notifier).state = LibraryTab.tracks;
+                      }
+                      context.go(destinations[i].path);
+                    },
+                    destinations: [
+                      for (final d in destinations)
+                        NavigationDestination(
+                          icon: Icon(d.icon),
+                          selectedIcon: Icon(d.selectedIcon),
+                          label: d.label,
+                        ),
+                    ],
                   ),
               ],
-            ),
-        ],
-      ),
+            )
+          : null,
       floatingActionButton: kDebugMode
           ? Padding(
               padding: EdgeInsets.only(
