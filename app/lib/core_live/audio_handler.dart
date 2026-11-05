@@ -713,6 +713,24 @@ class BitDropAudioHandler extends BaseAudioHandler
   }
 
   @override
+  Future<void> fastForward() async {
+    int pos = 0;
+    try {
+      pos = _engine.position;
+    } catch (_) {}
+    await seek(Duration(milliseconds: pos + 10000));
+  }
+
+  @override
+  Future<void> rewind() async {
+    int pos = 0;
+    try {
+      pos = _engine.position;
+    } catch (_) {}
+    await seek(Duration(milliseconds: (pos - 10000).clamp(0, 86400000)));
+  }
+
+  @override
   Future<void> stop() async {
     _stopped = true;
     _playGeneration++;
