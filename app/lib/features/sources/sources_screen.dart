@@ -38,92 +38,146 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     final sources = ref.watch(sourcesProvider).valueOrNull ?? const [];
     final scan = ref.watch(cloudScanStatusProvider).valueOrNull ?? SyncStatus.idle;
     final l = context.l10n;
+    final c = context.c;
 
-    return ListView(
-      padding: const EdgeInsets.only(bottom: Spacing.xxl),
+    return Stack(
       children: [
-        Padding(
-          padding:
-              const EdgeInsets.fromLTRB(Spacing.md, Spacing.xs, Spacing.xs, 0),
-          child: Row(
-            children: [
-              Text(l.navSources, style: context.t.headline),
-              const Spacer(),
-              IconButton(
-                tooltip: l.navSettings,
-                icon: const Icon(Icons.settings_outlined),
-                onPressed: () => context.push(Routes.settings),
-              ),
-            ],
-          ),
-        ),
-        if (sources.isEmpty) _ConnectDriveCard(scan: scan),
-        if (sources.isNotEmpty)
-          for (final s in sources)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                  Spacing.md, Spacing.xs, Spacing.md, 0),
-              child: SourceCard(
-                account: s,
-                // A real connection drives the real library; the mock core
-                // still backs the other scenarios in the switcher.
-                onRescan: s.id == 'drive'
-                    ? () {
-                        final library = ref.read(cloudLibraryProvider);
-                        if (library.currentFolders.isEmpty) {
-                          unawaited(showDriveFolderPicker(context));
-                        } else {
-                          unawaited(library.scan());
-                        }
-                      }
-                    : () => sendCommand(ref, Rescan(sourceId: s.id)),
-                onCancelSync: s.id == 'drive'
-                    ? () {
-                        ref.read(cloudLibraryProvider).cancelScan();
-                      }
-                    : null,
-
-                onEditFolders: () => _showFolderPicker(context),
-                onReconnect: s.status == SourceStatus.needsReconnect
-                    ? () async {
-                        if (s.id == 'drive') {
-                          final r =
-                              await ref.read(driveServiceProvider).signIn();
-                          if (r == DriveConnectResult.connected) {
-                            await ref.read(cloudLibraryProvider).scan();
-                          }
-                        } else {
-                          sendCommand(ref, ReconnectSource(s.id));
-                        }
-                      }
-                    : null,
-                onRemove: () => _confirmRemove(context, s),
+        // Whisper-soft, deep ambient atmospheric cloud aura glow at the top
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 260,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: const Alignment(0, -0.7),
+                  radius: 1.1,
+                  colors: [
+                    c.accent.withOpacity(0.06),
+                    const Color(0xFF06B6D4).withOpacity(0.025),
+                    Colors.transparent,
+                  ],
+                  stops: const [0.0, 0.45, 1.0],
+                ),
               ),
             ),
-        if (sources.isNotEmpty) ...[
-          const SectionHeader(title: 'Storage'),
-          const _CacheCard(),
-        ],
-        // Listing Drive again under "Add a source" while its own card sits
-        // above it just shows the same account twice.
-        if (sources.isEmpty) ...[
-          const SectionHeader(title: 'Add a source'),
-          _ProviderTile(
-            icon: Icons.add_to_drive,
-            name: 'Google Drive',
-            detail: !GoogleDriveService.isPlatformSupported
-                ? 'Needs the Android or iOS build'
-                : 'Not connected',
-            // Greyed on desktop for the same reason as the card above: it is
-            // not something the user can act on here.
-            available: GoogleDriveService.isPlatformSupported,
           ),
-        ],
-        // Three full rows for three things nobody can tap is three rows of
-        // nothing. One line says the same and asks for no attention.
-        const _ComingLater(),
-        const SizedBox(height: Spacing.md),
-        const _PrivacyNote(),
+        ),
+
+        ListView(
+          padding: const EdgeInsets.only(bottom: Spacing.xxl),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                  Spacing.md, Spacing.xs, Spacing.xs, Spacing.xs),
+              child: Row(
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(l.navSources, style: context.t.headline),
+                          const SizedBox(width: Spacing.xs),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: c.accent.withOpacity(0.12),
+                              borderRadius: Radii.badgeR,
+                              border: Border.all(
+                                  color: c.accent.withOpacity(0.25)),
+                            ),
+                            child: Text(
+                              'DIRECT STREAM',
+                              style: context.t.monoLabel.copyWith(
+                                color: c.accent,
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Direct-to-DAC lossless cloud vaults',
+                        style: context.t.bodySmall
+                            .copyWith(color: c.textSecondary),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: l.navSettings,
+                    icon: const Icon(Icons.settings_outlined),
+                    onPressed: () => context.push(Routes.settings),
+                  ),
+                ],
+              ),
+            ),
+            if (sources.isEmpty) _ConnectDriveCard(scan: scan),
+            if (sources.isNotEmpty)
+              for (final s in sources)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      Spacing.md, Spacing.xs, Spacing.md, 0),
+                  child: SourceCard(
+                    account: s,
+                    onRescan: s.id == 'drive'
+                        ? () {
+                            final library = ref.read(cloudLibraryProvider);
+                            if (library.currentFolders.isEmpty) {
+                              unawaited(showDriveFolderPicker(context));
+                            } else {
+                              unawaited(library.scan());
+                            }
+                          }
+                        : () => sendCommand(ref, Rescan(sourceId: s.id)),
+                    onCancelSync: s.id == 'drive'
+                        ? () {
+                            ref.read(cloudLibraryProvider).cancelScan();
+                          }
+                        : null,
+                    onEditFolders: () => _showFolderPicker(context),
+                    onReconnect: s.status == SourceStatus.needsReconnect
+                        ? () async {
+                            if (s.id == 'drive') {
+                              final r =
+                                  await ref.read(driveServiceProvider).signIn();
+                              if (r == DriveConnectResult.connected) {
+                                await ref.read(cloudLibraryProvider).scan();
+                              }
+                            } else {
+                              sendCommand(ref, ReconnectSource(s.id));
+                            }
+                          }
+                        : null,
+                    onRemove: () => _confirmRemove(context, s),
+                  ),
+                ),
+            if (sources.isNotEmpty) ...[
+              const SizedBox(height: Spacing.sm),
+              const _CacheCard(),
+            ],
+            if (sources.isEmpty) ...[
+              const SectionHeader(title: 'Add a source'),
+              _ProviderTile(
+                icon: Icons.add_to_drive,
+                name: 'Google Drive',
+                detail: !GoogleDriveService.isPlatformSupported
+                    ? 'Needs the Android or iOS build'
+                    : 'Not connected',
+                available: GoogleDriveService.isPlatformSupported,
+              ),
+            ],
+            const _ComingLater(),
+            const SizedBox(height: Spacing.md),
+            const _PrivacyNote(),
+          ],
+        ),
       ],
     );
   }
@@ -198,22 +252,55 @@ class _PrivacyNote extends StatelessWidget {
     final c = context.c;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: Spacing.md),
-      padding: const EdgeInsets.all(Spacing.sm),
+      padding: const EdgeInsets.all(Spacing.md),
       decoration: BoxDecoration(
         color: c.surface1,
         borderRadius: Radii.cardR,
-        border: Border.all(color: c.outline),
+        border: Border.all(color: c.success.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: c.success.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.lock_outline, size: 18, color: c.success),
-          const SizedBox(width: Spacing.xs),
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: c.success.withOpacity(0.12),
+              borderRadius: Radii.badgeR,
+              border: Border.all(color: c.success.withOpacity(0.3)),
+            ),
+            child: Icon(Icons.shield_outlined, size: 18, color: c.success),
+          ),
+          const SizedBox(width: Spacing.sm),
           Expanded(
-            child: Text(
-              'BitDrop has no servers. Your music and your account stay '
-              'between this phone and your cloud.',
-              style: context.t.bodySmall.copyWith(color: c.textSecondary),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Zero-Knowledge Direct Architecture',
+                  style: context.t.label.copyWith(
+                    color: c.textPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'BitDrop operates with zero middleman servers. Your cloud '
+                  'credentials and music files stay strictly between this phone '
+                  'and your storage, streaming directly into the DAC.',
+                  style: context.t.bodySmall.copyWith(
+                    color: c.textSecondary,
+                    height: 1.35,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -317,11 +404,18 @@ class _ConnectDriveCard extends ConsumerWidget {
     return Container(
       margin: const EdgeInsets.fromLTRB(
           Spacing.md, Spacing.xs, Spacing.md, Spacing.xs),
-      padding: const EdgeInsets.all(Spacing.sm),
+      padding: const EdgeInsets.all(Spacing.md),
       decoration: BoxDecoration(
         color: c.surface1,
         borderRadius: Radii.cardR,
-        border: Border.all(color: accent.withOpacity(0.5)),
+        border: Border.all(color: accent.withOpacity(0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -329,16 +423,17 @@ class _ConnectDriveCard extends ConsumerWidget {
           Row(
             children: [
               Container(
-                width: 38,
-                height: 38,
+                width: 42,
+                height: 42,
                 decoration: BoxDecoration(
-                  color: c.surface3,
+                  color: c.surface2,
                   borderRadius: Radii.chipR,
+                  border: Border.all(color: c.outline.withOpacity(0.4)),
                 ),
                 child: Icon(
                   supported ? Icons.add_to_drive : Icons.desktop_access_disabled,
-                  size: 20,
-                  color: supported ? c.textSecondary : accent,
+                  size: 22,
+                  color: supported ? c.accent : accent,
                 ),
               ),
               const SizedBox(width: Spacing.sm),
@@ -509,51 +604,273 @@ class _CacheCardState extends ConsumerState<_CacheCard> {
     final storage = ref.watch(storageProvider).valueOrNull;
     final bytes = storage?.cacheBytes ?? 0;
     final artwork = storage?.artworkBytes ?? 0;
+    final totalBytes = bytes + artwork;
     final core = ref.read(coreProvider);
     final tracks = core is LiveBitDropCore ? core.cachedTrackCount : 0;
+
+    final audioRatio = totalBytes > 0 ? (bytes / totalBytes) : 0.0;
+    final artRatio = totalBytes > 0 ? (artwork / totalBytes) : 0.0;
 
     return Padding(
       padding:
           const EdgeInsets.fromLTRB(Spacing.md, Spacing.xs, Spacing.md, 0),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(Spacing.sm),
-          child: Row(
-            children: [
-              Icon(Icons.sd_storage_outlined, size: 20, color: c.textSecondary),
-              const SizedBox(width: Spacing.sm),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Streamed audio', style: context.t.titleSmall),
-                    const SizedBox(height: 2),
-                    Text(
-                      bytes == 0
-                          ? 'Nothing cached yet'
-                          : '${Fmt.bytes(bytes)} · '
-                              '$tracks track${tracks == 1 ? '' : 's'}',
-                      style: context.t.monoLabel
-                          .copyWith(color: c.textSecondary),
-                    ),
-                    if (artwork > 0) ...[
-                      const SizedBox(height: 2),
+      child: Container(
+        decoration: BoxDecoration(
+          color: c.surface1,
+          borderRadius: Radii.cardR,
+          border: Border.all(color: c.outline.withOpacity(0.45)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.all(Spacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header: Icon + Title + Total size pill
+            Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: c.surface2,
+                    borderRadius: Radii.badgeR,
+                    border: Border.all(color: c.outline.withOpacity(0.4)),
+                  ),
+                  child: Icon(
+                    Icons.sd_storage_outlined,
+                    size: 18,
+                    color: c.accent,
+                  ),
+                ),
+                const SizedBox(width: Spacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        'Cover art ${Fmt.bytes(artwork)} is kept',
-                        style: context.t.monoLabel
-                            .copyWith(color: c.textTertiary),
+                        'Local Storage & Cache',
+                        style: context.t.titleSmall.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        'Streaming audio chunks & artwork cache',
+                        style: context.t.bodySmall.copyWith(
+                          color: c.textSecondary,
+                          fontSize: 11,
+                        ),
                       ),
                     ],
-                  ],
+                  ),
                 ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: c.surface2,
+                    borderRadius: Radii.badgeR,
+                    border: Border.all(color: c.outline.withOpacity(0.4)),
+                  ),
+                  child: Text(
+                    Fmt.bytes(totalBytes),
+                    style: context.t.monoReadout.copyWith(
+                      color: c.textPrimary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: Spacing.sm),
+
+            // Segmented Gauge Bar
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: SizedBox(
+                height: 8,
+                child: totalBytes == 0
+                    ? Container(color: c.surface3)
+                    : Row(
+                        children: [
+                          if (bytes > 0)
+                            Expanded(
+                              flex: (audioRatio * 100).round().clamp(1, 100),
+                              child: Container(
+                                color: c.accent,
+                              ),
+                            ),
+                          if (bytes > 0 && artwork > 0)
+                            const SizedBox(width: 2),
+                          if (artwork > 0)
+                            Expanded(
+                              flex: (artRatio * 100).round().clamp(1, 100),
+                              child: Container(
+                                color: c.tierNativeRate,
+                              ),
+                            ),
+                        ],
+                      ),
               ),
-              if (bytes > 0)
-                TextButton(
-                  onPressed: _clearing ? null : _confirmClear,
-                  child: Text(_clearing ? 'Clearing…' : 'Clear'),
+            ),
+
+            const SizedBox(height: Spacing.sm),
+
+            // Dual Stat Tiles: Streamed Audio & Cover Art
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(Spacing.xs),
+                    decoration: BoxDecoration(
+                      color: c.surface2.withOpacity(0.55),
+                      borderRadius: Radii.chipR,
+                      border: Border.all(color: c.outline.withOpacity(0.35)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: c.accent,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: Spacing.xs),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                tracks > 0
+                                    ? 'Audio ($tracks trk)'
+                                    : 'Audio Cache',
+                                style: context.t.monoLabel.copyWith(
+                                  color: c.textTertiary,
+                                  fontSize: 9.5,
+                                ),
+                              ),
+                              const SizedBox(height: 1),
+                              Text(
+                                Fmt.bytes(bytes),
+                                style: context.t.monoReadout.copyWith(
+                                  color: c.textPrimary,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 11,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-            ],
-          ),
+                const SizedBox(width: Spacing.xs),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(Spacing.xs),
+                    decoration: BoxDecoration(
+                      color: c.surface2.withOpacity(0.55),
+                      borderRadius: Radii.chipR,
+                      border: Border.all(color: c.outline.withOpacity(0.35)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: c.tierNativeRate,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: Spacing.xs),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Cover Art',
+                                style: context.t.monoLabel.copyWith(
+                                  color: c.textTertiary,
+                                  fontSize: 9.5,
+                                ),
+                              ),
+                              const SizedBox(height: 1),
+                              Text(
+                                artwork == 0
+                                    ? '0 B'
+                                    : '${Fmt.bytes(artwork)} (Kept)',
+                                style: context.t.monoReadout.copyWith(
+                                  color: c.textPrimary,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 11,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: Spacing.sm),
+
+            // Clear Reclaim Action Row
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Reclaim streamed chunk space safely',
+                    style: context.t.bodySmall.copyWith(
+                      color: c.textTertiary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+                OutlinedButton(
+                  onPressed:
+                      (bytes > 0 && !_clearing) ? _confirmClear : null,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: c.error,
+                    side: BorderSide(
+                      color: bytes > 0
+                          ? c.error.withOpacity(0.4)
+                          : c.outline.withOpacity(0.3),
+                    ),
+                    shape: const RoundedRectangleBorder(borderRadius: Radii.badgeR),
+                    minimumSize: const Size(0, 32),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: Spacing.sm, vertical: 4),
+                  ),
+                  child: Text(
+                    _clearing ? 'Clearing…' : 'Clear Audio Cache',
+                    style: context.t.label.copyWith(
+                      color: bytes > 0 ? c.error : c.textTertiary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

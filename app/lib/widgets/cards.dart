@@ -259,199 +259,327 @@ class SourceCard extends StatelessWidget {
       SourceStatus.rateLimited => (
           c.tierResampled,
           Icons.hourglass_top,
-          'Paused · Drive is limiting requests'
+          'Paused · Rate limited'
         ),
       SourceStatus.offline => (c.textSecondary, Icons.cloud_off, 'Offline'),
       SourceStatus.error => (c.error, Icons.error_outline, 'Error'),
     };
 
-    return Card(
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: Radii.cardR,
-          border: needsAction
-              ? Border.all(color: c.tierResampled.withOpacity(0.6))
-              : null,
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surface1,
+        borderRadius: Radii.cardR,
+        border: Border.all(
+          color: needsAction
+              ? c.tierResampled.withOpacity(0.6)
+              : c.accent.withOpacity(0.22),
         ),
-        padding: const EdgeInsets.all(Spacing.sm),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: c.surface3,
-                    borderRadius: Radii.chipR,
-                  ),
-                  child: Icon(Icons.add_to_drive,
-                      size: 20, color: c.textSecondary),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(Spacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header: Emblem + Account info + Status Badge + Menu
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: c.surface2,
+                  borderRadius: Radii.chipR,
+                  border: Border.all(color: c.outline.withOpacity(0.4)),
                 ),
-                const SizedBox(width: Spacing.sm),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(account.provider, style: context.t.titleSmall),
-                      const SizedBox(height: 2),
-                      Text(
-                        account.accountLabel,
-                        style: context.t.bodySmall
-                            .copyWith(color: c.textSecondary),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                child: Center(
+                  child: Icon(
+                    Icons.add_to_drive,
+                    size: 22,
+                    color: c.accent,
+                  ),
+                ),
+              ),
+              const SizedBox(width: Spacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      account.provider,
+                      style: context.t.title.copyWith(
+                        fontWeight: FontWeight.bold,
                       ),
-                    ],
-                  ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      account.accountLabel,
+                      style: context.t.bodySmall.copyWith(
+                        color: c.textSecondary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
-                Row(
+              ),
+              const SizedBox(width: Spacing.xs),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: statusColor.withOpacity(0.35)),
+                ),
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (account.status == SourceStatus.syncing)
-                      SpinningSyncIcon(size: 14, color: statusColor)
+                      SpinningSyncIcon(size: 13, color: statusColor)
                     else
-                      Icon(statusIcon, size: 14, color: statusColor),
+                      Icon(statusIcon, size: 13, color: statusColor),
                     const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        statusText,
-                        style: context.t.label.copyWith(color: statusColor),
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      statusText,
+                      style: context.t.label.copyWith(
+                        color: statusColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                    if (onRemove != null)
-                      PopupMenuButton<void>(
-                        tooltip: 'More',
-                        icon: Icon(Icons.more_vert,
-                            size: 18, color: c.textSecondary),
-                        padding: EdgeInsets.zero,
-                        itemBuilder: (_) => [
-                          PopupMenuItem<void>(
-                            onTap: onRemove,
-                            child: Row(
-                              children: [
-                                Icon(Icons.delete_outline,
-                                    size: 18, color: c.error),
-                                const SizedBox(width: Spacing.xs),
-                                Text('Remove source',
-                                    style: TextStyle(color: c.error)),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
                   ],
                 ),
+              ),
+              if (onRemove != null)
+                PopupMenuButton<void>(
+                  tooltip: 'More',
+                  icon: Icon(Icons.more_vert, size: 18, color: c.textSecondary),
+                  padding: EdgeInsets.zero,
+                  itemBuilder: (_) => [
+                    PopupMenuItem<void>(
+                      onTap: onRemove,
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete_outline, size: 18, color: c.error),
+                          const SizedBox(width: Spacing.xs),
+                          Text('Remove source',
+                              style: TextStyle(color: c.error)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+
+          // Activity progress bar if syncing or retrying
+          if (account.activityLabel != null) ...[
+            const SizedBox(height: Spacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    account.retryInSeconds != null
+                        ? '${account.activityLabel} · retrying in ${account.retryInSeconds}s'
+                        : account.activityLabel!,
+                    style: context.t.bodySmall,
+                  ),
+                ),
+                if (account.activityProgress != null)
+                  Text(
+                    Fmt.percent(account.activityProgress!),
+                    style: context.t.monoReadout
+                        .copyWith(color: c.textSecondary),
+                  ),
               ],
             ),
-            const SizedBox(height: Spacing.xs),
-            Text(
-              'Synced ${Fmt.relativeTime(account.lastSync)} · '
-              '${Fmt.count(account.trackCount)} tracks · '
-              '${account.folderCount} folder'
-              '${account.folderCount == 1 ? '' : 's'}'
-              // One more fact on the line that already carries the facts,
-              // rather than a disclosure button to reveal it.
-              '${account.changesSinceLastSync != null ? ' · ${account.changesSinceLastSync}' : ''}',
-              style: context.t.monoLabel.copyWith(color: c.textSecondary),
-            ),
-            if (account.activityLabel != null) ...[
-              const SizedBox(height: Spacing.xs),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      account.retryInSeconds != null
-                          ? '${account.activityLabel} · retrying in '
-                              '${account.retryInSeconds}s'
-                          : account.activityLabel!,
-                      style: context.t.bodySmall,
-                    ),
-                  ),
-                  if (account.activityProgress != null)
-                    Text(
-                      Fmt.percent(account.activityProgress!),
-                      style: context.t.monoReadout
-                          .copyWith(color: c.textSecondary),
-                    ),
-                ],
+            const SizedBox(height: Spacing.xxs),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: SizedBox(
+                height: 5,
+                child: LinearProgressIndicator(
+                  value: account.activityProgress,
+                  backgroundColor: c.surface3,
+                  color: account.status == SourceStatus.rateLimited
+                      ? c.tierResampled
+                      : c.accent,
+                ),
               ),
-              const SizedBox(height: Spacing.xxs),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: SizedBox(
-                  height: 4,
-                  child: LinearProgressIndicator(
-                    value: account.activityProgress,
-                    backgroundColor: c.surface3,
-                    color: account.status == SourceStatus.rateLimited
-                        ? c.tierResampled
-                        : c.accent,
-                  ),
+            ),
+          ],
+
+          const SizedBox(height: Spacing.sm),
+
+          // Audiophile Metrics HUD
+          Row(
+            children: [
+              Expanded(
+                child: _SourceMetricTile(
+                  label: 'Tracks',
+                  value: Fmt.count(account.trackCount),
+                  sublabel: 'Lossless & Hi-Res',
+                ),
+              ),
+              const SizedBox(width: Spacing.xs),
+              Expanded(
+                child: _SourceMetricTile(
+                  label: 'Folders',
+                  value: '${account.folderCount}',
+                  sublabel: 'Music Vault',
+                ),
+              ),
+              const SizedBox(width: Spacing.xs),
+              Expanded(
+                child: _SourceMetricTile(
+                  label: 'Last Sync',
+                  value: account.lastSync != null
+                      ? Fmt.relativeTime(account.lastSync)
+                      : 'Never',
+                  sublabel: account.changesSinceLastSync ?? 'Direct Stream',
                 ),
               ),
             ],
-            const SizedBox(height: Spacing.xs),
-            Wrap(
-              spacing: Spacing.xs,
-              runSpacing: Spacing.xxs,
-              children: [
-                if (needsAction && onReconnect != null)
-                  FilledButton.icon(
+          ),
+
+          const SizedBox(height: Spacing.sm),
+
+          // Actions
+          Row(
+            children: [
+              if (needsAction && onReconnect != null)
+                Expanded(
+                  child: FilledButton.icon(
                     onPressed: onReconnect,
                     icon: const Icon(Icons.refresh, size: 16),
                     label: const Text('Reconnect'),
                     style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 36),
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: Spacing.sm),
+                      shape: const RoundedRectangleBorder(borderRadius: Radii.chipR),
+                      minimumSize: const Size(0, 38),
                     ),
                   ),
-                if (onRescan != null && account.status != SourceStatus.syncing)
-                  _SmallButton(
-                      label: 'Rescan', icon: Icons.sync, onTap: onRescan!),
-                if (onCancelSync != null && account.status == SourceStatus.syncing)
-                  _SmallButton(
-                      label: 'Stop Sync', icon: Icons.cancel_outlined, onTap: onCancelSync!),
-
-                if (onEditFolders != null)
-                  _SmallButton(
-                      label: 'Edit folders',
-                      icon: Icons.folder_outlined,
-                      onTap: onEditFolders!),
+                ),
+              if (onRescan != null && account.status != SourceStatus.syncing)
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: onRescan,
+                    icon: const Icon(Icons.sync, size: 15),
+                    label: const Text('Rescan'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: c.surface3,
+                      foregroundColor: c.textPrimary,
+                      side: BorderSide(color: c.outline.withOpacity(0.5)),
+                      shape: const RoundedRectangleBorder(borderRadius: Radii.chipR),
+                      minimumSize: const Size(0, 38),
+                    ),
+                  ),
+                ),
+              if (onCancelSync != null &&
+                  account.status == SourceStatus.syncing)
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: onCancelSync,
+                    icon: const Icon(Icons.cancel_outlined, size: 15),
+                    label: const Text('Stop Sync'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: c.error.withOpacity(0.12),
+                      foregroundColor: c.error,
+                      side: BorderSide(color: c.error.withOpacity(0.35)),
+                      shape: const RoundedRectangleBorder(borderRadius: Radii.chipR),
+                      minimumSize: const Size(0, 38),
+                    ),
+                  ),
+                ),
+              if (onEditFolders != null) ...[
+                const SizedBox(width: Spacing.xs),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onEditFolders,
+                    icon: const Icon(Icons.folder_outlined, size: 15),
+                    label: const Text('Edit folders'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: c.textSecondary,
+                      side: BorderSide(color: c.outline.withOpacity(0.6)),
+                      shape: const RoundedRectangleBorder(borderRadius: Radii.chipR),
+                      minimumSize: const Size(0, 38),
+                    ),
+                  ),
+                ),
               ],
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
     );
   }
 }
 
-class _SmallButton extends StatelessWidget {
-  const _SmallButton({
+class _SourceMetricTile extends StatelessWidget {
+  const _SourceMetricTile({
     required this.label,
-    required this.icon,
-    required this.onTap,
+    required this.value,
+    required this.sublabel,
   });
 
   final String label;
-  final IconData icon;
-  final VoidCallback onTap;
+  final String value;
+  final String sublabel;
 
   @override
-  Widget build(BuildContext context) => OutlinedButton.icon(
-        onPressed: onTap,
-        icon: Icon(icon, size: 15),
-        label: Text(label),
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(0, 36),
-          padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
-          textStyle: context.t.label,
-        ),
-      );
+  Widget build(BuildContext context) {
+    final c = context.c;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: Spacing.xs,
+        vertical: Spacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: c.surface2.withOpacity(0.55),
+        borderRadius: Radii.chipR,
+        border: Border.all(color: c.outline.withOpacity(0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: context.t.monoLabel.copyWith(
+              color: c.textTertiary,
+              fontSize: 9,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: context.t.titleSmall.copyWith(
+              color: c.textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 1),
+          Text(
+            sublabel,
+            style: context.t.monoLabel.copyWith(
+              color: c.textSecondary,
+              fontSize: 9,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Compact current-output card for Home.
