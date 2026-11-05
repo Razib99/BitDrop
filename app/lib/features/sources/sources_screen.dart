@@ -18,6 +18,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/cards.dart';
 import '../../widgets/common.dart';
+import '../../widgets/indicators.dart';
 
 /// Connected cloud accounts.
 ///
@@ -365,6 +366,14 @@ class _ConnectDriveCard extends ConsumerWidget {
             const SizedBox(height: Spacing.sm),
             Row(
               children: [
+                if (scan.phase == SyncPhase.listing ||
+                    scan.phase == SyncPhase.tags) ...[
+                  SpinningSyncIcon(size: 14, color: c.accent),
+                  const SizedBox(width: Spacing.xs),
+                ] else if (scan.phase == SyncPhase.paused) ...[
+                  Icon(Icons.hourglass_top, size: 14, color: c.tierResampled),
+                  const SizedBox(width: Spacing.xs),
+                ],
                 Expanded(
                   child: Text(
                     switch (scan.phase) {

@@ -690,3 +690,67 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
     );
   }
 }
+
+/// A sync icon that continuously rotates while active to indicate ongoing
+/// cloud indexing or file synchronization.
+class SpinningSyncIcon extends StatefulWidget {
+  const SpinningSyncIcon({
+    super.key,
+    this.size = 16.0,
+    this.color,
+    this.isSpinning = true,
+  });
+
+  final double size;
+  final Color? color;
+  final bool isSpinning;
+
+  @override
+  State<SpinningSyncIcon> createState() => _SpinningSyncIconState();
+}
+
+class _SpinningSyncIconState extends State<SpinningSyncIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    if (widget.isSpinning) {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(SpinningSyncIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isSpinning != oldWidget.isSpinning) {
+      if (widget.isSpinning) {
+        _controller.repeat();
+      } else {
+        _controller.stop();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) {
+      return Icon(Icons.sync, size: widget.size, color: widget.color);
+    }
+    return RotationTransition(
+      turns: _controller,
+      child: Icon(Icons.sync, size: widget.size, color: widget.color),
+    );
+  }
+}

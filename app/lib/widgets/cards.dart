@@ -309,7 +309,10 @@ class SourceCard extends StatelessWidget {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(statusIcon, size: 14, color: statusColor),
+                    if (account.status == SourceStatus.syncing)
+                      SpinningSyncIcon(size: 14, color: statusColor)
+                    else
+                      Icon(statusIcon, size: 14, color: statusColor),
                     const SizedBox(width: 4),
                     Flexible(
                       child: Text(

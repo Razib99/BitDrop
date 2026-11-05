@@ -210,11 +210,16 @@ class _ScanCard extends ConsumerWidget {
         children: [
           Row(
             children: [
-              Icon(
-                paused ? Icons.hourglass_top : Icons.sync,
-                size: 16,
-                color: paused ? c.tierResampled : c.accent,
-              ),
+              paused
+                  ? Icon(
+                      Icons.hourglass_top,
+                      size: 16,
+                      color: c.tierResampled,
+                    )
+                  : SpinningSyncIcon(
+                      size: 16,
+                      color: c.accent,
+                    ),
               const SizedBox(width: Spacing.xs),
               Expanded(
                 child: Text(

@@ -74,6 +74,9 @@ class _AppShellState extends ConsumerState<AppShell>
     final sheetController = ref.watch(playerSheetControllerProvider);
     final sheetProgress = sheetController.progress;
 
+    final hasNowPlaying = ref.watch(nowPlayingProvider).valueOrNull != null;
+    final showMiniPlayer = hasNowPlaying && !isHome;
+
     final bottomInset = MediaQuery.paddingOf(context).bottom;
     final navBarHeight = 64.0 + bottomInset;
 
@@ -81,13 +84,15 @@ class _AppShellState extends ConsumerState<AppShell>
       children: [
         const _BannerStack(),
         Expanded(
-          child: Padding(
+          child: AnimatedPadding(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOutCubic,
             padding: EdgeInsets.only(
               bottom: useRail
                   ? 0.0
-                  : (isHome
-                      ? navBarHeight
-                      : (navBarHeight + Sizes.miniPlayerHeight)),
+                  : (showMiniPlayer
+                      ? (navBarHeight + Sizes.miniPlayerHeight)
+                      : navBarHeight),
             ),
             child: widget.child,
           ),
