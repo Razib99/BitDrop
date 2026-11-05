@@ -85,7 +85,7 @@ class BitDropBottomNavBar extends StatelessWidget {
   }
 }
 
-class _NavBarItem extends StatelessWidget {
+class _NavBarItem extends StatefulWidget {
   const _NavBarItem({
     required this.dest,
     required this.isSelected,
@@ -101,43 +101,97 @@ class _NavBarItem extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_NavBarItem> createState() => _NavBarItemState();
+}
+
+class _NavBarItemState extends State<_NavBarItem> {
+  bool _isPressed = false;
+
+  @override
   Widget build(BuildContext context) {
-    final color = isSelected ? activeColor : inactiveColor;
+    final isSelected = widget.isSelected;
+    final color = isSelected ? widget.activeColor : widget.inactiveColor;
+    final showGlow = isSelected || _isPressed;
 
     return Semantics(
       button: true,
       selected: isSelected,
-      label: dest.label,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          splashColor: Colors.white.withOpacity(0.06),
-          highlightColor: Colors.transparent,
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  dest.icon,
-                  size: 24,
+      label: widget.dest.label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) {
+          setState(() => _isPressed = true);
+        },
+        onTapUp: (_) {
+          setState(() => _isPressed = false);
+        },
+        onTapCancel: () {
+          setState(() => _isPressed = false);
+        },
+        onTap: widget.onTap,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 56,
+                height: 32,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Soft diffuse round radial glow:
+                    // Less transparent close to the icon, fading seamlessly outward to transparent.
+                    // No hard circular edge or square box.
+                    AnimatedScale(
+                      scale: _isPressed ? 1.15 : (isSelected ? 1.0 : 0.8),
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeOutCubic,
+                      child: AnimatedOpacity(
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutCubic,
+                        opacity: showGlow ? 1.0 : 0.0,
+                        child: Container(
+                          width: 48,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: RadialGradient(
+                              center: Alignment.center,
+                              radius: 0.85,
+                              colors: [
+                                Colors.white.withOpacity(_isPressed ? 0.28 : 0.18),
+                                Colors.white.withOpacity(_isPressed ? 0.14 : 0.08),
+                                Colors.white.withOpacity(_isPressed ? 0.04 : 0.02),
+                                Colors.transparent,
+                              ],
+                              stops: const [0.0, 0.35, 0.65, 1.0],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      widget.dest.icon,
+                      size: 24,
+                      color: color,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                widget.dest.label,
+                style: TextStyle(
+                  fontSize: 11,
+                  letterSpacing: -0.1,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
                   color: color,
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  dest.label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    letterSpacing: -0.1,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                    color: color,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
           ),
         ),
       ),

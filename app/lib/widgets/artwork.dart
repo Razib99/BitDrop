@@ -138,26 +138,32 @@ class AlbumArtwork extends StatelessWidget {
   Widget _buildPlaceholder(BuildContext context) {
     return Opacity(
       opacity: dimmed ? 0.45 : 1,
-      child: CustomPaint(
-        painter: _ArtworkPainter(
-          seed: artwork.seed,
-          dominant: Color(artwork.dominantColor),
-          outline: context.c.outline,
-        ),
-        child: title == null || size < 56
-            ? null
-            : Center(
-                child: Text(
-                  _initials(title!),
-                  style: TextStyle(
-                    fontFamily: 'Inter',
-                    fontSize: size * 0.26,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white.withOpacity(0.72),
-                    letterSpacing: 1,
+      child: Image.asset(
+        'assets/default_artwork.jpg',
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => CustomPaint(
+          painter: _ArtworkPainter(
+            seed: artwork.seed,
+            dominant: Color(artwork.dominantColor),
+            outline: context.c.outline,
+          ),
+          child: title == null || size < 56
+              ? null
+              : Center(
+                  child: Text(
+                    _initials(title!),
+                    style: TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: size * 0.26,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white.withOpacity(0.72),
+                      letterSpacing: 1,
+                    ),
                   ),
                 ),
-              ),
+        ),
       ),
     );
   }  static String _initials(String title) {

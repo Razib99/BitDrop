@@ -47,6 +47,7 @@ flutter:
   assets:
     - assets/autoeq/
     - assets/google_drive.png
+    - assets/default_artwork.jpg
 
   fonts:
     - family: Inter
