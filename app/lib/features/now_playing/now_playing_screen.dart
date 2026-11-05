@@ -11,6 +11,7 @@ import '../../routing/routes.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../util/format.dart';
+import '../../util/poster_color.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/cache_seek_bar.dart';
 import '../../widgets/common.dart';
@@ -52,6 +53,7 @@ class NowPlayingScreen extends ConsumerWidget {
     return Scaffold(
       body: _AdaptiveBackground(
         artwork: np.track.artwork,
+        trackTitle: np.track.albumTitle,
         enabled: settings.adaptiveColor,
         child: SafeArea(
           child: Column(
@@ -567,30 +569,79 @@ class _SwipeableArt extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return GestureDetector(
-      onHorizontalDragEnd: (d) {
-        final v = d.primaryVelocity ?? 0;
-        if (v < -180) {
-          sendCommand(ref, const Next());
-        } else if (v > 180) {
-          sendCommand(ref, const Previous());
-        }
-      },
-      onLongPress: () => context.push(Routes.album(nowPlaying.track.albumId)),
-      child: Hero(
-        tag: 'art-${nowPlaying.track.albumId}',
-        child: AnimatedSwitcher(
-          duration: Motion.emphasized,
-          switchInCurve: Motion.enter,
-          child: AlbumArtwork(
-            key: ValueKey(nowPlaying.track.id),
-            artwork: nowPlaying.track.artwork,
-            size: size,
-            title: nowPlaying.track.albumTitle,
-            borderRadius: Radii.heroArtR,
+    return FutureBuilder<Color>(
+      future: PosterColor.resolve(nowPlaying.track.artwork,
+          title: nowPlaying.track.albumTitle),
+      initialData: PosterColor.of(nowPlaying.track.artwork),
+      builder: (context, snapshot) {
+        final posterColor =
+            snapshot.data ?? PosterColor.of(nowPlaying.track.artwork);
+
+        return GestureDetector(
+          onHorizontalDragEnd: (d) {
+            final v = d.primaryVelocity ?? 0;
+            if (v < -180) {
+              sendCommand(ref, const Next());
+            } else if (v > 180) {
+              sendCommand(ref, const Previous());
+            }
+          },
+          onLongPress: () =>
+              context.push(Routes.album(nowPlaying.track.albumId)),
+          child: Center(
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Ambient Glassmorphic Aura Glow behind the music poster
+                Container(
+                  width: size * 0.88,
+                  height: size * 0.88,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(size * 0.12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: posterColor.withOpacity(0.48),
+                        blurRadius: 52,
+                        spreadRadius: 8,
+                        offset: const Offset(0, 10),
+                      ),
+                      BoxShadow(
+                        color: posterColor.withOpacity(0.26),
+                        blurRadius: 90,
+                        spreadRadius: 24,
+                      ),
+                    ],
+                  ),
+                ),
+                // Music Poster with Glassmorphic Accent Border
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: Radii.heroArtR,
+                    border: Border.all(
+                      color: posterColor.withOpacity(0.40),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Hero(
+                    tag: 'art-${nowPlaying.track.albumId}',
+                    child: AnimatedSwitcher(
+                      duration: Motion.emphasized,
+                      switchInCurve: Motion.enter,
+                      child: AlbumArtwork(
+                        key: ValueKey(nowPlaying.track.id),
+                        artwork: nowPlaying.track.artwork,
+                        size: size,
+                        title: nowPlaying.track.albumTitle,
+                        borderRadius: Radii.heroArtR,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -859,16 +910,18 @@ class _BottomActions extends ConsumerWidget {
   }
 }
 
-/// Tints the background from the album's dominant colour, with a luminance
-/// clamp so text contrast still passes.
+/// Tints the background from the album's vibrant poster colour, radiating
+/// an ambient aura that flows through the music player window.
 class _AdaptiveBackground extends StatelessWidget {
   const _AdaptiveBackground({
     required this.artwork,
+    this.trackTitle,
     required this.enabled,
     required this.child,
   });
 
   final Artwork artwork;
+  final String? trackTitle;
   final bool enabled;
   final Widget child;
 
@@ -878,25 +931,30 @@ class _AdaptiveBackground extends StatelessWidget {
     if (!enabled) return ColoredBox(color: c.bg, child: child);
 
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final hsl = HSLColor.fromColor(Color(artwork.dominantColor));
-    final tint = hsl
-        .withSaturation((hsl.saturation * (dark ? 0.55 : 0.35)).clamp(0.0, 0.6))
-        .withLightness(dark
-            ? (hsl.lightness * 0.35).clamp(0.06, 0.18)
-            : (hsl.lightness * 1.5).clamp(0.86, 0.97))
-        .toColor();
 
-    return AnimatedContainer(
-      duration: Motion.emphasized,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [tint, c.bg],
-          stops: const [0, 0.7],
-        ),
-      ),
-      child: child,
+    return FutureBuilder<Color>(
+      future: PosterColor.resolve(artwork, title: trackTitle),
+      initialData: PosterColor.of(artwork),
+      builder: (context, snapshot) {
+        final posterColor = snapshot.data ?? PosterColor.of(artwork);
+
+        return AnimatedContainer(
+          duration: Motion.emphasized,
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: const Alignment(0.0, -0.45),
+              radius: 1.25,
+              colors: [
+                posterColor.withOpacity(dark ? 0.35 : 0.22),
+                posterColor.withOpacity(dark ? 0.10 : 0.05),
+                c.bg,
+              ],
+              stops: const [0.0, 0.55, 1.0],
+            ),
+          ),
+          child: child,
+        );
+      },
     );
   }
 }
