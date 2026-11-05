@@ -49,8 +49,10 @@ void main() {
       expect(actions.contains(MediaAction.stop), isTrue);
       expect(actions.contains(MediaAction.skipToNext), isTrue);
       expect(actions.contains(MediaAction.skipToPrevious), isTrue);
-      // Seek is intentionally omitted so Android does not render the scrub bar in notifications
-      expect(actions.contains(MediaAction.seek), isFalse);
+      // Seek is enabled so Android renders the scrub bar when pulled down/expanded
+      expect(actions.contains(MediaAction.seek), isTrue);
+      expect(actions.contains(MediaAction.seekForward), isTrue);
+      expect(actions.contains(MediaAction.seekBackward), isTrue);
       expect(state.androidCompactActionIndices, const [0, 1, 2]);
       expect(state.controls.length, 3);
       expect(state.controls[0].action, MediaAction.skipToPrevious);

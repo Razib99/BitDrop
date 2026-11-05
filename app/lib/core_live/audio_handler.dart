@@ -148,6 +148,9 @@ class BitDropAudioHandler extends BaseAudioHandler
             _controlNext,
           ],
           systemActions: const {
+            MediaAction.seek,
+            MediaAction.seekForward,
+            MediaAction.seekBackward,
             MediaAction.setRepeatMode,
             MediaAction.setShuffleMode,
             MediaAction.play,
@@ -318,6 +321,9 @@ class BitDropAudioHandler extends BaseAudioHandler
         _controlNext,
       ],
       systemActions: const {
+        MediaAction.seek,
+        MediaAction.seekForward,
+        MediaAction.seekBackward,
         MediaAction.setRepeatMode,
         MediaAction.setShuffleMode,
         MediaAction.play,
