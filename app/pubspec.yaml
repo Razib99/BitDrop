@@ -1,7 +1,7 @@
 name: bitdrop
 description: "BitDrop — audiophile cloud music player. UI prototype against the BitDropCore contract."
 publish_to: 'none'
-version: 0.1.0+2019
+version: 0.1.0+2020
 
 environment:
   sdk: ^3.5.3
@@ -46,6 +46,7 @@ flutter:
 
   assets:
     - assets/autoeq/
+    - assets/google_drive.png
 
   fonts:
     - family: Inter

@@ -297,13 +297,11 @@ class SourceCard extends StatelessWidget {
                   borderRadius: Radii.chipR,
                   border: Border.all(color: c.outline.withOpacity(0.4)),
                 ),
-                child: Center(
-                  child: Icon(
-                    Icons.add_to_drive,
-                    size: 22,
-                    color: c.accent,
-                  ),
-                ),
+                padding: const EdgeInsets.all(9),
+                child: account.id == 'drive' ||
+                        account.provider.toLowerCase().contains('drive')
+                    ? Image.asset('assets/google_drive.png', fit: BoxFit.contain)
+                    : Icon(Icons.cloud_queue, size: 22, color: c.accent),
               ),
               const SizedBox(width: Spacing.sm),
               Expanded(
@@ -359,18 +357,41 @@ class SourceCard extends StatelessWidget {
               ),
               if (onRemove != null)
                 PopupMenuButton<void>(
-                  tooltip: 'More',
+                  tooltip: 'Options',
                   icon: Icon(Icons.more_vert, size: 18, color: c.textSecondary),
                   padding: EdgeInsets.zero,
+                  elevation: 12,
+                  shadowColor: Colors.black.withOpacity(0.6),
+                  color: c.surface2,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(color: c.outline.withOpacity(0.5)),
+                  ),
+                  offset: const Offset(0, 38),
                   itemBuilder: (_) => [
                     PopupMenuItem<void>(
                       onTap: onRemove,
+                      height: 44,
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.delete_outline, size: 18, color: c.error),
-                          const SizedBox(width: Spacing.xs),
-                          Text('Remove source',
-                              style: TextStyle(color: c.error)),
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: c.error.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(Icons.delete_outline,
+                                size: 16, color: c.error),
+                          ),
+                          const SizedBox(width: Spacing.sm),
+                          Text(
+                            'Disconnect source',
+                            style: context.t.label.copyWith(
+                              color: c.error,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ],
                       ),
                     ),

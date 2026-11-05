@@ -69,9 +69,10 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
         ListView(
           padding: const EdgeInsets.only(bottom: Spacing.xxl),
           children: [
+            const SizedBox(height: Spacing.md),
             Padding(
               padding: const EdgeInsets.fromLTRB(
-                  Spacing.md, Spacing.xs, Spacing.xs, Spacing.xs),
+                  Spacing.md, 0, Spacing.xs, Spacing.xs),
               child: Row(
                 children: [
                   Column(
@@ -101,7 +102,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 3),
                       Text(
                         'Direct-to-DAC lossless cloud vaults',
                         style: context.t.bodySmall
@@ -118,12 +119,13 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                 ],
               ),
             ),
+            const SizedBox(height: Spacing.sm),
             if (sources.isEmpty) _ConnectDriveCard(scan: scan),
             if (sources.isNotEmpty)
               for (final s in sources)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
-                      Spacing.md, Spacing.xs, Spacing.md, 0),
+                      Spacing.md, 0, Spacing.md, 0),
                   child: SourceCard(
                     account: s,
                     onRescan: s.id == 'drive'
@@ -223,7 +225,18 @@ class _ProviderTile extends StatelessWidget {
     return Opacity(
       opacity: available ? 1 : 0.55,
       child: ListTile(
-        leading: Icon(icon, color: available ? c.accent : c.textTertiary),
+        leading: name == 'Google Drive'
+            ? Container(
+                width: 32,
+                height: 32,
+                padding: const EdgeInsets.all(5),
+                decoration: BoxDecoration(
+                  color: c.surface2,
+                  borderRadius: Radii.chipR,
+                ),
+                child: Image.asset('assets/google_drive.png', fit: BoxFit.contain),
+              )
+            : Icon(icon, color: available ? c.accent : c.textTertiary),
         title: Text(name),
         subtitle: Text(detail),
         trailing: available
@@ -430,11 +443,11 @@ class _ConnectDriveCard extends ConsumerWidget {
                   borderRadius: Radii.chipR,
                   border: Border.all(color: c.outline.withOpacity(0.4)),
                 ),
-                child: Icon(
-                  supported ? Icons.add_to_drive : Icons.desktop_access_disabled,
-                  size: 22,
-                  color: supported ? c.accent : accent,
-                ),
+                padding: const EdgeInsets.all(9),
+                child: supported
+                    ? Image.asset('assets/google_drive.png', fit: BoxFit.contain)
+                    : Icon(Icons.desktop_access_disabled,
+                        size: 22, color: accent),
               ),
               const SizedBox(width: Spacing.sm),
               Expanded(

@@ -676,6 +676,11 @@ class _ConfirmBodyState extends State<_ConfirmBody> {
   Widget build(BuildContext context) {
     final enabled = widget.checkboxLabel == null || _checked;
     return AlertDialog(
+      backgroundColor: context.c.surface1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: context.c.outline.withOpacity(0.4)),
+      ),
       title: Text(widget.title),
       content: Column(
         mainAxisSize: MainAxisSize.min,
