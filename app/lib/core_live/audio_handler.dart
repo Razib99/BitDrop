@@ -30,6 +30,27 @@ Map<String, dynamic> cloudTrackExtras({
 
 class BitDropAudioHandler extends BaseAudioHandler
     with SeekHandler, QueueHandler {
+  static const _controlPrevious = MediaControl(
+    androidIcon: 'drawable/ic_notif_prev',
+    label: 'Previous',
+    action: MediaAction.skipToPrevious,
+  );
+  static const _controlPlay = MediaControl(
+    androidIcon: 'drawable/ic_notif_play',
+    label: 'Play',
+    action: MediaAction.play,
+  );
+  static const _controlPause = MediaControl(
+    androidIcon: 'drawable/ic_notif_pause',
+    label: 'Pause',
+    action: MediaAction.pause,
+  );
+  static const _controlNext = MediaControl(
+    androidIcon: 'drawable/ic_notif_next',
+    label: 'Next',
+    action: MediaAction.skipToNext,
+  );
+
   StreamSubscription<rust.EngineEvent>? _eventsSubscription;
   AudioSession? _audioSession;
   StreamSubscription<void>? _becomingNoisySub;
@@ -114,13 +135,29 @@ class BitDropAudioHandler extends BaseAudioHandler
           _reportCloudError(message);
         }
       case rust.EngineEvent_PlaybackState(:final isPlaying, :final isBuffering):
+        int posMs = 0;
+        try {
+          posMs = _engine.position;
+        } catch (_) {}
         playbackState.add(playbackState.value.copyWith(
           playing: _playbackError == null && isPlaying,
+          updatePosition: Duration(milliseconds: posMs),
           controls: [
-            MediaControl.skipToPrevious,
-            isPlaying ? MediaControl.pause : MediaControl.play,
-            MediaControl.skipToNext,
+            _controlPrevious,
+            isPlaying ? _controlPause : _controlPlay,
+            _controlNext,
           ],
+          systemActions: const {
+            MediaAction.setRepeatMode,
+            MediaAction.setShuffleMode,
+            MediaAction.play,
+            MediaAction.pause,
+            MediaAction.playPause,
+            MediaAction.stop,
+            MediaAction.skipToNext,
+            MediaAction.skipToPrevious,
+          },
+          androidCompactActionIndices: const [0, 1, 2],
           processingState: _playbackError != null
               ? AudioProcessingState.error
               : isBuffering
@@ -151,10 +188,8 @@ class BitDropAudioHandler extends BaseAudioHandler
       case rust.EngineEvent_TokenRefreshRequested(:final requestId):
         unawaited(_refreshToken(requestId));
       case rust.EngineEvent_PositionUpdate(
-          :final positionMs,
-          :final durationMs
+          :final durationMs,
         ):
-        final currentPos = Duration(milliseconds: positionMs);
         final currentDur = mediaItem.value?.duration?.inMilliseconds ?? 0;
         if (durationMs > 0 &&
             currentDur != durationMs &&
@@ -162,24 +197,28 @@ class BitDropAudioHandler extends BaseAudioHandler
           mediaItem.add(mediaItem.value!
               .copyWith(duration: Duration(milliseconds: durationMs)));
         }
-        playbackState.add(playbackState.value.copyWith(
-          updatePosition: currentPos,
-        ));
+        // Deliberately do not call playbackState.add on high-frequency PositionUpdate.
+        // PositionUpdate is broadcast on every audio frame (~30-50Hz). Calling
+        // playbackState.add at 50Hz floods Android with notification rebuilds, which drops
+        // touches and breaks notification buttons. Android MediaSession computes live
+        // elapsed playback position automatically from updatePosition and speed.
       case rust.EngineEvent_BufferTelemetry(
           :final bufferedMs,
           :final fetchesInFlight
         ):
-        final pos = playbackState.value.position;
-        playbackState.add(playbackState.value.copyWith(
-          bufferedPosition: pos + Duration(milliseconds: bufferedMs),
-          processingState: _playbackError != null
-              ? AudioProcessingState.error
-              : fetchesInFlight > 0 && bufferedMs < 500
-                  ? AudioProcessingState.buffering
-                  : (mediaItem.value != null
-                      ? AudioProcessingState.ready
-                      : AudioProcessingState.idle),
-        ));
+        final newBuffering = fetchesInFlight > 0 && bufferedMs < 500;
+        final newProcessingState = _playbackError != null
+            ? AudioProcessingState.error
+            : newBuffering
+                ? AudioProcessingState.buffering
+                : (mediaItem.value != null
+                    ? AudioProcessingState.ready
+                    : AudioProcessingState.idle);
+        if (playbackState.value.processingState != newProcessingState) {
+          playbackState.add(playbackState.value.copyWith(
+            processingState: newProcessingState,
+          ));
+        }
       case rust.EngineEvent_LimiterTelemetry():
         break;
     }
@@ -274,14 +313,11 @@ class BitDropAudioHandler extends BaseAudioHandler
 
     playbackState.add(playbackState.value.copyWith(
       controls: [
-        MediaControl.skipToPrevious,
-        isPlaying ? MediaControl.pause : MediaControl.play,
-        MediaControl.skipToNext,
+        _controlPrevious,
+        isPlaying ? _controlPause : _controlPlay,
+        _controlNext,
       ],
       systemActions: const {
-        MediaAction.seek,
-        MediaAction.seekForward,
-        MediaAction.seekBackward,
         MediaAction.setRepeatMode,
         MediaAction.setShuffleMode,
         MediaAction.play,

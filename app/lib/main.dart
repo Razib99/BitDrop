@@ -34,6 +34,8 @@ Future<void> main() async {
         androidNotificationChannelName: 'BitDrop Playback',
         androidNotificationOngoing: false,
         androidStopForegroundOnPause: false,
+        androidNotificationIcon: 'drawable/ic_stat_bitdrop',
+        notificationColor: Color(0xFF8B93FF),
       ),
     );
   } catch (e, st) {

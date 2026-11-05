@@ -49,7 +49,13 @@ void main() {
       expect(actions.contains(MediaAction.stop), isTrue);
       expect(actions.contains(MediaAction.skipToNext), isTrue);
       expect(actions.contains(MediaAction.skipToPrevious), isTrue);
-      expect(actions.contains(MediaAction.seek), isTrue);
+      // Seek is intentionally omitted so Android does not render the scrub bar in notifications
+      expect(actions.contains(MediaAction.seek), isFalse);
+      expect(state.androidCompactActionIndices, const [0, 1, 2]);
+      expect(state.controls.length, 3);
+      expect(state.controls[0].action, MediaAction.skipToPrevious);
+      expect(state.controls[1].action, MediaAction.play);
+      expect(state.controls[2].action, MediaAction.skipToNext);
     });
 
     test('processingState stays ready when paused with a track loaded', () async {
