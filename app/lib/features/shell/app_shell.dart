@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -14,7 +13,6 @@ import '../../theme/tokens.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/common.dart';
 import '../../widgets/expanding_player_sheet.dart';
-import '../dev/scenario_sheet.dart';
 
 /// Navigation frame: bottom bar on phones, navigation rail at tablet width.
 ///
@@ -127,10 +125,6 @@ class _AppShellState extends ConsumerState<AppShell>
                     destinations: destinations,
                     index: index,
                     onSelect: (i) {
-                      if (destinations[i].path == Routes.library) {
-                        ref.read(libraryTabProvider.notifier).state =
-                            LibraryTab.tracks;
-                      }
                       context.go(destinations[i].path);
                     },
                   ),
@@ -171,10 +165,6 @@ class _AppShellState extends ConsumerState<AppShell>
                       child: BitDropBottomNavBar(
                         selectedIndex: index,
                         onDestinationSelected: (i) {
-                          if (destinations[i].path == Routes.library) {
-                            ref.read(libraryTabProvider.notifier).state =
-                                LibraryTab.tracks;
-                          }
                           context.go(destinations[i].path);
                         },
                         destinations: destinations,
@@ -190,14 +180,8 @@ class _AppShellState extends ConsumerState<AppShell>
                 ),
               ],
             ),
-      floatingActionButton: kDebugMode && sheetController.isCollapsed
-          ? Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.sizeOf(context).height * 0.08,
-              ),
-              child: const ScenarioFab(),
-            )
-          : null,
+      // REMINDER: Re-evaluate scenario switcher / developer entry point before publishing production release.
+      floatingActionButton: null,
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }

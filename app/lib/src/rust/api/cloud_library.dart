@@ -198,6 +198,11 @@ bool cloudCacheRemoveTrack(
     RustLib.instance.api.crateApiCloudLibraryCloudCacheRemoveTrack(
         fileId: fileId, cacheDir: cacheDir);
 
+/// Sync missing artwork: propagates existing album art to untagged tracks sharing the same album,
+/// and fetches authentic online posters from Deezer and iTunes for tracks still lacking artwork.
+Future<int> cloudLibrarySyncMissingArtwork() =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibrarySyncMissingArtwork();
+
 /// Materialized album summary for instant grid/list rendering.
 class AlbumSummary {
   final String albumKey;

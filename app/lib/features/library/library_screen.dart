@@ -411,9 +411,14 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
   Map<String, int> _letters(List<Track> tracks) {
     final out = <String, int>{};
     for (var i = 0; i < tracks.length; i++) {
-      final ch =
-          tracks[i].title.isEmpty ? '#' : tracks[i].title[0].toUpperCase();
-      final key = RegExp(r'[A-Z]').hasMatch(ch) ? ch : '#';
+      final title = tracks[i].title;
+      if (title.isEmpty) {
+        out.putIfAbsent('#', () => i);
+        continue;
+      }
+      final ch = title[0].toUpperCase();
+      final code = ch.codeUnitAt(0);
+      final key = (code >= 65 && code <= 90) ? ch : '#';
       out.putIfAbsent(key, () => i);
     }
     return out;

@@ -124,6 +124,7 @@ class CloudLibrary {
     _opened = true;
     await _loadFolders();
     await _reload();
+    unawaited(_artworkPass());
   }
 
   Future<void> _loadFolders() async {
@@ -154,6 +155,33 @@ class CloudLibrary {
     await _reload();
   }
 
+  /// Proactively fetches missing posters and synchronizes album artwork.
+  Future<void> syncArtwork() async {
+    await open();
+    await _artworkPass();
+  }
+
+  Future<void> _artworkPass() async {
+    try {
+      final artDir = Directory('$_cacheDir/artwork');
+      if (artDir.existsSync()) {
+        final bad = File('${artDir.path}/unknown_artist__unknown_album.img');
+        if (bad.existsSync()) {
+          try {
+            bad.deleteSync();
+          } catch (_) {}
+        }
+      }
+      final updated = await rust.cloudLibrarySyncMissingArtwork();
+      if (updated > 0) {
+        debugPrint('[library] artwork sync updated $updated track posters');
+        await _reload();
+      }
+    } catch (e) {
+      debugPrint('[library] artwork pass error: $e');
+    }
+  }
+
   /// Walks Drive, then reads tags. Safe to call again; a second call while a
   /// scan is running is ignored rather than starting a competing walk.
   Future<void> scan({List<DriveFolder>? only}) async {
@@ -173,6 +201,8 @@ class CloudLibrary {
       await _listPass(targets);
       if (_cancel?.isCompleted ?? false) return;
       await _tagPass();
+      if (_cancel?.isCompleted ?? false) return;
+      await _artworkPass();
     } catch (e) {
       debugPrint('[library] scan failed: $e');
       _status.add(SyncStatus(phase: SyncPhase.error, detail: '$e'));

@@ -42,14 +42,20 @@ class AlbumArtwork extends StatelessWidget {
     Widget content;
     
     String? uri = artwork.uri;
+    if (uri != null && uri.contains('unknown_artist__unknown_album')) {
+      uri = null;
+    }
+
     if ((uri == null || uri.isEmpty) && title != null && title!.isNotEmpty) {
       try {
         final cacheDir = globalArtworkCacheDir;
         if (cacheDir.isNotEmpty) {
           final clean = title!.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-          final f = File('$cacheDir/$clean.img');
-          if (f.existsSync()) {
-            uri = f.path;
+          if (!clean.contains('unknown_artist__unknown_album')) {
+            final f = File('$cacheDir/$clean.img');
+            if (f.existsSync() && f.lengthSync() > 0) {
+              uri = f.path;
+            }
           }
         }
       } catch (_) {}
@@ -69,7 +75,9 @@ class AlbumArtwork extends StatelessWidget {
         if (path.startsWith('file://')) {
           path = Uri.parse(path).toFilePath();
         }
-        if (_imageCache.containsKey(path)) {
+        if (path.contains('unknown_artist__unknown_album')) {
+          content = _buildPlaceholder(context);
+        } else if (_imageCache.containsKey(path)) {
           content = Image.memory(
             _imageCache[path]!,
             width: size,
@@ -116,8 +124,11 @@ class AlbumArtwork extends StatelessWidget {
   static final Map<String, Uint8List> _imageCache = {};
 
   Future<Uint8List?> _loadArt(String path) async {
+    if (path.contains('unknown_artist__unknown_album')) return null;
     if (_imageCache.containsKey(path)) return _imageCache[path];
     try {
+      final f = File(path);
+      if (!f.existsSync() || f.lengthSync() == 0) return null;
       final lower = path.toLowerCase();
       final isImage = lower.endsWith('.img') ||
           lower.endsWith('.jpg') ||
@@ -125,7 +136,7 @@ class AlbumArtwork extends StatelessWidget {
           lower.endsWith('.png') ||
           lower.endsWith('.webp');
       final Uint8List? data = isImage
-          ? await File(path).readAsBytes()
+          ? await f.readAsBytes()
           : rust.getCoverArt(path: path);
       if (data != null && data.isNotEmpty) _imageCache[path] = data;
       return data;

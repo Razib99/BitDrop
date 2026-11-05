@@ -504,14 +504,24 @@ fn parse_filename_metadata(name: &str) -> (String, String, String, u32) {
 async fn fetch_online_cover_art(artist: &str, album: &str, title: &str) -> Option<Vec<u8>> {
     let clean_artist = artist.trim();
     let clean_album = album.trim();
-    let clean_title = title.trim();
+    let raw_title = title.trim();
+    let (_, pure_title) = parse_track_and_title(raw_title);
+    let title_clean = if !pure_title.is_empty() {
+        pure_title.trim()
+    } else {
+        raw_title
+    };
+
+    let has_valid_album = !clean_album.is_empty()
+        && clean_album.to_lowercase() != "unknown_album"
+        && clean_album.to_lowercase() != "unknown album";
+    let has_valid_artist = !clean_artist.is_empty()
+        && clean_artist.to_lowercase() != "unknown_artist"
+        && clean_artist.to_lowercase() != "unknown artist";
 
     // 1. Search Deezer by album & artist
-    if !clean_album.is_empty() && clean_album != "unknown_album" && clean_album != "Unknown Album" {
-        let q = if !clean_artist.is_empty()
-            && clean_artist != "unknown_artist"
-            && clean_artist != "Unknown Artist"
-        {
+    if has_valid_album {
+        let q = if has_valid_artist {
             format!("{} {}", clean_artist, clean_album)
         } else {
             clean_album.to_string()
@@ -552,47 +562,43 @@ async fn fetch_online_cover_art(artist: &str, album: &str, title: &str) -> Optio
         }
     }
 
-    // 2. Search iTunes by artist & album / title
-    let itunes_term = if !clean_album.is_empty() && !clean_artist.is_empty() {
-        format!("{} {}", clean_artist, clean_album)
-    } else if !clean_artist.is_empty() && !clean_title.is_empty() {
-        format!("{} {}", clean_artist, clean_title)
-    } else if !clean_album.is_empty() {
-        clean_album.to_string()
-    } else if !clean_title.is_empty() {
-        clean_title.to_string()
-    } else {
-        String::new()
-    };
+    // 2. Search iTunes by album (entity=album)
+    if has_valid_album {
+        let terms = if has_valid_artist {
+            vec![format!("{} {}", clean_artist, clean_album), clean_album.to_string()]
+        } else {
+            vec![clean_album.to_string()]
+        };
 
-    if !itunes_term.is_empty() {
-        let encoded_term = url_encode(&itunes_term);
-        let itunes_url = format!(
-            "https://itunes.apple.com/search?term={}&entity=album&limit=1",
-            encoded_term
-        );
-        if let Ok(resp) = HTTP_CLIENT
-            .get(&itunes_url)
-            .timeout(Duration::from_secs(4))
-            .send()
-            .await
-        {
-            if resp.status().is_success() {
-                if let Ok(json) = resp.json::<serde_json::Value>().await {
-                    if let Some(art_url) = json
-                        .pointer("/results/0/artworkUrl100")
-                        .and_then(|v| v.as_str())
-                    {
-                        let high_res = art_url.replace("100x100bb", "600x600bb");
-                        if let Ok(img_resp) = HTTP_CLIENT
-                            .get(&high_res)
-                            .timeout(Duration::from_secs(5))
-                            .send()
-                            .await
+        for term in terms {
+            let encoded_term = url_encode(&term);
+            let itunes_url = format!(
+                "https://itunes.apple.com/search?term={}&entity=album&limit=1",
+                encoded_term
+            );
+            if let Ok(resp) = HTTP_CLIENT
+                .get(&itunes_url)
+                .timeout(Duration::from_secs(4))
+                .send()
+                .await
+            {
+                if resp.status().is_success() {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        if let Some(art_url) = json
+                            .pointer("/results/0/artworkUrl100")
+                            .and_then(|v| v.as_str())
                         {
-                            if let Ok(b) = img_resp.bytes().await {
-                                if !b.is_empty() {
-                                    return Some(b.to_vec());
+                            let high_res = art_url.replace("100x100bb", "600x600bb");
+                            if let Ok(img_resp) = HTTP_CLIENT
+                                .get(&high_res)
+                                .timeout(Duration::from_secs(5))
+                                .send()
+                                .await
+                            {
+                                if let Ok(b) = img_resp.bytes().await {
+                                    if !b.is_empty() {
+                                        return Some(b.to_vec());
+                                    }
                                 }
                             }
                         }
@@ -602,12 +608,61 @@ async fn fetch_online_cover_art(artist: &str, album: &str, title: &str) -> Optio
         }
     }
 
-    // 3. Fallback: Search track on Deezer if album search didn't match
-    if !clean_title.is_empty() {
-        let q = if !clean_artist.is_empty() {
-            format!("{} {}", clean_artist, clean_title)
+    // 3. Search iTunes by track title (entity=musicTrack)
+    if !title_clean.is_empty() {
+        let mut track_terms = Vec::new();
+        if has_valid_artist {
+            track_terms.push(format!("{} {}", clean_artist, title_clean));
+        }
+        if has_valid_album {
+            track_terms.push(format!("{} {}", title_clean, clean_album));
+        }
+        track_terms.push(title_clean.to_string());
+
+        for term in track_terms {
+            let encoded_term = url_encode(&term);
+            let itunes_url = format!(
+                "https://itunes.apple.com/search?term={}&entity=musicTrack&limit=1",
+                encoded_term
+            );
+            if let Ok(resp) = HTTP_CLIENT
+                .get(&itunes_url)
+                .timeout(Duration::from_secs(4))
+                .send()
+                .await
+            {
+                if resp.status().is_success() {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        if let Some(art_url) = json
+                            .pointer("/results/0/artworkUrl100")
+                            .and_then(|v| v.as_str())
+                        {
+                            let high_res = art_url.replace("100x100bb", "600x600bb");
+                            if let Ok(img_resp) = HTTP_CLIENT
+                                .get(&high_res)
+                                .timeout(Duration::from_secs(5))
+                                .send()
+                                .await
+                            {
+                                if let Ok(b) = img_resp.bytes().await {
+                                    if !b.is_empty() {
+                                        return Some(b.to_vec());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Fallback: Search track on Deezer by title
+    if !title_clean.is_empty() {
+        let q = if has_valid_artist {
+            format!("{} {}", clean_artist, title_clean)
         } else {
-            clean_title.to_string()
+            title_clean.to_string()
         };
         let encoded_q = url_encode(&q);
         let url = format!("https://api.deezer.com/search?q={}&limit=1", encoded_q);
@@ -858,15 +913,19 @@ pub fn cloud_library_scan_tags_batch(
                             } else {
                                 "unknown_artist"
                             };
-                            let album_key = format!(
-                                "{}::{}",
-                                artist_clean.trim().to_lowercase(),
-                                album_clean.trim().to_lowercase()
-                            );
+                            let album_key = if album_clean == "unknown_album" && artist_clean == "unknown_artist" {
+                                format!("track_{}", sanitize_filename(&file_id))
+                            } else {
+                                format!(
+                                    "{}::{}",
+                                    artist_clean.trim().to_lowercase(),
+                                    album_clean.trim().to_lowercase()
+                                )
+                            };
                             let art_target =
                                 art_dir.join(format!("{}.img", sanitize_filename(&album_key)));
 
-                            if art_target.exists() {
+                            if art_target.exists() && art_target.metadata().map(|m| m.len() > 0).unwrap_or(false) {
                                 artwork_path = art_target.to_string_lossy().to_string();
                             } else if let Some(pic) = meta.pictures.first() {
                                 if pic.data_offset + pic.data_length as u64 <= bytes.len() as u64 {
@@ -1062,16 +1121,20 @@ pub fn cloud_library_scan_tags_batch(
                         } else {
                             "unknown_artist"
                         };
-                        let album_key = format!(
-                            "{}::{}",
-                            artist_clean.trim().to_lowercase(),
-                            album_clean.trim().to_lowercase()
-                        );
+                        let album_key = if album_clean == "unknown_album" && artist_clean == "unknown_artist" {
+                            format!("track_{}", sanitize_filename(&file_id))
+                        } else {
+                            format!(
+                                "{}::{}",
+                                artist_clean.trim().to_lowercase(),
+                                album_clean.trim().to_lowercase()
+                            )
+                        };
                         let art_target =
                             art_dir.join(format!("{}.img", sanitize_filename(&album_key)));
                         let mut artwork_path = String::new();
 
-                        if art_target.exists() {
+                        if art_target.exists() && art_target.metadata().map(|m| m.len() > 0).unwrap_or(false) {
                             artwork_path = art_target.to_string_lossy().to_string();
                         } else if let Some(vb) = visual_bytes {
                             if std::fs::write(&art_target, &vb).is_ok() {
@@ -1127,15 +1190,19 @@ pub fn cloud_library_scan_tags_batch(
                     } else {
                         "unknown_artist"
                     };
-                    let album_key = format!(
-                        "{}::{}",
-                        artist_clean.trim().to_lowercase(),
-                        album_clean.trim().to_lowercase()
-                    );
+                    let album_key = if album_clean == "unknown_album" && artist_clean == "unknown_artist" {
+                        format!("track_{}", sanitize_filename(&file_id))
+                    } else {
+                        format!(
+                            "{}::{}",
+                            artist_clean.trim().to_lowercase(),
+                            album_clean.trim().to_lowercase()
+                        )
+                    };
                     let art_target = art_dir.join(format!("{}.img", sanitize_filename(&album_key)));
                     let mut artwork_path = String::new();
 
-                    if art_target.exists() {
+                    if art_target.exists() && art_target.metadata().map(|m| m.len() > 0).unwrap_or(false) {
                         artwork_path = art_target.to_string_lossy().to_string();
                     } else if !album.is_empty() || !title.is_empty() {
                         if let Some(online_b) =
@@ -1554,4 +1621,157 @@ pub fn cloud_cache_is_complete(file_id: String, cache_dir: String, total_size: u
 pub fn cloud_cache_remove_track(file_id: String, cache_dir: String) -> Result<bool, String> {
     crate::cloud::media_source::remove_inactive_cache(std::path::Path::new(&cache_dir), &file_id)
         .map_err(|e| e.to_string())
+}
+
+/// Sync missing artwork: propagates existing album art to untagged tracks sharing the same album,
+/// and fetches authentic online posters from Deezer and iTunes for tracks still lacking artwork.
+pub fn cloud_library_sync_missing_artwork() -> Result<u32, String> {
+    let art_dir = {
+        let base = CACHE_DIR
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone()
+            .ok_or_else(|| "cloud library not opened".to_string())?;
+        let d = PathBuf::from(base).join("artwork");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    };
+
+    // Remove any accidental shared placeholder image
+    let bad_placeholder = art_dir.join("unknown_artist__unknown_album.img");
+    let _ = std::fs::remove_file(&bad_placeholder);
+
+    // 1. First trigger database propagation for tracks that share an album name with existing art
+    with_db(|db| {
+        let _ = db.conn.execute(
+            "UPDATE tracks SET artwork_path = (
+                SELECT a.artwork_path FROM albums_summary a
+                WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
+                  AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+            )
+            WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '' OR tracks.artwork_path LIKE '%unknown_artist__unknown_album%')
+              AND EXISTS (
+                SELECT 1 FROM albums_summary a
+                WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
+                  AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+              )",
+            [],
+        );
+
+        let _ = db.conn.execute(
+            "UPDATE tracks SET artwork_path = (
+                SELECT a.artwork_path FROM albums_summary a
+                WHERE lower(trim(a.album)) = lower(trim(tracks.album))
+                  AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+                LIMIT 1
+            )
+            WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '' OR tracks.artwork_path LIKE '%unknown_artist__unknown_album%')
+              AND tracks.album IS NOT NULL AND trim(tracks.album) != '' AND lower(trim(tracks.album)) != 'unknown album'
+              AND EXISTS (
+                SELECT 1 FROM albums_summary a
+                WHERE lower(trim(a.album)) = lower(trim(tracks.album))
+                  AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+              )",
+            [],
+        );
+        Ok(())
+    })?;
+
+    // 2. Query all tracks that still lack artwork
+    let missing_tracks: Vec<(String, String, String, String, String, String)> = with_db(|db| {
+        let mut stmt = db.conn.prepare(
+            "SELECT file_id, name, title, artist, album, album_artist
+             FROM tracks
+             WHERE artwork_path IS NULL OR artwork_path = '' OR artwork_path LIKE '%unknown_artist__unknown_album%'"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            if let Ok(item) = r {
+                list.push(item);
+            }
+        }
+        Ok(list)
+    })?;
+
+    if missing_tracks.is_empty() {
+        return Ok(0);
+    }
+
+    let art_dir_clone = art_dir.clone();
+    let updated_count = RT.block_on(async move {
+        let mut count = 0u32;
+        for (file_id, name, raw_title, raw_artist, raw_album, raw_album_artist) in missing_tracks {
+            let (fn_title, fn_artist, fn_album, _) = parse_filename_metadata(&name);
+            let title = if !raw_title.is_empty() {
+                raw_title
+            } else if !fn_title.is_empty() {
+                fn_title
+            } else {
+                name.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or(name.clone())
+            };
+            let (_, pure_title) = parse_track_and_title(&title);
+            let clean_title = if !pure_title.is_empty() { pure_title } else { title };
+
+            let clean_artist = if !raw_album_artist.is_empty() {
+                raw_album_artist
+            } else if !raw_artist.is_empty() {
+                raw_artist
+            } else if !fn_artist.is_empty() {
+                fn_artist
+            } else {
+                String::new()
+            };
+
+            let clean_album = if !raw_album.is_empty() {
+                raw_album
+            } else if !fn_album.is_empty() {
+                fn_album
+            } else {
+                String::new()
+            };
+
+            if let Some(art_bytes) = fetch_online_cover_art(&clean_artist, &clean_album, &clean_title).await {
+                let target_file_name = if clean_album.is_empty() || clean_album.to_lowercase() == "unknown album" {
+                    format!("track_{}.img", sanitize_filename(&file_id))
+                } else {
+                    let art_key = format!(
+                        "{}::{}",
+                        if clean_artist.is_empty() { "various_artists" } else { &clean_artist }.trim().to_lowercase(),
+                        clean_album.trim().to_lowercase()
+                    );
+                    format!("{}.img", sanitize_filename(&art_key))
+                };
+                let target_path = art_dir_clone.join(&target_file_name);
+                if std::fs::write(&target_path, &art_bytes).is_ok() {
+                    let path_str = target_path.to_string_lossy().to_string();
+                    let fid = file_id.clone();
+                    let _ = with_db(|db| {
+                        db.set_artwork(&fid, &path_str)?;
+                        Ok(())
+                    });
+                    count += 1;
+                }
+            }
+        }
+        count
+    });
+
+    if updated_count > 0 {
+        with_db_mut(|db| {
+            let _ = db.rebuild_albums_summary();
+            Ok(())
+        })?;
+    }
+
+    Ok(updated_count)
 }

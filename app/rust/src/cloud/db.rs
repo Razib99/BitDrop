@@ -275,18 +275,36 @@ impl MetadataDb {
             [],
         )?;
 
-        // Propagate album artwork to any tracks that lack it
+        // Propagate album artwork to any tracks that lack it (primary: artist::album)
         let _ = self.conn.execute(
             "UPDATE tracks SET artwork_path = (
                 SELECT a.artwork_path FROM albums_summary a
                 WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
-                  AND a.artwork_path IS NOT NULL AND a.artwork_path != ''
+                  AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
             )
-            WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '')
+            WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '' OR tracks.artwork_path LIKE '%unknown_artist__unknown_album%')
               AND EXISTS (
                 SELECT 1 FROM albums_summary a
                 WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
-                  AND a.artwork_path IS NOT NULL AND a.artwork_path != ''
+                  AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+              )",
+            [],
+        );
+
+        // Secondary propagation by album title (e.g. soundtracks like Rockstar where different songs have different artists)
+        let _ = self.conn.execute(
+            "UPDATE tracks SET artwork_path = (
+                SELECT a.artwork_path FROM albums_summary a
+                WHERE lower(trim(a.album)) = lower(trim(tracks.album))
+                  AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+                LIMIT 1
+            )
+            WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '' OR tracks.artwork_path LIKE '%unknown_artist__unknown_album%')
+              AND tracks.album IS NOT NULL AND trim(tracks.album) != '' AND lower(trim(tracks.album)) != 'unknown album'
+              AND EXISTS (
+                SELECT 1 FROM albums_summary a
+                WHERE lower(trim(a.album)) = lower(trim(tracks.album))
+                  AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
               )",
             [],
         );
@@ -546,18 +564,36 @@ impl MetadataDb {
                 ])?;
             }
 
-            // Propagate album artwork to any tracks that lack it
+            // Propagate album artwork to any tracks that lack it (primary: artist::album)
             let _ = tx.execute(
                 "UPDATE tracks SET artwork_path = (
                     SELECT a.artwork_path FROM albums_summary a
                     WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
-                      AND a.artwork_path IS NOT NULL AND a.artwork_path != ''
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
                 )
-                WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '')
+                WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '' OR tracks.artwork_path LIKE '%unknown_artist__unknown_album%')
                   AND EXISTS (
                     SELECT 1 FROM albums_summary a
                     WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
-                      AND a.artwork_path IS NOT NULL AND a.artwork_path != ''
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+                  )",
+                [],
+            );
+
+            // Secondary propagation by album title (e.g. soundtracks like Rockstar where different songs have different artists)
+            let _ = tx.execute(
+                "UPDATE tracks SET artwork_path = (
+                    SELECT a.artwork_path FROM albums_summary a
+                    WHERE lower(trim(a.album)) = lower(trim(tracks.album))
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+                    LIMIT 1
+                )
+                WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '' OR tracks.artwork_path LIKE '%unknown_artist__unknown_album%')
+                  AND tracks.album IS NOT NULL AND trim(tracks.album) != '' AND lower(trim(tracks.album)) != 'unknown album'
+                  AND EXISTS (
+                    SELECT 1 FROM albums_summary a
+                    WHERE lower(trim(a.album)) = lower(trim(tracks.album))
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
                   )",
                 [],
             );
