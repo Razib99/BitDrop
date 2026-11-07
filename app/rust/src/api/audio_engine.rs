@@ -351,14 +351,29 @@ pub enum DecoderCmd {
     Stop,
 }
 
+/// DSD playback session encapsulating stream reader and decimation filter.
+struct DsdDecoderSession {
+    reader: crate::dsd::dsf::DsfReader<Box<dyn MediaSource>>,
+    decimator: crate::dsd::decimator::DsdDecimator,
+    dsd_sample_rate: u32,
+}
+
+/// Backend audio decoder variants supported by BitDrop.
+enum TrackDecoderBackend {
+    Symphonia {
+        format: Box<dyn symphonia::core::formats::FormatReader>,
+        decoder: Box<dyn symphonia::core::codecs::Decoder>,
+        track_id: u32,
+        time_base: Option<symphonia::core::units::TimeBase>,
+    },
+    Dsd(Box<DsdDecoderSession>),
+}
+
 /// A decoder set up and ready to pull packets from.
 struct OpenedTrack {
     cache: Option<std::sync::Arc<crate::cloud::media_source::SparseTrackCache>>,
-    format: Box<dyn symphonia::core::formats::FormatReader>,
-    decoder: Box<dyn symphonia::core::codecs::Decoder>,
-    track_id: u32,
+    backend: TrackDecoderBackend,
     sample_rate: u32,
-    time_base: Option<symphonia::core::units::TimeBase>,
     duration_ms: u32,
     codec: String,
     bits_per_sample: u32,
@@ -371,6 +386,42 @@ struct OpenedTrack {
 /// constructed, so both go through here, which keeps seeking, gapless and
 /// duration handling identical whatever the track is being read from.
 fn open_media_source(source: Box<dyn MediaSource>, ext: &str) -> Option<OpenedTrack> {
+    if ext.eq_ignore_ascii_case("dsf") {
+        if let Ok(dsf_reader) = crate::dsd::dsf::DsfReader::open(source) {
+            let header = *dsf_reader.header();
+            let dsd_rate = header.sample_rate;
+            let target_pcm_rate = crate::dsd::decimator::DSD_PCM_TARGET_RATE;
+            if let Ok(decimator) =
+                crate::dsd::decimator::DsdDecimator::new(dsd_rate, target_pcm_rate)
+            {
+                let codec = if dsd_rate == 2_822_400 {
+                    "DSD64".to_string()
+                } else if dsd_rate == 5_644_800 {
+                    "DSD128".to_string()
+                } else if dsd_rate == 11_289_600 {
+                    "DSD256".to_string()
+                } else {
+                    "DSD".to_string()
+                };
+
+                return Some(OpenedTrack {
+                    cache: None,
+                    backend: TrackDecoderBackend::Dsd(Box::new(DsdDecoderSession {
+                        reader: dsf_reader,
+                        decimator,
+                        dsd_sample_rate: dsd_rate,
+                    })),
+                    sample_rate: dsd_rate,
+                    duration_ms: header.duration_ms,
+                    codec,
+                    bits_per_sample: 1,
+                    channels: header.channel_num,
+                });
+            }
+        }
+        return None;
+    }
+
     let mut hint = Hint::new();
     if !ext.is_empty() {
         hint.with_extension(ext);
@@ -414,11 +465,13 @@ fn open_media_source(source: Box<dyn MediaSource>, ext: &str) -> Option<OpenedTr
 
     Some(OpenedTrack {
         cache: None,
-        format,
-        decoder,
-        track_id: track.id,
+        backend: TrackDecoderBackend::Symphonia {
+            format,
+            decoder,
+            track_id: track.id,
+            time_base,
+        },
         sample_rate,
-        time_base,
         duration_ms,
         codec,
         bits_per_sample: track.codec_params.bits_per_sample.unwrap_or(0),
@@ -752,10 +805,7 @@ fn initialize_engine() {
         let mut decoder_frames_pushed: u64 = 0;
         let mut current_track_id_str: String = String::new();
 
-        let mut current_format: Option<Box<dyn symphonia::core::formats::FormatReader>> = None;
-        let mut current_decoder: Option<Box<dyn symphonia::core::codecs::Decoder>> = None;
-        let mut current_track_id: u32 = 0;
-        let mut tb: Option<symphonia::core::units::TimeBase> = None;
+        let mut current_backend: Option<TrackDecoderBackend> = None;
 
         let mut pending_out: Option<Vec<f32>> = None;
         let mut current_resampler: Option<(u32, u32, rubato::Async<f64>)> = None;
@@ -858,17 +908,34 @@ fn initialize_engine() {
                             set_ramp(&mut state, 1.0, SEEK_FADE_MS);
                         }
 
-                        if let (Some(format), Some(t)) = (current_format.as_mut(), tb) {
-                            let ts = (ms as u64 * t.denom as u64) / (1000 * t.numer as u64);
-                            let _ = format.seek(
-                                symphonia::core::formats::SeekMode::Accurate,
-                                symphonia::core::formats::SeekTo::TimeStamp {
-                                    ts,
-                                    track_id: current_track_id,
-                                },
-                            );
-                            if let Some(d) = current_decoder.as_mut() {
-                                d.reset();
+                        if let Some(ref mut backend) = current_backend {
+                            match backend {
+                                TrackDecoderBackend::Symphonia {
+                                    format,
+                                    decoder,
+                                    track_id,
+                                    time_base,
+                                } => {
+                                    if let Some(t) = time_base {
+                                        let ts =
+                                            (ms as u64 * t.denom as u64) / (1000 * t.numer as u64);
+                                        let _ = format.seek(
+                                            symphonia::core::formats::SeekMode::Accurate,
+                                            symphonia::core::formats::SeekTo::TimeStamp {
+                                                ts,
+                                                track_id: *track_id,
+                                            },
+                                        );
+                                        decoder.reset();
+                                    }
+                                }
+                                TrackDecoderBackend::Dsd(dsd) => {
+                                    let target_sample =
+                                        (ms as u64 * dsd.dsd_sample_rate as u64) / 1000;
+                                    let _ = dsd.reader.seek_to_sample(target_sample);
+                                    dsd.decimator.reset();
+                                    seek_target_frame = None;
+                                }
                             }
                         } else {
                             let mut state = PLAYER_STATE.lock().unwrap();
@@ -879,8 +946,7 @@ fn initialize_engine() {
                     DecoderCmd::Stop => {
                         next_track = None;
                         seek_target_frame = None;
-                        current_format = None;
-                        current_decoder = None;
+                        current_backend = None;
                         pending_out = None;
                         resample_in_buf.clear();
                         current_resampler = None;
@@ -918,10 +984,7 @@ fn initialize_engine() {
 
                     let opened = *opened;
                     crate::cloud::media_source::set_active_cache(opened.cache.as_ref());
-                    tb = opened.time_base;
-                    current_track_id = opened.track_id;
-                    current_decoder = Some(opened.decoder);
-                    current_format = Some(opened.format);
+                    current_backend = Some(opened.backend);
                     current_track_id_str = id.clone();
                     pending_out = None;
                     resample_in_buf.clear();
@@ -948,7 +1011,12 @@ fn initialize_engine() {
                     CALLBACK_GATE_OUTPUT.store(true, Ordering::Release);
 
                     #[cfg(target_os = "android")]
-                    let track_sr = opened.sample_rate;
+                    let stream_sr = match current_backend.as_ref().unwrap() {
+                        TrackDecoderBackend::Symphonia { .. } => opened.sample_rate,
+                        TrackDecoderBackend::Dsd { .. } => {
+                            crate::dsd::decimator::DSD_PCM_TARGET_RATE
+                        }
+                    };
                     #[cfg(target_os = "android")]
                     let cur_target = state.target_sample_rate;
 
@@ -956,9 +1024,9 @@ fn initialize_engine() {
                     drop(state);
 
                     #[cfg(target_os = "android")]
-                    if track_sr > 0 && track_sr != cur_target {
-                        eprintln!("[bitdrop] track rate {track_sr} != stream rate {cur_target}; rebuilding exclusive stream");
-                        open_output_stream(Some(track_sr));
+                    if stream_sr > 0 && stream_sr != cur_target {
+                        eprintln!("[bitdrop] stream rate {stream_sr} != current stream {cur_target}; rebuilding exclusive stream");
+                        open_output_stream(Some(stream_sr));
                     }
 
                     let mut state = PLAYER_STATE.lock().unwrap();
@@ -973,7 +1041,7 @@ fn initialize_engine() {
             }
 
             let is_playing = CALLBACK_IS_PLAYING.load(Ordering::Acquire);
-            if !is_playing || current_format.is_none() {
+            if !is_playing || current_backend.is_none() {
                 thread::sleep(Duration::from_millis(20));
                 continue;
             }
@@ -1013,38 +1081,147 @@ fn initialize_engine() {
                 }
             }
 
-            if let (Some(format), Some(decoder)) =
-                (current_format.as_mut(), current_decoder.as_mut())
-            {
-                let next = format.next_packet();
-                let ended = match &next {
-                    Ok(_) => {
-                        read_failures = 0;
-                        false
-                    }
-                    Err(symphonia::core::errors::Error::IoError(e))
-                        if e.kind() == std::io::ErrorKind::Interrupted =>
-                    {
-                        continue;
-                    }
-                    Err(symphonia::core::errors::Error::IoError(e))
-                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                    {
-                        true
-                    }
-                    Err(e) => {
-                        read_failures += 1;
-                        eprintln!(
-                            "[bitdrop] read failed ({}/{}): {}",
-                            read_failures, MAX_READ_FAILURES, e
-                        );
-                        if read_failures < MAX_READ_FAILURES {
-                            thread::sleep(Duration::from_millis(400));
-                            continue;
+            if let Some(backend) = current_backend.as_mut() {
+                enum DecodedFrame {
+                    Samples {
+                        samples: Vec<f32>,
+                        track_sr: u32,
+                        packet_ts: Option<u64>,
+                        time_base: Option<symphonia::core::units::TimeBase>,
+                        decoded_ms: Option<u32>,
+                    },
+                    Interrupted,
+                    EndOfStream,
+                    Retry,
+                    Fatal(String),
+                }
+
+                let decode_res = match backend {
+                    TrackDecoderBackend::Symphonia {
+                        format,
+                        decoder,
+                        track_id,
+                        time_base,
+                    } => match format.next_packet() {
+                        Ok(packet) => {
+                            read_failures = 0;
+                            if packet.track_id() == *track_id {
+                                match decoder.decode(&packet) {
+                                    Ok(audio_buf) => {
+                                        let track_sr = audio_buf.spec().rate;
+                                        let channels = audio_buf.spec().channels.count();
+                                        let mut sample_buf = SampleBuffer::<f32>::new(
+                                            audio_buf.capacity() as u64,
+                                            *audio_buf.spec(),
+                                        );
+                                        sample_buf.copy_interleaved_ref(audio_buf);
+                                        let samples =
+                                            downmix_to_stereo(sample_buf.samples(), channels);
+
+                                        let decoded_ms = time_base.map(|t| {
+                                            let time = t.calc_time(packet.ts());
+                                            (time.seconds * 1000 + (time.frac * 1000.0) as u64)
+                                                as u32
+                                        });
+
+                                        DecodedFrame::Samples {
+                                            samples,
+                                            track_sr,
+                                            packet_ts: Some(packet.ts()),
+                                            time_base: *time_base,
+                                            decoded_ms,
+                                        }
+                                    }
+                                    Err(_) => DecodedFrame::Retry,
+                                }
+                            } else {
+                                DecodedFrame::Retry
+                            }
                         }
-                        emit_event(EngineEvent::PlaybackFailed { file_id: current_track_id_str.clone(), message: "Playback stopped because the source could not be read. Check your connection and retry.".into() });
-                        current_format = None;
-                        current_decoder = None;
+                        Err(symphonia::core::errors::Error::IoError(e))
+                            if e.kind() == std::io::ErrorKind::Interrupted =>
+                        {
+                            DecodedFrame::Interrupted
+                        }
+                        Err(symphonia::core::errors::Error::IoError(e))
+                            if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                        {
+                            DecodedFrame::EndOfStream
+                        }
+                        Err(e) => {
+                            read_failures += 1;
+                            eprintln!(
+                                "[bitdrop] read failed ({}/{}): {}",
+                                read_failures, MAX_READ_FAILURES, e
+                            );
+                            if read_failures < MAX_READ_FAILURES {
+                                thread::sleep(Duration::from_millis(400));
+                                DecodedFrame::Retry
+                            } else {
+                                DecodedFrame::Fatal(e.to_string())
+                            }
+                        }
+                    },
+                    TrackDecoderBackend::Dsd(dsd) => {
+                        let mut dsd_l = [0u8; 4096];
+                        let mut dsd_r = [0u8; 4096];
+                        match dsd.reader.read_stereo_bytes(&mut dsd_l, &mut dsd_r) {
+                            Ok(0) => DecodedFrame::EndOfStream,
+                            Ok(bytes_read) => {
+                                read_failures = 0;
+                                let mut pcm_l = Vec::new();
+                                let mut pcm_r = Vec::new();
+                                dsd.decimator.process_stereo(
+                                    &dsd_l[..bytes_read],
+                                    &dsd_r[..bytes_read],
+                                    &mut pcm_l,
+                                    &mut pcm_r,
+                                );
+                                let mut samples = Vec::with_capacity(pcm_l.len() * 2);
+                                for i in 0..pcm_l.len() {
+                                    samples.push(pcm_l[i] as f32);
+                                    samples.push(pcm_r[i] as f32);
+                                }
+
+                                let cur_sample = dsd.reader.current_sample();
+                                let decoded_ms =
+                                    ((cur_sample * 1000) / dsd.dsd_sample_rate as u64) as u32;
+
+                                DecodedFrame::Samples {
+                                    samples,
+                                    track_sr: dsd.decimator.output_rate(),
+                                    packet_ts: None,
+                                    time_base: None,
+                                    decoded_ms: Some(decoded_ms),
+                                }
+                            }
+                            Err(e) => {
+                                read_failures += 1;
+                                eprintln!(
+                                    "[bitdrop] dsd read failed ({}/{}): {:?}",
+                                    read_failures, MAX_READ_FAILURES, e
+                                );
+                                if read_failures < MAX_READ_FAILURES {
+                                    thread::sleep(Duration::from_millis(400));
+                                    DecodedFrame::Retry
+                                } else {
+                                    DecodedFrame::Fatal(format!("{:?}", e))
+                                }
+                            }
+                        }
+                    }
+                };
+
+                match decode_res {
+                    DecodedFrame::Interrupted | DecodedFrame::Retry => continue,
+                    DecodedFrame::Fatal(err_msg) => {
+                        emit_event(EngineEvent::PlaybackFailed {
+                            file_id: current_track_id_str.clone(),
+                            message: format!(
+                                "Playback stopped because the source could not be read: {err_msg}"
+                            ),
+                        });
+                        current_backend = None;
                         next_track = None;
                         let mut state = PLAYER_STATE.lock().unwrap();
                         state.is_playing = false;
@@ -1054,272 +1231,261 @@ fn initialize_engine() {
                         CALLBACK_GATE_OUTPUT.store(false, Ordering::Release);
                         continue;
                     }
-                };
-
-                if let Ok(packet) = next {
-                    if packet.track_id() == current_track_id {
-                        if let Ok(audio_buf) = decoder.decode(&packet) {
-                            let target_sr = PLAYER_STATE.lock().unwrap().target_sample_rate;
-                            let track_sr = audio_buf.spec().rate;
-                            let channels = audio_buf.spec().channels.count();
-
-                            let mut sample_buf = SampleBuffer::<f32>::new(
-                                audio_buf.capacity() as u64,
-                                *audio_buf.spec(),
-                            );
-                            sample_buf.copy_interleaved_ref(audio_buf);
-
-                            // DOWNMIX TO STEREO via ITU-R BS.775
-                            let mut samples = downmix_to_stereo(sample_buf.samples(), channels);
-
-                            // Frame-exact seek trimming: discard leading pre-roll frames before seek target
-                            if let Some(target_frame) = seek_target_frame {
-                                if let Some(t) = tb {
-                                    let cur_sr =
-                                        PLAYER_STATE.lock().unwrap().source_sample_rate.max(1);
-                                    let packet_frame =
-                                        (packet.ts() * t.numer as u64 * cur_sr as u64)
-                                            / t.denom as u64;
-                                    if packet_frame < target_frame {
-                                        let frames_to_skip = (target_frame - packet_frame) as usize;
-                                        let packet_frames = samples.len() / 2;
-                                        if frames_to_skip < packet_frames {
-                                            samples.drain(0..(frames_to_skip * 2));
-                                            seek_target_frame = None;
-                                        } else {
-                                            samples.clear();
-                                        }
-                                    } else {
-                                        seek_target_frame = None;
-                                    }
-                                } else {
-                                    seek_target_frame = None;
-                                }
-                            }
-
-                            // High-quality Sinc Resampling via rubato 256-sinc
-                            if track_sr != target_sr && target_sr > 0 {
-                                let needs_new_resampler = match &current_resampler {
-                                    Some((in_sr, out_sr, _)) => {
-                                        *in_sr != track_sr || *out_sr != target_sr
-                                    }
-                                    None => true,
-                                };
-                                if needs_new_resampler {
-                                    let ratio = target_sr as f64 / track_sr as f64;
-                                    let params = rubato::SincInterpolationParameters {
-                                        sinc_len: 256,
-                                        f_cutoff: Some(0.95),
-                                        oversampling_factor: 256,
-                                        interpolation: rubato::SincInterpolationType::Cubic,
-                                        window: rubato::WindowFunction::BlackmanHarris2,
-                                    };
-                                    let new_resampler = rubato::Async::<f64>::new_sinc(
-                                        ratio,
-                                        1.0,
-                                        &params,
-                                        1024,
+                    DecodedFrame::EndOfStream => {
+                        read_failures = 0;
+                        // A short track may end before reaching the prebuffer threshold.
+                        PLAYER_STATE.lock().unwrap().gate_output = false;
+                        CALLBACK_GATE_OUTPUT.store(false, Ordering::Release);
+                        if let Some((_, _, ref mut resampler)) = current_resampler {
+                            if !resample_in_buf.is_empty() {
+                                let chunk_size = resampler.input_frames_next();
+                                let chunk_samples = chunk_size * 2;
+                                resample_in_buf.resize(chunk_samples, 0.0);
+                                if let Ok(slice) =
+                                    rubato::audioadapter_buffers::direct::InterleavedSlice::new(
+                                        &resample_in_buf,
                                         2,
-                                        rubato::FixedAsync::Input,
-                                    );
-                                    match new_resampler {
-                                        Ok(r) => current_resampler = Some((track_sr, target_sr, r)),
-                                        Err(e) => {
-                                            eprintln!("[bitdrop] failed to initialize rubato 256-sinc resampler: {:?}", e);
-                                            current_resampler = None;
-                                        }
-                                    }
-                                }
-
-                                if let Some((_, _, ref mut resampler)) = current_resampler {
-                                    let samples_f64: Vec<f64> =
-                                        samples.iter().map(|&s| s as f64).collect();
-                                    resample_in_buf.extend_from_slice(&samples_f64);
-                                    let chunk_size = resampler.input_frames_next();
-                                    let chunk_samples = chunk_size * 2;
-                                    let mut resampled_out = Vec::new();
-
-                                    while resample_in_buf.len() >= chunk_samples {
-                                        if let Ok(slice) = rubato::audioadapter_buffers::direct::InterleavedSlice::new(
-                                            &resample_in_buf[..chunk_samples],
-                                            2,
-                                            chunk_size,
-                                        ) {
-                                            match resampler.process(&slice, None) {
-                                                Ok(out) => resampled_out.extend(out.take_data()),
-                                                Err(e) => eprintln!("[bitdrop] resampler error during process: {:?}", e),
+                                        chunk_size,
+                                    )
+                                {
+                                    if let Ok(out) = resampler.process(&slice, None) {
+                                        let remaining: Vec<f32> =
+                                            out.take_data().into_iter().map(|s| s as f32).collect();
+                                        let slots = audio_producer.slots();
+                                        let to_write = remaining.len().min(slots);
+                                        if to_write > 0 {
+                                            if let Ok(mut chunk) =
+                                                audio_producer.write_chunk(to_write)
+                                            {
+                                                let (s1, s2) = chunk.as_mut_slices();
+                                                let s1_len = s1.len();
+                                                s1.copy_from_slice(&remaining[..s1_len]);
+                                                if !s2.is_empty() {
+                                                    s2.copy_from_slice(
+                                                        &remaining[s1_len..to_write],
+                                                    );
+                                                }
+                                                chunk.commit_all();
+                                                let pushed = (to_write / 2) as u64;
+                                                decoder_frames_pushed += pushed;
+                                                DECODER_FRAMES_PUSHED.store(
+                                                    decoder_frames_pushed,
+                                                    Ordering::Release,
+                                                );
                                             }
                                         }
-                                        resample_in_buf.drain(0..chunk_samples);
-                                    }
-                                    samples = resampled_out.into_iter().map(|s| s as f32).collect();
-                                }
-                            }
-
-                            if !samples.is_empty() {
-                                let slots = audio_producer.slots();
-                                let to_write = samples.len().min(slots);
-                                if to_write > 0 {
-                                    if let Ok(mut chunk) = audio_producer.write_chunk(to_write) {
-                                        let (s1, s2) = chunk.as_mut_slices();
-                                        let s1_len = s1.len();
-                                        s1.copy_from_slice(&samples[..s1_len]);
-                                        if !s2.is_empty() {
-                                            s2.copy_from_slice(&samples[s1_len..to_write]);
-                                        }
-                                        chunk.commit_all();
-                                        let pushed = (to_write / 2) as u64;
-                                        decoder_frames_pushed += pushed;
-                                        DECODER_FRAMES_PUSHED
-                                            .store(decoder_frames_pushed, Ordering::Release);
                                     }
                                 }
-                                if to_write < samples.len() {
-                                    pending_out = Some(samples[to_write..].to_vec());
-                                }
+                                resample_in_buf.clear();
                             }
+                        }
 
-                            {
+                        // Check if next track is staged for gapless transition
+                        let cur_sr = PLAYER_STATE.lock().unwrap().source_sample_rate;
+                        if let Some((_, next_id, next_opened)) =
+                            next_track.take().filter(|(stage, _, _)| {
+                                *stage == STAGE_GENERATION.load(Ordering::Acquire)
+                            })
+                        {
+                            if next_opened.sample_rate == cur_sr {
+                                // TRUE GAPLESS TRANSITION:
+                                // Push TrackChanged marker at current pushed frame count.
+                                let _ = boundary_producer.push(BoundaryMarker::track_changed(
+                                    decoder_frames_pushed,
+                                    &next_id,
+                                ));
+
+                                crate::cloud::media_source::set_active_cache(
+                                    next_opened.cache.as_ref(),
+                                );
+                                current_backend = Some(next_opened.backend);
+                                current_track_id_str = next_id.clone();
+                                pending_out = None;
+                                resample_in_buf.clear();
+                                current_resampler = None;
+                                seek_target_frame = None;
+
                                 let mut state = PLAYER_STATE.lock().unwrap();
-                                let sr = if state.target_sample_rate == 0 {
-                                    48000
-                                } else {
-                                    state.target_sample_rate
-                                };
-                                let queued_samples =
-                                    audio_producer.buffer().capacity() - audio_producer.slots();
-                                let queued_frames = queued_samples / 2;
-                                state.buffered_ms =
-                                    ((queued_frames as u64 * 1000) / sr as u64) as u32;
+                                state.duration_ms = next_opened.duration_ms;
+                                state.current_track_id = next_id;
+                                state.source_codec = next_opened.codec;
+                                state.source_sample_rate = next_opened.sample_rate;
+                                state.source_bits = next_opened.bits_per_sample;
+                                state.source_channels = next_opened.channels;
+                                state.decoded_ms = 0;
+                                drop(state);
 
-                                state.buffering = crate::cloud::media_source::fetches_in_flight()
-                                    > 0
-                                    && state.buffered_ms < 500;
-
-                                if state.gate_output && state.buffered_ms >= PREBUFFER_MS {
-                                    state.gate_output = false;
-                                    CALLBACK_GATE_OUTPUT.store(false, Ordering::Release);
-                                }
-
-                                if let Some(t) = tb {
-                                    let time = t.calc_time(packet.ts());
-                                    let decoded =
-                                        (time.seconds * 1000 + (time.frac * 1000.0) as u64) as u32;
-                                    state.decoded_ms = decoded;
-                                    state.position_ms = decoded.saturating_sub(state.buffered_ms);
-                                }
+                                continue;
+                            } else {
+                                let marker = BoundaryMarker::track_ended(
+                                    decoder_frames_pushed,
+                                    &current_track_id_str,
+                                );
+                                let _ = boundary_producer.push(marker);
+                                let mut state = PLAYER_STATE.lock().unwrap();
+                                state.buffering = false;
+                                state.buffered_ms = 0;
+                                drop(state);
+                                current_backend = None;
                             }
-                        }
-                    }
-                } else if ended {
-                    read_failures = 0;
-                    // A short track may end before reaching the prebuffer threshold.
-                    PLAYER_STATE.lock().unwrap().gate_output = false;
-                    CALLBACK_GATE_OUTPUT.store(false, Ordering::Release);
-                    if let Some((_, _, ref mut resampler)) = current_resampler {
-                        if !resample_in_buf.is_empty() {
-                            let chunk_size = resampler.input_frames_next();
-                            let chunk_samples = chunk_size * 2;
-                            resample_in_buf.resize(chunk_samples, 0.0);
-                            if let Ok(slice) =
-                                rubato::audioadapter_buffers::direct::InterleavedSlice::new(
-                                    &resample_in_buf,
-                                    2,
-                                    chunk_size,
-                                )
-                            {
-                                if let Ok(out) = resampler.process(&slice, None) {
-                                    let remaining: Vec<f32> =
-                                        out.take_data().into_iter().map(|s| s as f32).collect();
-                                    let slots = audio_producer.slots();
-                                    let to_write = remaining.len().min(slots);
-                                    if to_write > 0 {
-                                        if let Ok(mut chunk) = audio_producer.write_chunk(to_write)
-                                        {
-                                            let (s1, s2) = chunk.as_mut_slices();
-                                            let s1_len = s1.len();
-                                            s1.copy_from_slice(&remaining[..s1_len]);
-                                            if !s2.is_empty() {
-                                                s2.copy_from_slice(&remaining[s1_len..to_write]);
-                                            }
-                                            chunk.commit_all();
-                                            let pushed = (to_write / 2) as u64;
-                                            decoder_frames_pushed += pushed;
-                                            DECODER_FRAMES_PUSHED
-                                                .store(decoder_frames_pushed, Ordering::Release);
-                                        }
-                                    }
-                                }
-                            }
-                            resample_in_buf.clear();
-                        }
-                    }
-
-                    // Check if next track is staged for gapless transition
-                    let cur_sr = PLAYER_STATE.lock().unwrap().source_sample_rate;
-                    if let Some((_, next_id, next_opened)) = next_track
-                        .take()
-                        .filter(|(stage, _, _)| *stage == STAGE_GENERATION.load(Ordering::Acquire))
-                    {
-                        if next_opened.sample_rate == cur_sr {
-                            // TRUE GAPLESS TRANSITION:
-                            // Push TrackChanged marker at current pushed frame count.
-                            let _ = boundary_producer.push(BoundaryMarker::track_changed(
-                                decoder_frames_pushed,
-                                &next_id,
-                            ));
-
-                            crate::cloud::media_source::set_active_cache(
-                                next_opened.cache.as_ref(),
-                            );
-                            tb = next_opened.time_base;
-                            current_track_id = next_opened.track_id;
-                            current_decoder = Some(next_opened.decoder);
-                            current_format = Some(next_opened.format);
-                            current_track_id_str = next_id.clone();
-                            pending_out = None;
-                            resample_in_buf.clear();
-                            current_resampler = None;
-                            seek_target_frame = None;
-
-                            let mut state = PLAYER_STATE.lock().unwrap();
-                            state.duration_ms = next_opened.duration_ms;
-                            state.current_track_id = next_id;
-                            state.source_codec = next_opened.codec;
-                            state.source_sample_rate = next_opened.sample_rate;
-                            state.source_bits = next_opened.bits_per_sample;
-                            state.source_channels = next_opened.channels;
-                            state.decoded_ms = 0;
-                            drop(state);
-
-                            continue;
                         } else {
+                            // Standard EOF: drain all buffered audio with TrackEnded
                             let marker = BoundaryMarker::track_ended(
                                 decoder_frames_pushed,
                                 &current_track_id_str,
                             );
                             let _ = boundary_producer.push(marker);
+
                             let mut state = PLAYER_STATE.lock().unwrap();
                             state.buffering = false;
                             state.buffered_ms = 0;
                             drop(state);
-                            current_format = None;
-                            current_decoder = None;
+                            current_backend = None;
                         }
-                    } else {
-                        // Standard EOF: drain all buffered audio with TrackEnded
-                        let marker = BoundaryMarker::track_ended(
-                            decoder_frames_pushed,
-                            &current_track_id_str,
-                        );
-                        let _ = boundary_producer.push(marker);
+                    }
+                    DecodedFrame::Samples {
+                        mut samples,
+                        track_sr,
+                        packet_ts,
+                        time_base,
+                        decoded_ms,
+                    } => {
+                        let target_sr = PLAYER_STATE.lock().unwrap().target_sample_rate;
 
-                        let mut state = PLAYER_STATE.lock().unwrap();
-                        state.buffering = false;
-                        state.buffered_ms = 0;
-                        drop(state);
-                        current_format = None;
-                        current_decoder = None;
+                        // Frame-exact seek trimming: discard leading pre-roll frames before seek target
+                        if let (Some(target_frame), Some(t), Some(pts)) =
+                            (seek_target_frame, time_base, packet_ts)
+                        {
+                            let cur_sr = PLAYER_STATE.lock().unwrap().source_sample_rate.max(1);
+                            let packet_frame =
+                                (pts * t.numer as u64 * cur_sr as u64) / t.denom as u64;
+                            if packet_frame < target_frame {
+                                let frames_to_skip = (target_frame - packet_frame) as usize;
+                                let packet_frames = samples.len() / 2;
+                                if frames_to_skip < packet_frames {
+                                    samples.drain(0..(frames_to_skip * 2));
+                                    seek_target_frame = None;
+                                } else {
+                                    samples.clear();
+                                }
+                            } else {
+                                seek_target_frame = None;
+                            }
+                        } else if seek_target_frame.is_some() {
+                            seek_target_frame = None;
+                        }
+
+                        // High-quality Sinc Resampling via rubato 256-sinc
+                        if track_sr != target_sr && target_sr > 0 {
+                            let needs_new_resampler = match &current_resampler {
+                                Some((in_sr, out_sr, _)) => {
+                                    *in_sr != track_sr || *out_sr != target_sr
+                                }
+                                None => true,
+                            };
+                            if needs_new_resampler {
+                                let ratio = target_sr as f64 / track_sr as f64;
+                                let params = rubato::SincInterpolationParameters {
+                                    sinc_len: 256,
+                                    f_cutoff: Some(0.95),
+                                    oversampling_factor: 256,
+                                    interpolation: rubato::SincInterpolationType::Cubic,
+                                    window: rubato::WindowFunction::BlackmanHarris2,
+                                };
+                                let new_resampler = rubato::Async::<f64>::new_sinc(
+                                    ratio,
+                                    1.0,
+                                    &params,
+                                    1024,
+                                    2,
+                                    rubato::FixedAsync::Input,
+                                );
+                                match new_resampler {
+                                    Ok(r) => current_resampler = Some((track_sr, target_sr, r)),
+                                    Err(e) => {
+                                        eprintln!("[bitdrop] failed to initialize rubato 256-sinc resampler: {:?}", e);
+                                        current_resampler = None;
+                                    }
+                                }
+                            }
+
+                            if let Some((_, _, ref mut resampler)) = current_resampler {
+                                let samples_f64: Vec<f64> =
+                                    samples.iter().map(|&s| s as f64).collect();
+                                resample_in_buf.extend_from_slice(&samples_f64);
+                                let chunk_size = resampler.input_frames_next();
+                                let chunk_samples = chunk_size * 2;
+                                let mut resampled_out = Vec::new();
+
+                                while resample_in_buf.len() >= chunk_samples {
+                                    if let Ok(slice) =
+                                        rubato::audioadapter_buffers::direct::InterleavedSlice::new(
+                                            &resample_in_buf[..chunk_samples],
+                                            2,
+                                            chunk_size,
+                                        )
+                                    {
+                                        match resampler.process(&slice, None) {
+                                            Ok(out) => resampled_out.extend(out.take_data()),
+                                            Err(e) => {
+                                                eprintln!("[bitdrop] resampler error during process: {:?}", e)
+                                            }
+                                        }
+                                    }
+                                    resample_in_buf.drain(0..chunk_samples);
+                                }
+                                samples = resampled_out.into_iter().map(|s| s as f32).collect();
+                            }
+                        }
+
+                        if !samples.is_empty() {
+                            let slots = audio_producer.slots();
+                            let to_write = samples.len().min(slots);
+                            if to_write > 0 {
+                                if let Ok(mut chunk) = audio_producer.write_chunk(to_write) {
+                                    let (s1, s2) = chunk.as_mut_slices();
+                                    let s1_len = s1.len();
+                                    s1.copy_from_slice(&samples[..s1_len]);
+                                    if !s2.is_empty() {
+                                        s2.copy_from_slice(&samples[s1_len..to_write]);
+                                    }
+                                    chunk.commit_all();
+                                    let pushed = (to_write / 2) as u64;
+                                    decoder_frames_pushed += pushed;
+                                    DECODER_FRAMES_PUSHED
+                                        .store(decoder_frames_pushed, Ordering::Release);
+                                }
+                            }
+                            if to_write < samples.len() {
+                                pending_out = Some(samples[to_write..].to_vec());
+                            }
+                        }
+
+                        {
+                            let mut state = PLAYER_STATE.lock().unwrap();
+                            let sr = if state.target_sample_rate == 0 {
+                                48000
+                            } else {
+                                state.target_sample_rate
+                            };
+                            let queued_samples =
+                                audio_producer.buffer().capacity() - audio_producer.slots();
+                            let queued_frames = queued_samples / 2;
+                            state.buffered_ms = ((queued_frames as u64 * 1000) / sr as u64) as u32;
+
+                            state.buffering = crate::cloud::media_source::fetches_in_flight() > 0
+                                && state.buffered_ms < 500;
+
+                            if state.gate_output && state.buffered_ms >= PREBUFFER_MS {
+                                state.gate_output = false;
+                                CALLBACK_GATE_OUTPUT.store(false, Ordering::Release);
+                            }
+
+                            if let Some(dec) = decoded_ms {
+                                state.decoded_ms = dec;
+                                state.position_ms = dec.saturating_sub(state.buffered_ms);
+                            }
+                        }
                     }
                 }
             }
@@ -2711,5 +2877,89 @@ mod tests {
         let attach_res = engine_attach_usb_dac(-1, 48000, 24);
         assert!(attach_res.is_err());
         assert_eq!(engine_get_stream_backend(), "Standard");
+    }
+
+    #[test]
+    fn test_engine_open_and_stream_dsf_track() {
+        use std::io::Cursor;
+
+        // Build valid synthetic DSF with DSD64 2,822,400 Hz stereo, 4096-byte blocks
+        let block_size = 4096u32;
+        let channels = 2u32;
+        let sample_rate = 2_822_400u32;
+        let num_blocks = 2usize;
+
+        let data_payload_size = (block_size as usize) * (channels as usize) * num_blocks;
+        let data_chunk_size = 12 + data_payload_size as u64;
+        let file_size = 28 + 52 + data_chunk_size;
+        let sample_count = (block_size as u64 * 8) * (num_blocks as u64);
+
+        let mut dsf = Vec::new();
+        // DSD chunk
+        dsf.extend_from_slice(b"DSD ");
+        dsf.extend_from_slice(&28u64.to_le_bytes());
+        dsf.extend_from_slice(&file_size.to_le_bytes());
+        dsf.extend_from_slice(&0u64.to_le_bytes());
+
+        // fmt chunk
+        dsf.extend_from_slice(b"fmt ");
+        dsf.extend_from_slice(&52u64.to_le_bytes());
+        dsf.extend_from_slice(&1u32.to_le_bytes());
+        dsf.extend_from_slice(&0u32.to_le_bytes());
+        dsf.extend_from_slice(&channels.to_le_bytes());
+        dsf.extend_from_slice(&channels.to_le_bytes());
+        dsf.extend_from_slice(&sample_rate.to_le_bytes());
+        dsf.extend_from_slice(&1u32.to_le_bytes());
+        dsf.extend_from_slice(&sample_count.to_le_bytes());
+        dsf.extend_from_slice(&block_size.to_le_bytes());
+        dsf.extend_from_slice(&0u32.to_le_bytes());
+
+        // data chunk with 0x55 DSD silence (reverses to 0xAA MSB-first)
+        dsf.extend_from_slice(b"data");
+        dsf.extend_from_slice(&data_chunk_size.to_le_bytes());
+        dsf.extend(vec![0x55u8; data_payload_size]);
+
+        let source = Box::new(Cursor::new(dsf));
+        let opened = open_media_source(source, "dsf").expect("Failed to open DSF media source");
+
+        assert_eq!(opened.codec, "DSD64");
+        assert_eq!(opened.sample_rate, 2_822_400);
+        assert_eq!(opened.channels, 2);
+        assert_eq!(opened.bits_per_sample, 1);
+        assert!(opened.duration_ms > 0);
+
+        match opened.backend {
+            TrackDecoderBackend::Dsd(mut dsd) => {
+                assert_eq!(dsd.dsd_sample_rate, 2_822_400);
+                assert_eq!(dsd.decimator.output_rate(), 176_400);
+
+                let mut dsd_l = [0u8; 4096];
+                let mut dsd_r = [0u8; 4096];
+                let n = dsd
+                    .reader
+                    .read_stereo_bytes(&mut dsd_l, &mut dsd_r)
+                    .expect("Read stereo bytes failed");
+                assert_eq!(n, 4096);
+
+                let mut pcm_l = Vec::new();
+                let mut pcm_r = Vec::new();
+                dsd.decimator
+                    .process_stereo(&dsd_l[..n], &dsd_r[..n], &mut pcm_l, &mut pcm_r);
+
+                // 4096 bytes / 2 (16:1 decimation) = 2048 PCM samples
+                assert_eq!(pcm_l.len(), 2048);
+                assert_eq!(pcm_r.len(), 2048);
+
+                for &s in &pcm_l {
+                    assert!(s.abs() < 1e-10, "Expected exact silence, got: {s}");
+                }
+
+                // Test sample-accurate seeking in engine
+                let seek_pos = dsd.reader.seek_to_sample(16384).expect("Seek failed");
+                assert_eq!(seek_pos, 16384);
+                assert_eq!(dsd.reader.current_sample(), 16384);
+            }
+            _ => panic!("Expected TrackDecoderBackend::Dsd"),
+        }
     }
 }

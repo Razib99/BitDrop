@@ -14,7 +14,7 @@ pub const DSD256_RATE: u32 = 11_289_600; // 256 * 44.1 kHz
 pub const DSD512_RATE: u32 = 22_579_200; // 512 * 44.1 kHz
 
 /// Parsed metadata and layout header for a DSF container.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DsfHeader {
     /// Total file size reported in 'DSD ' chunk header.
     pub file_size: u64,
