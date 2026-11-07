@@ -75,16 +75,21 @@ extension CodecInfo on Codec {
         Codec.opus => 'Opus',
       };
 
-  /// True when the engine (Symphonia) can decode this container.
+  /// True when the engine can decode this container.
   bool get isSupported => switch (this) {
         Codec.flac || Codec.alac || Codec.wav || Codec.aiff => true,
-        Codec.mp3 || Codec.aac => true,
-        Codec.ape || Codec.wavpack || Codec.dsf || Codec.opus => false,
+        Codec.mp3 || Codec.aac || Codec.dsf => true,
+        Codec.ape || Codec.wavpack || Codec.opus => false,
       };
 
   /// True when the format preserves every sample.
   bool get isLossless => switch (this) {
-        Codec.flac || Codec.alac || Codec.wav || Codec.aiff => true,
+        Codec.flac ||
+        Codec.alac ||
+        Codec.wav ||
+        Codec.aiff ||
+        Codec.dsf =>
+          true,
         _ => false,
       };
 }

@@ -26,35 +26,60 @@ class AudioFormat {
   final int? bitrateKbps;
   final int channels;
 
-  /// `24/96` — the compact form used in badges.
-  String get shortLabel => '$bitDepth/${_rateLabel(sampleRate)}';
+  bool get isDsd => codec == Codec.dsf || bitDepth == 1;
 
-  /// `FLAC · 24/96`
-  String get badgeLabel => '${codec.label} $shortLabel';
+  String get dsdRateLabel {
+    if (sampleRate >= 22579200) return 'DSD512';
+    if (sampleRate >= 11289600) return 'DSD256';
+    if (sampleRate >= 5644800) return 'DSD128';
+    return 'DSD64';
+  }
 
-  /// `24-bit · 96 kHz`
-  String get longLabel => '$bitDepth-bit · ${_rateLabel(sampleRate)} kHz';
+  /// `24/96` or `DSD64` — the compact form used in badges.
+  String get shortLabel {
+    if (isDsd) return dsdRateLabel;
+    return '$bitDepth/${_rateLabel(sampleRate)}';
+  }
 
-  /// Hi-Res by the common definition: above CD depth or above 48 kHz.
-  bool get isHiRes => bitDepth > 16 || sampleRate > 48000;
+  /// `FLAC 24/96` or `DSD64 · 2.82 MHz`
+  String get badgeLabel {
+    if (isDsd) return '$shortLabel · ${_rateLabel(sampleRate)}';
+    return '${codec.label} $shortLabel';
+  }
 
-  bool get isCdQuality => bitDepth == 16 && sampleRate == 44100;
+  /// `24-bit · 96 kHz` or `1-bit · 2.82 MHz (DSD64)`
+  String get longLabel {
+    if (isDsd) return '1-bit · ${_rateLabel(sampleRate)} ($shortLabel)';
+    return '$bitDepth-bit · ${_rateLabel(sampleRate)} kHz';
+  }
+
+  /// Hi-Res by the common definition: above CD depth, above 48 kHz, or DSD.
+  bool get isHiRes => isDsd || bitDepth > 16 || sampleRate > 48000;
+
+  bool get isCdQuality => !isDsd && bitDepth == 16 && sampleRate == 44100;
 
   /// Effective bitrate in kilobits per second.
   ///
   /// Returns [bitrateKbps] if specified and positive (e.g. from encoded file metadata),
-  /// or computes the uncompressed PCM stream bitrate from [bitDepth], [sampleRate],
+  /// or computes the uncompressed stream bitrate from [bitDepth], [sampleRate],
   /// and [channels].
   int get effectiveBitrateKbps {
     if (bitrateKbps != null && bitrateKbps! > 0) return bitrateKbps!;
-    if (bitDepth > 0 && sampleRate > 0) {
+    if (sampleRate > 0) {
       final ch = channels > 0 ? channels : 2;
-      return (bitDepth * sampleRate * ch) ~/ 1000;
+      final bits = isDsd ? 1 : (bitDepth > 0 ? bitDepth : 16);
+      return (bits * sampleRate * ch) ~/ 1000;
     }
     return 0;
   }
 
   static String _rateLabel(int hz) {
+    if (hz >= 1000000) {
+      final mhz = hz / 1000000.0;
+      return mhz == mhz.roundToDouble()
+          ? '${mhz.round()} MHz'
+          : '${mhz.toStringAsFixed(2)} MHz';
+    }
     final khz = hz / 1000.0;
     return khz == khz.roundToDouble()
         ? khz.round().toString()
@@ -571,8 +596,9 @@ class SignalPath {
   final double? safetyAttenuationDb;
 
   bool get formatsMatch =>
-      requested.sampleRate == actual.sampleRate &&
-      requested.bitDepth == actual.bitDepth;
+      (requested.isDsd && tier == OutputTier.bitPerfect) ||
+      (requested.sampleRate == actual.sampleRate &&
+          requested.bitDepth == actual.bitDepth);
 }
 
 @immutable

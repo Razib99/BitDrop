@@ -57,9 +57,36 @@ void main() {
 
     test('unsupported codecs are flagged, not hidden', () {
       expect(Codec.ape.isSupported, isFalse);
-      expect(Codec.dsf.isSupported, isFalse);
+      expect(Codec.wavpack.isSupported, isFalse);
       expect(Codec.opus.isSupported, isFalse);
       expect(Codec.flac.isSupported, isTrue);
+      expect(Codec.dsf.isSupported, isTrue);
+      expect(Codec.dsf.isLossless, isTrue);
+    });
+
+    test('DSD formats produce correct labels and bitrates', () {
+      const dsd64 =
+          AudioFormat(codec: Codec.dsf, bitDepth: 1, sampleRate: 2822400);
+      const dsd128 =
+          AudioFormat(codec: Codec.dsf, bitDepth: 1, sampleRate: 5644800);
+      const dsd256 =
+          AudioFormat(codec: Codec.dsf, bitDepth: 1, sampleRate: 11289600);
+
+      expect(dsd64.isDsd, isTrue);
+      expect(dsd64.isHiRes, isTrue);
+      expect(dsd64.isCdQuality, isFalse);
+      expect(dsd64.shortLabel, 'DSD64');
+      expect(dsd64.badgeLabel, 'DSD64 · 2.82 MHz');
+      expect(dsd64.longLabel, '1-bit · 2.82 MHz (DSD64)');
+      expect(dsd64.effectiveBitrateKbps, 5644);
+
+      expect(dsd128.shortLabel, 'DSD128');
+      expect(dsd128.badgeLabel, 'DSD128 · 5.64 MHz');
+      expect(dsd128.longLabel, '1-bit · 5.64 MHz (DSD128)');
+
+      expect(dsd256.shortLabel, 'DSD256');
+      expect(dsd256.badgeLabel, 'DSD256 · 11.29 MHz');
+      expect(dsd256.longLabel, '1-bit · 11.29 MHz (DSD256)');
     });
   });
 
@@ -127,9 +154,15 @@ void main() {
       expect(bypassed.isActive, isFalse);
     });
 
-    test('Parametric bands map to ISO center frequencies with accurate gain', () {
+    test('Parametric bands map to ISO center frequencies with accurate gain',
+        () {
       const bands = [
-        EqBand(id: 1, type: BiquadType.peak, frequencyHz: 1000, gainDb: 6.0, q: 1.41),
+        EqBand(
+            id: 1,
+            type: BiquadType.peak,
+            frequencyHz: 1000,
+            gainDb: 6.0,
+            q: 1.41),
       ];
       final gainAt1k = Biquad.combinedDb(bands, 1000.0);
       expect(gainAt1k, closeTo(6.0, 0.1));

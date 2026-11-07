@@ -815,8 +815,8 @@ class LiveBitDropCore implements BitDropCore {
     ];
     if (q.filters.genre != null && q.filters.genre!.isNotEmpty) {
       items = items
-          .where((a) =>
-              a.genre?.toLowerCase() == q.filters.genre!.toLowerCase())
+          .where(
+              (a) => a.genre?.toLowerCase() == q.filters.genre!.toLowerCase())
           .toList();
     }
     return Paged(items: items, total: items.length);
@@ -963,6 +963,7 @@ class LiveBitDropCore implements BitDropCore {
       );
     }
   }
+
   @override
   Future<List<Playlist>> playlists() async {
     final favTracks = _allCandidateTracks
@@ -1009,6 +1010,7 @@ class LiveBitDropCore implements BitDropCore {
     }
     return MockCatalog.genreList;
   }
+
   @override
   Future<SearchResults> search(String text, SearchFilters f) async {
     final q = text.trim();
@@ -1792,7 +1794,9 @@ class LiveBitDropCore implements BitDropCore {
 
     final dsp = out.dspActive;
     final isExclusiveBitPerfect = isDirectUsb ||
-        ((device?.type == DeviceType.usb && device?.supportsBitPerfect == true) && !dsp);
+        ((device?.type == DeviceType.usb &&
+                device?.supportsBitPerfect == true) &&
+            !dsp);
 
     // What actually leaves the hardware:
     final hwRate = out.hardwareSampleRate != 0
@@ -1801,16 +1805,25 @@ class LiveBitDropCore implements BitDropCore {
 
     // Resampling only occurs when sample rates actually differ between source and output
     final resampled = !isDirectUsb &&
-        ((!isExclusiveBitPerfect && hwRate != 0 && hwRate != source.sampleRate) ||
-            (out.outputSampleRate != 0 && out.outputSampleRate != source.sampleRate));
+        ((!isExclusiveBitPerfect &&
+                hwRate != 0 &&
+                hwRate != source.sampleRate) ||
+            (out.outputSampleRate != 0 &&
+                out.outputSampleRate != source.sampleRate));
 
     final actualSampleRate = isDirectUsb
-        ? (out.hardwareSampleRate != 0 ? out.hardwareSampleRate : source.sampleRate)
+        ? (out.hardwareSampleRate != 0
+            ? out.hardwareSampleRate
+            : source.sampleRate)
         : (resampled && hwRate != 0
             ? hwRate
-            : (out.outputSampleRate == 0 ? source.sampleRate : out.outputSampleRate));
+            : (out.outputSampleRate == 0
+                ? source.sampleRate
+                : out.outputSampleRate));
     final actualBitDepth = isDirectUsb && out.hardwareFormat.isNotEmpty
-        ? (out.hardwareFormat.contains('32') ? 32 : (out.hardwareFormat.contains('24') ? 24 : 16))
+        ? (out.hardwareFormat.contains('32')
+            ? 32
+            : (out.hardwareFormat.contains('24') ? 24 : 16))
         : sourceBitDepth;
     final actualBitrate =
         (actualBitDepth * actualSampleRate * sourceChannels) ~/ 1000;
@@ -1820,7 +1833,8 @@ class LiveBitDropCore implements BitDropCore {
       bitrateKbps: actualBitrate,
     );
 
-    final bool isRateShifted = !isDirectUsb && (actualSampleRate != source.sampleRate);
+    final bool isRateShifted =
+        !isDirectUsb && (actualSampleRate != source.sampleRate);
 
     final OutputTier tier;
     if (isDirectUsb) {
@@ -1856,9 +1870,14 @@ class LiveBitDropCore implements BitDropCore {
       sourceLabel: _cloud?.trackById(_currentTrackId) != null
           ? 'Google Drive'
           : 'This device',
-      decoderLabel: '${source.codec.label} -> '
-          '${source.bitDepth}-bit integer PCM',
-      explanation: _explain(tier, source, actual, dsp, device, isDirectUsb: isDirectUsb),
+      decoderLabel: source.codec == Codec.dsf
+          ? (isDirectUsb
+              ? '${source.shortLabel} Bitstream -> DoP v1.1 Framing'
+              : '${source.shortLabel} -> 176.4 kHz / 24-bit Polyphase FIR Decimation')
+          : '${source.codec.label} -> '
+              '${source.bitDepth}-bit integer PCM',
+      explanation:
+          _explain(tier, source, actual, dsp, device, isDirectUsb: isDirectUsb),
     ));
   }
 
@@ -1890,6 +1909,7 @@ class LiveBitDropCore implements BitDropCore {
         'MP3' => Codec.mp3,
         'AAC' => Codec.aac,
         'VORBIS' || 'OPUS' => Codec.opus,
+        'DSF' || 'DSD' => Codec.dsf,
         _ => Codec.flac,
       };
 
@@ -1902,6 +1922,20 @@ class LiveBitDropCore implements BitDropCore {
     OutputDevice? device, {
     bool isDirectUsb = false,
   }) {
+    if (source.codec == Codec.dsf) {
+      if (tier == OutputTier.bitPerfect) {
+        if (isDirectUsb) {
+          return 'Bit-perfect direct DSD stream active via User-Space USB Audio (Tier D) with DoP v1.1 framing. '
+              'The audio engine transmits the pure 1-bit DSD bitstream directly to your ${device?.name ?? "USB DAC"} '
+              'without PCM decimation, DSP, or OS mixer interaction.';
+        }
+        return 'DSD 1-bit stream decimated to 176.4 kHz / 24-bit PCM using 64-bit polyphase sinc FIR filter. '
+            'Streaming bit-perfect PCM to ${device?.name ?? "USB DAC"} at 176.4 kHz with zero OS resampling.';
+      }
+      return 'DSD 1-bit stream decimated to 176.4 kHz / 24-bit PCM using 64-bit polyphase sinc FIR filter '
+          'and routed to ${device?.name ?? "your audio device"}.';
+    }
+
     if (tier == OutputTier.bitPerfect) {
       if (isDirectUsb) {
         return 'Bit-perfect direct stream active via User-Space USB Audio (Tier D). '
@@ -1934,7 +1968,9 @@ class LiveBitDropCore implements BitDropCore {
     }
     if (tier == OutputTier.resampled &&
         actual.sampleRate != source.sampleRate) {
-      final apiText = device?.apiLevel != null ? 'Android ${device!.apiLevel}\'s' : 'the Android';
+      final apiText = device?.apiLevel != null
+          ? 'Android ${device!.apiLevel}\'s'
+          : 'the Android';
       final devName = device?.name ?? 'your audio device';
       return '$apiText system mixer (AudioFlinger) mixes audio at '
           '${actual.sampleRate ~/ 1000} kHz, so your '
@@ -1946,13 +1982,17 @@ class LiveBitDropCore implements BitDropCore {
           'Bypass the equaliser to restore bit-perfect output.';
     }
     if (device != null && device.type == DeviceType.usb && !isDirectUsb) {
-      final apiText = device.apiLevel != null ? 'Android ${device.apiLevel}\'s' : 'the Android';
+      final apiText = device.apiLevel != null
+          ? 'Android ${device.apiLevel}\'s'
+          : 'the Android';
       return 'Your ${device.name} is running at native ${source.sampleRate ~/ 1000} kHz, '
           'routed through $apiText shared system mixer (AudioFlinger). '
           'Enable the Direct USB DAC driver in Settings to bypass the mixer and unlock bit-perfect output.';
     }
     if (device != null && !device.supportsBitPerfect) {
-      final apiText = device.apiLevel != null ? 'Android ${device.apiLevel}\'s' : 'the Android';
+      final apiText = device.apiLevel != null
+          ? 'Android ${device.apiLevel}\'s'
+          : 'the Android';
       return 'Your ${device.name} is running at native ${source.sampleRate ~/ 1000} kHz, '
           'routed through $apiText system mixer (AudioFlinger).';
     }

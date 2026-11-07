@@ -43,8 +43,11 @@ void main() {
   );
 
   group('Signal Path Reporting & Hardware Rate Disentanglement', () {
-    testWidgets('Case 1: Bit-Perfect Tier A renders emerald badge with source rate/bit-depth', (tester) async {
-      const source = AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 96000);
+    testWidgets(
+        'Case 1: Bit-Perfect Tier A renders emerald badge with source rate/bit-depth',
+        (tester) async {
+      const source =
+          AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 96000);
       const path = SignalPath(
         tier: OutputTier.bitPerfect,
         source: source,
@@ -71,8 +74,11 @@ void main() {
       expect(find.textContaining('Direct bit-perfect access'), findsOneWidget);
     });
 
-    testWidgets('Case 2: Native Rate + 64-Bit DSP renders cyan badge with Native {sr} kHz', (tester) async {
-      const source = AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 48000);
+    testWidgets(
+        'Case 2: Native Rate + 64-Bit DSP renders cyan badge with Native {sr} kHz',
+        (tester) async {
+      const source =
+          AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 48000);
       const path = SignalPath(
         tier: OutputTier.nativeRate,
         source: source,
@@ -99,8 +105,11 @@ void main() {
       expect(find.text('Native 48 kHz'), findsWidgets);
     });
 
-    testWidgets('Case 3: Native Rate · Android Mixed renders neutral/sky blue badge and NEVER says Resampled 44.1 -> 44.1', (tester) async {
-      const source = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
+    testWidgets(
+        'Case 3: Native Rate · Android Mixed renders neutral/sky blue badge and NEVER says Resampled 44.1 -> 44.1',
+        (tester) async {
+      const source =
+          AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
       const path = SignalPath(
         tier: OutputTier.nativeRate,
         source: source,
@@ -109,7 +118,8 @@ void main() {
         dspActive: false,
         volume: VolumeMode.system,
         device: dacDeviceS10,
-        explanation: 'Your DUNU Titan X is running at native 44 kHz, routed through Android 31 system mixer (AudioFlinger).',
+        explanation:
+            'Your DUNU Titan X is running at native 44 kHz, routed through Android 31 system mixer (AudioFlinger).',
       );
 
       await tester.pumpWidget(wrapWithTheme(
@@ -131,9 +141,13 @@ void main() {
       expect(find.textContaining('Resampled · 44.1 → 44.1'), findsNothing);
     });
 
-    testWidgets('Case 4: Resampled 44.1 -> 48 kHz renders amber badge with rate transition', (tester) async {
-      const source = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
-      const actual = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 48000);
+    testWidgets(
+        'Case 4: Resampled 44.1 -> 48 kHz renders amber badge with rate transition',
+        (tester) async {
+      const source =
+          AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
+      const actual =
+          AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 48000);
       const path = SignalPath(
         tier: OutputTier.resampled,
         source: source,
@@ -142,7 +156,8 @@ void main() {
         dspActive: false,
         volume: VolumeMode.system,
         device: dacDeviceS10,
-        explanation: 'This phone mixes all audio at 48 kHz, so your 44 kHz file is resampled.',
+        explanation:
+            'This phone mixes all audio at 48 kHz, so your 44 kHz file is resampled.',
       );
 
       await tester.pumpWidget(wrapWithTheme(
@@ -159,8 +174,11 @@ void main() {
       expect(find.text('44.1 → 48 kHz'), findsWidgets);
     });
 
-    testWidgets('Device node clearly separates DAC Hardware Capability from OS Routing Ceiling', (tester) async {
-      const source = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
+    testWidgets(
+        'Device node clearly separates DAC Hardware Capability from OS Routing Ceiling',
+        (tester) async {
+      const source =
+          AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
       const path = SignalPath(
         tier: OutputTier.nativeRate,
         source: source,
@@ -172,17 +190,22 @@ void main() {
         explanation: 'Test explanation',
       );
 
-      await tester.pumpWidget(wrapWithTheme(const SignalPathDiagram(path: path)));
+      await tester
+          .pumpWidget(wrapWithTheme(const SignalPathDiagram(path: path)));
 
       // Verifies hardware capability up to 192 kHz / 24-bit with OS routing ceiling Android 31
       expect(
-        find.textContaining('Hardware supports up to 192 kHz / 24-bit · Routed via Android 31 system mixer'),
+        find.textContaining(
+            'Hardware supports up to 192 kHz / 24-bit · Routed via Android 31 system mixer'),
         findsOneWidget,
       );
     });
 
-    testWidgets('Output node renders "Native rate · System mixed" on untouched OS-routed stream', (tester) async {
-      const source = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
+    testWidgets(
+        'Output node renders "Native rate · System mixed" on untouched OS-routed stream',
+        (tester) async {
+      const source =
+          AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
       const path = SignalPath(
         tier: OutputTier.nativeRate,
         source: source,
@@ -194,13 +217,17 @@ void main() {
         explanation: 'Routed via Android mixer without resampling.',
       );
 
-      await tester.pumpWidget(wrapWithTheme(const SignalPathDiagram(path: path)));
+      await tester
+          .pumpWidget(wrapWithTheme(const SignalPathDiagram(path: path)));
 
       expect(find.text('Native rate · System mixed'), findsOneWidget);
     });
 
-    testWidgets('Output node renders "Native rate · 64-bit DSP" when DSP equaliser is active', (tester) async {
-      const source = AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 48000);
+    testWidgets(
+        'Output node renders "Native rate · 64-bit DSP" when DSP equaliser is active',
+        (tester) async {
+      const source =
+          AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 48000);
       const path = SignalPath(
         tier: OutputTier.nativeRate,
         source: source,
@@ -213,10 +240,74 @@ void main() {
         explanation: 'Audio is running at native 48 kHz with equaliser.',
       );
 
-      await tester.pumpWidget(wrapWithTheme(const SignalPathDiagram(path: path)));
+      await tester
+          .pumpWidget(wrapWithTheme(const SignalPathDiagram(path: path)));
 
       expect(find.text('Native rate · 64-bit DSP'), findsOneWidget);
     });
+
+    testWidgets(
+        'DSD signal path renders DoP v1.1 bitstream framing for direct bit-perfect USB',
+        (tester) async {
+      const source =
+          AudioFormat(codec: Codec.dsf, bitDepth: 1, sampleRate: 2822400);
+      const actual =
+          AudioFormat(codec: Codec.dsf, bitDepth: 24, sampleRate: 176400);
+      const path = SignalPath(
+        tier: OutputTier.bitPerfect,
+        source: source,
+        requested: source,
+        actual: actual,
+        dspActive: false,
+        volume: VolumeMode.dacHardware,
+        device: dacDeviceBitPerfect,
+        decoderLabel: 'DSD64 Bitstream -> DoP v1.1 Framing',
+        explanation:
+            'Bit-perfect direct DSD stream active via User-Space USB Audio (Tier D) with DoP v1.1 framing.',
+      );
+
+      await tester
+          .pumpWidget(wrapWithTheme(const SignalPathDiagram(path: path)));
+
+      expect(find.text('Bit-Perfect'), findsOneWidget);
+      expect(find.text('DSD64 Bitstream -> DoP v1.1 Framing'), findsOneWidget);
+      expect(
+        find.textContaining(
+            'Bit-perfect direct DSD stream active via User-Space USB Audio (Tier D) with DoP v1.1 framing.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+        'DSD signal path renders polyphase FIR decimation when playing via PCM engine',
+        (tester) async {
+      const source =
+          AudioFormat(codec: Codec.dsf, bitDepth: 1, sampleRate: 2822400);
+      const actual =
+          AudioFormat(codec: Codec.dsf, bitDepth: 24, sampleRate: 176400);
+      const path = SignalPath(
+        tier: OutputTier.bitPerfect,
+        source: source,
+        requested: source,
+        actual: actual,
+        dspActive: false,
+        volume: VolumeMode.dacHardware,
+        device: dacDeviceBitPerfect,
+        decoderLabel: 'DSD64 -> 176.4 kHz / 24-bit Polyphase FIR Decimation',
+        explanation:
+            'DSD 1-bit stream decimated to 176.4 kHz / 24-bit PCM using 64-bit polyphase sinc FIR filter.',
+      );
+
+      await tester
+          .pumpWidget(wrapWithTheme(const SignalPathDiagram(path: path)));
+
+      expect(find.text('DSD64 -> 176.4 kHz / 24-bit Polyphase FIR Decimation'),
+          findsOneWidget);
+      expect(
+        find.textContaining(
+            'DSD 1-bit stream decimated to 176.4 kHz / 24-bit PCM'),
+        findsOneWidget,
+      );
+    });
   });
 }
-

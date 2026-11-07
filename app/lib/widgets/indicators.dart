@@ -52,7 +52,6 @@ class FormatBadge extends StatelessWidget {
       Codec.mp3 || Codec.aac => compact
           ? Fmt.kbps(format.bitrateKbps)
           : '${format.codec.label} ${format.bitrateKbps}k',
-      Codec.dsf => compact ? 'DSD64' : 'DSF DSD64',
       _ => compact ? format.shortLabel : format.badgeLabel,
     };
 
@@ -236,7 +235,8 @@ class AvailabilityGlyph extends StatelessWidget {
     switch (availability) {
       case Availability.cloudOnly:
         if (!showCloudOnly) return const SizedBox.shrink();
-        glyph = Icon(Icons.download_outlined, size: size, color: c.textTertiary);
+        glyph =
+            Icon(Icons.download_outlined, size: size, color: c.textTertiary);
       case Availability.partiallyCached:
         glyph = _PartialRing(
           percent: cachedPercent,
@@ -562,13 +562,31 @@ class _MiniBarsIndicatorState extends State<MiniBarsIndicator>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _bar(color, widget.isDancing ? (math.sin(t) + 1) / 2 * (spread * 0.78) + widget.minHeight : widget.minHeight + spread * 0.35),
+            _bar(
+                color,
+                widget.isDancing
+                    ? (math.sin(t) + 1) / 2 * (spread * 0.78) + widget.minHeight
+                    : widget.minHeight + spread * 0.35),
             SizedBox(width: widget.barSpacing),
-            _bar(color, widget.isDancing ? (math.sin(t + 1.6) + 1) / 2 * spread + widget.minHeight : widget.maxHeight * 0.88),
+            _bar(
+                color,
+                widget.isDancing
+                    ? (math.sin(t + 1.6) + 1) / 2 * spread + widget.minHeight
+                    : widget.maxHeight * 0.88),
             SizedBox(width: widget.barSpacing),
-            _bar(color, widget.isDancing ? (math.sin(t + 3.2) + 1) / 2 * (spread * 0.67) + widget.minHeight : widget.minHeight + spread * 0.55),
+            _bar(
+                color,
+                widget.isDancing
+                    ? (math.sin(t + 3.2) + 1) / 2 * (spread * 0.67) +
+                        widget.minHeight
+                    : widget.minHeight + spread * 0.55),
             SizedBox(width: widget.barSpacing),
-            _bar(color, widget.isDancing ? (math.sin(t + 4.8) + 1) / 2 * (spread * 0.89) + widget.minHeight : widget.minHeight + spread * 0.42),
+            _bar(
+                color,
+                widget.isDancing
+                    ? (math.sin(t + 4.8) + 1) / 2 * (spread * 0.89) +
+                        widget.minHeight
+                    : widget.minHeight + spread * 0.42),
           ],
         );
       },
@@ -629,9 +647,7 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
     if (widget.isLoading) return 'Loading';
     final state = widget.state;
     if (state == null) return context.l10n.bufferingLabel;
-    return state.attempt >= 2
-        ? 'Slow connection'
-        : context.l10n.bufferingLabel;
+    return state.attempt >= 2 ? 'Slow connection' : context.l10n.bufferingLabel;
   }
 
   @override
@@ -640,9 +656,8 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
     final state = widget.state;
     final isOffline = widget.isOffline;
     final isSlow = !isOffline && state != null && state.attempt >= 2;
-    final Color statusColor = isOffline
-        ? c.error
-        : (isSlow ? const Color(0xFFFFA726) : c.accent);
+    final Color statusColor =
+        isOffline ? c.error : (isSlow ? const Color(0xFFFFA726) : c.accent);
 
     final message = _messageFor(context);
 
@@ -668,7 +683,8 @@ class _BufferingIndicatorState extends State<BufferingIndicator>
             if (isOffline)
               Padding(
                 padding: const EdgeInsets.only(right: 3),
-                child: Icon(Icons.wifi_off_rounded, size: 11, color: statusColor),
+                child:
+                    Icon(Icons.wifi_off_rounded, size: 11, color: statusColor),
               )
             else
               _AudioWaveformBars(color: statusColor, animation: _controller),

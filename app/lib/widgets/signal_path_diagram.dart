@@ -247,7 +247,8 @@ class SignalPathDiagram extends StatelessWidget {
                 secondary: () {
                   if (device == null) return null;
                   final maxDacSr = device.supportedRates.isNotEmpty
-                      ? Fmt.kHz(device.supportedRates.reduce((a, b) => a > b ? a : b))
+                      ? Fmt.kHz(
+                          device.supportedRates.reduce((a, b) => a > b ? a : b))
                       : null;
                   final maxDacBits = device.bitDepths.isNotEmpty
                       ? '${device.bitDepths.reduce((a, b) => a > b ? a : b)}-bit'
@@ -259,7 +260,8 @@ class SignalPathDiagram extends StatelessWidget {
                           : '');
 
                   if (path.explanation.contains('Tier D')) {
-                    const routing = 'Direct USB (Tier D) · Zero OS mixer interaction';
+                    const routing =
+                        'Direct USB (Tier D) · Zero OS mixer interaction';
                     return capStr.isNotEmpty ? '$capStr · $routing' : routing;
                   } else if (!device.supportsBitPerfect) {
                     final routing = device.apiLevel != null
@@ -324,8 +326,10 @@ class _VerdictBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.c;
-    final isResampled = path.tier == OutputTier.resampled || path.source.sampleRate != path.actual.sampleRate;
     final isBitPerfect = path.tier == OutputTier.bitPerfect;
+    final isResampled = !isBitPerfect &&
+        (path.tier == OutputTier.resampled ||
+            path.source.sampleRate != path.actual.sampleRate);
     final isDspNative = !isResampled && path.dspActive;
     final isAndroidMixed = !isResampled && !path.dspActive && !isBitPerfect;
 
@@ -339,7 +343,9 @@ class _VerdictBanner extends StatelessWidget {
       bannerColor = c.tierBitPerfect;
       bannerIcon = Icons.diamond_outlined;
       title = 'Bit-Perfect';
-      detail = '${Fmt.kHz(path.source.sampleRate)} / ${path.source.bitDepth}-bit';
+      detail = path.source.isDsd
+          ? '${path.source.shortLabel} · 1-bit'
+          : '${Fmt.kHz(path.source.sampleRate)} / ${path.source.bitDepth}-bit';
     } else if (isDspNative) {
       // Case 2: Native Rate + 64-Bit DSP
       bannerColor = c.dspActive;
@@ -357,7 +363,8 @@ class _VerdictBanner extends StatelessWidget {
       bannerColor = c.tierResampled;
       bannerIcon = Icons.change_history;
       title = 'Resampled';
-      detail = '${Fmt.kHzBare(path.source.sampleRate)} → ${Fmt.kHz(path.actual.sampleRate)}';
+      detail =
+          '${Fmt.kHzBare(path.source.sampleRate)} → ${Fmt.kHz(path.actual.sampleRate)}';
     } else {
       bannerColor = c.tierUnknown;
       bannerIcon = Icons.help_outline;
@@ -386,7 +393,8 @@ class _VerdictBanner extends StatelessWidget {
                   style: context.t.titleSmall.copyWith(color: bannerColor),
                 ),
               ),
-              Text(detail, style: context.t.monoReadout.copyWith(color: bannerColor)),
+              Text(detail,
+                  style: context.t.monoReadout.copyWith(color: bannerColor)),
               if (path.dspActive && !isDspNative) ...[
                 const SizedBox(width: Spacing.xs),
                 const DspBadge(dense: true),

@@ -405,8 +405,8 @@ abstract final class MockCatalog {
       format: dsf64,
       dominantColor: 0xFF6B5A2F,
       folder: 'Drive › Music › DSD › The Copper Line › Sunday Pressure',
-      availability: Availability.unsupported,
-      unsupportedReason: 'DSF / DSD64 — not supported yet',
+      availability: Availability.cached,
+      cachedPercent: 100,
       titles: [
         'Sunday Pressure',
         'Barrelhouse',
@@ -505,7 +505,11 @@ abstract final class MockCatalog {
   static List<Album> albums = _buildAlbums();
   static List<Track> tracks = _buildTracks();
 
-  static Map<String, List<Track>>? _byAlbumCache; static void resetCache() { _byAlbumCache = null; }
+  static Map<String, List<Track>>? _byAlbumCache;
+  static void resetCache() {
+    _byAlbumCache = null;
+  }
+
   static Map<String, List<Track>> get tracksByAlbum => _byAlbumCache ??= {
         for (final a in albums)
           a.id: tracks.where((t) => t.albumId == a.id).toList(),
