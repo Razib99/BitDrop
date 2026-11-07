@@ -6,3 +6,4 @@ mod frb_generated;
 
 pub mod cloud;
 pub mod renderer;
+pub mod usb_dac;
