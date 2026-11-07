@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result, Row};
+use rusqlite::{params, Connection, OptionalExtension, Result, Row};
 use std::path::Path;
 
 /// One indexed track, flat enough to cross the FFI boundary unchanged.
@@ -175,7 +175,8 @@ impl MetadataDb {
                 picture_offset   INTEGER,
                 picture_length   INTEGER,
                 artwork_path     TEXT,
-                tags_read        INTEGER NOT NULL DEFAULT 0
+                tags_read        INTEGER NOT NULL DEFAULT 0,
+                artwork_checked  INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )?;
@@ -193,6 +194,9 @@ impl MetadataDb {
         let _ = self
             .conn
             .execute("ALTER TABLE tracks ADD COLUMN picture_length INTEGER", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE tracks ADD COLUMN artwork_checked INTEGER NOT NULL DEFAULT 0", []);
 
         // 2. Covering indexes for zero-heap UI sorting (<1.5ms at 100k tracks)
         self.conn.execute(
@@ -498,7 +502,9 @@ impl MetadataDb {
                     title = ?2, artist = ?3, album = ?4, album_artist = ?5,
                     genre = ?6, year = ?7, track_number = ?8, disc_number = ?9,
                     duration_ms = ?10, sample_rate = ?11, channels = ?12,
-                    bits_per_sample = ?13, artwork_path = ?14, tags_read = 1
+                    bits_per_sample = ?13, artwork_path = ?14,
+                    artwork_checked = CASE WHEN ?14 IS NOT NULL AND ?14 != '' THEN 1 ELSE tracks.artwork_checked END,
+                    tags_read = 1
                  WHERE file_id = ?1",
             )?;
 
@@ -609,10 +615,32 @@ impl MetadataDb {
 
     pub fn set_artwork(&self, file_id: &str, path: &str) -> Result<()> {
         self.conn.execute(
-            "UPDATE tracks SET artwork_path = ?2 WHERE file_id = ?1",
+            "UPDATE tracks SET artwork_path = ?2, artwork_checked = 1 WHERE file_id = ?1",
             params![file_id, path],
         )?;
         Ok(())
+    }
+
+    /// Marks artwork as checked (negative caching) so repeated online searches are avoided.
+    pub fn mark_artwork_checked(&self, file_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tracks SET artwork_checked = 1 WHERE file_id = ?1",
+            params![file_id],
+        )?;
+        Ok(())
+    }
+
+    /// Returns whether artwork has already been checked for this track.
+    pub fn is_artwork_checked(&self, file_id: &str) -> Result<bool> {
+        let checked: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT artwork_checked FROM tracks WHERE file_id = ?1",
+                params![file_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(checked.unwrap_or(0) == 1)
     }
 
     /// Sub-3ms Ranked Multi-Field Search Query using External Content FTS5 and BM25.
@@ -2252,5 +2280,68 @@ mod tests {
         let search_custom = db.search_autoeq_profiles("Planar").unwrap();
         assert_eq!(search_custom.len(), 1);
         assert_eq!(search_custom[0].id, "custom-user-eq");
+    }
+
+    #[test]
+    fn test_artwork_negative_caching_lifecycle() {
+        let mut db = MetadataDb::new_in_memory().unwrap();
+
+        // 1. Insert placeholders
+        let placeholders = vec![
+            TrackPlaceholder {
+                file_id: "track_with_art".to_string(),
+                name: "01. Song A.flac".to_string(),
+                folder_path: "Artist/Album".to_string(),
+                size_bytes: 10_000_000,
+            },
+            TrackPlaceholder {
+                file_id: "track_no_art".to_string(),
+                name: "02. Song B.flac".to_string(),
+                folder_path: "Artist/Album".to_string(),
+                size_bytes: 12_000_000,
+            },
+        ];
+        db.batch_insert_placeholders(&placeholders).unwrap();
+
+        // Neither should be checked initially
+        assert!(!db.is_artwork_checked("track_with_art").unwrap());
+        assert!(!db.is_artwork_checked("track_no_art").unwrap());
+
+        // 2. Update track_with_art with artwork path -> artwork_checked should become true
+        let updates = vec![TrackTagUpdate {
+            file_id: "track_with_art".to_string(),
+            title: "Song A".to_string(),
+            artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            album_artist: "Artist".to_string(),
+            genre: "Rock".to_string(),
+            year: 2024,
+            track_number: 1,
+            disc_number: 1,
+            duration_ms: 200_000,
+            sample_rate: 44100,
+            channels: 2,
+            bits_per_sample: 16,
+            artwork_path: "/cache/artwork/album.img".to_string(),
+        }];
+        db.batch_update_tags(&updates).unwrap();
+        assert!(db.is_artwork_checked("track_with_art").unwrap());
+        assert!(!db.is_artwork_checked("track_no_art").unwrap());
+
+        // 3. Mark track_no_art as checked (negative cache after online lookup returns None)
+        db.mark_artwork_checked("track_no_art").unwrap();
+        assert!(db.is_artwork_checked("track_no_art").unwrap());
+
+        // 4. Test set_artwork also sets artwork_checked = 1
+        let p3 = vec![TrackPlaceholder {
+            file_id: "track_late_art".to_string(),
+            name: "03. Song C.flac".to_string(),
+            folder_path: "Artist/Album".to_string(),
+            size_bytes: 15_000_000,
+        }];
+        db.batch_insert_placeholders(&p3).unwrap();
+        assert!(!db.is_artwork_checked("track_late_art").unwrap());
+        db.set_artwork("track_late_art", "/cache/artwork/late.img").unwrap();
+        assert!(db.is_artwork_checked("track_late_art").unwrap());
     }
 }

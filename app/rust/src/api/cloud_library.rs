@@ -501,6 +501,39 @@ fn parse_filename_metadata(name: &str) -> (String, String, String, u32) {
     }
 }
 
+static LAST_ITUNES_CALL: parking_lot::Mutex<Option<std::time::Instant>> =
+    parking_lot::Mutex::new(None);
+
+/// Ensures at least 150ms delay between consecutive requests to Apple's iTunes Search API
+/// to avoid HTTP 429 / 403 rate limit blocks.
+async fn throttle_itunes() {
+    let delay = {
+        let mut last = LAST_ITUNES_CALL.lock();
+        let now = std::time::Instant::now();
+        let min_interval = std::time::Duration::from_millis(150);
+        let scheduled_time = match *last {
+            Some(prev) => {
+                if prev + min_interval > now {
+                    prev + min_interval
+                } else {
+                    now
+                }
+            }
+            None => now,
+        };
+        *last = Some(scheduled_time);
+        if scheduled_time > now {
+            Some(scheduled_time - now)
+        } else {
+            None
+        }
+    };
+
+    if let Some(dur) = delay {
+        tokio::time::sleep(dur).await;
+    }
+}
+
 async fn fetch_online_cover_art(artist: &str, album: &str, title: &str) -> Option<Vec<u8>> {
     let clean_artist = artist.trim();
     let clean_album = album.trim();
@@ -576,6 +609,7 @@ async fn fetch_online_cover_art(artist: &str, album: &str, title: &str) -> Optio
                 "https://itunes.apple.com/search?term={}&entity=album&limit=1",
                 encoded_term
             );
+            throttle_itunes().await;
             if let Ok(resp) = HTTP_CLIENT
                 .get(&itunes_url)
                 .timeout(Duration::from_secs(4))
@@ -625,6 +659,7 @@ async fn fetch_online_cover_art(artist: &str, album: &str, title: &str) -> Optio
                 "https://itunes.apple.com/search?term={}&entity=musicTrack&limit=1",
                 encoded_term
             );
+            throttle_itunes().await;
             if let Ok(resp) = HTTP_CLIENT
                 .get(&itunes_url)
                 .timeout(Duration::from_secs(4))
@@ -1568,6 +1603,19 @@ mod tests {
         );
         assert_eq!(url_encode("A. R. Rahman"), "A.+R.+Rahman");
     }
+
+    #[tokio::test]
+    async fn test_throttle_itunes_spacing() {
+        let start = std::time::Instant::now();
+        throttle_itunes().await;
+        throttle_itunes().await;
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= std::time::Duration::from_millis(140),
+            "Expected at least 140ms elapsed, got {:?}",
+            elapsed
+        );
+    }
 }
 
 /// Downloads through the same bounded cache writer used by streaming playback.
@@ -1657,11 +1705,13 @@ pub fn cloud_library_sync_missing_artwork() -> Result<u32, String> {
     // 1. First trigger database propagation for tracks that share an album name with existing art
     with_db(|db| {
         let _ = db.conn.execute(
-            "UPDATE tracks SET artwork_path = (
-                SELECT a.artwork_path FROM albums_summary a
-                WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
-                  AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
-            )
+            "UPDATE tracks SET
+                artwork_path = (
+                    SELECT a.artwork_path FROM albums_summary a
+                    WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+                ),
+                artwork_checked = 1
             WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '' OR tracks.artwork_path LIKE '%unknown_artist__unknown_album%')
               AND EXISTS (
                 SELECT 1 FROM albums_summary a
@@ -1672,12 +1722,14 @@ pub fn cloud_library_sync_missing_artwork() -> Result<u32, String> {
         );
 
         let _ = db.conn.execute(
-            "UPDATE tracks SET artwork_path = (
-                SELECT a.artwork_path FROM albums_summary a
-                WHERE lower(trim(a.album)) = lower(trim(tracks.album))
-                  AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
-                LIMIT 1
-            )
+            "UPDATE tracks SET
+                artwork_path = (
+                    SELECT a.artwork_path FROM albums_summary a
+                    WHERE lower(trim(a.album)) = lower(trim(tracks.album))
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+                    LIMIT 1
+                ),
+                artwork_checked = 1
             WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '' OR tracks.artwork_path LIKE '%unknown_artist__unknown_album%')
               AND tracks.album IS NOT NULL AND trim(tracks.album) != '' AND lower(trim(tracks.album)) != 'unknown album'
               AND EXISTS (
@@ -1690,12 +1742,13 @@ pub fn cloud_library_sync_missing_artwork() -> Result<u32, String> {
         Ok(())
     })?;
 
-    // 2. Query all tracks that still lack artwork
+    // 2. Query all tracks that still lack artwork and have NOT been checked yet
     let missing_tracks: Vec<(String, String, String, String, String, String)> = with_db(|db| {
         let mut stmt = db.conn.prepare(
             "SELECT file_id, name, title, artist, album, album_artist
              FROM tracks
-             WHERE artwork_path IS NULL OR artwork_path = '' OR artwork_path LIKE '%unknown_artist__unknown_album%'"
+             WHERE (artwork_path IS NULL OR artwork_path = '' OR artwork_path LIKE '%unknown_artist__unknown_album%')
+               AND artwork_checked = 0"
         )?;
         let rows = stmt.query_map([], |row| {
             Ok((
@@ -1753,6 +1806,7 @@ pub fn cloud_library_sync_missing_artwork() -> Result<u32, String> {
                 String::new()
             };
 
+            let mut found = false;
             if let Some(art_bytes) = fetch_online_cover_art(&clean_artist, &clean_album, &clean_title).await {
                 let target_file_name = if clean_album.is_empty() || clean_album.to_lowercase() == "unknown album" {
                     format!("track_{}.img", sanitize_filename(&file_id))
@@ -1773,7 +1827,16 @@ pub fn cloud_library_sync_missing_artwork() -> Result<u32, String> {
                         Ok(())
                     });
                     count += 1;
+                    found = true;
                 }
+            }
+
+            if !found {
+                let fid = file_id.clone();
+                let _ = with_db(|db| {
+                    db.mark_artwork_checked(&fid)?;
+                    Ok(())
+                });
             }
         }
         count
