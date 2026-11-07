@@ -1,6 +1,7 @@
 //! Direct Stream Digital (DSD) container parsing, decimation, and DoP v1.1 framing.
 
 pub mod decimator;
+pub mod dop;
 pub mod dsf;
 
 use std::fmt;
