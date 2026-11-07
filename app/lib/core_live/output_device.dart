@@ -73,8 +73,14 @@ class OutputDeviceProbe {
   OutputDevice? _last;
 
   /// Invoked when Android sends AudioManager.ACTION_AUDIO_BECOMING_NOISY
-  /// (e.g. wired headphones, USB-C DAC, or Bluetooth earbuds unplugged).
+  /// or iOS sends AVAudioSessionRouteChange with oldDeviceUnavailable.
   VoidCallback? onBecomingNoisy;
+
+  /// Invoked when iOS or platform audio interruption begins (e.g. phone call or alarm).
+  VoidCallback? onInterruptionBegan;
+
+  /// Invoked when iOS or platform audio interruption ends.
+  ValueChanged<bool>? onInterruptionEnded;
 
   /// Invoked when a USB audio device is detached from the host port.
   ValueChanged<int>? onUsbDeviceDetached;
@@ -95,6 +101,14 @@ class OutputDeviceProbe {
           break;
         case 'onBecomingNoisy':
           onBecomingNoisy?.call();
+          break;
+        case 'onInterruptionBegan':
+          onInterruptionBegan?.call();
+          break;
+        case 'onInterruptionEnded':
+          final shouldResume =
+              (call.arguments as Map?)?['shouldResume'] as bool? ?? false;
+          onInterruptionEnded?.call(shouldResume);
           break;
         case 'onUsbDeviceDetached':
           final devId = call.arguments as int?;
@@ -142,6 +156,16 @@ class OutputDeviceProbe {
     onBecomingNoisy?.call();
   }
 
+  @visibleForTesting
+  void simulateInterruptionBegan() {
+    onInterruptionBegan?.call();
+  }
+
+  @visibleForTesting
+  void simulateInterruptionEnded(bool shouldResume) {
+    onInterruptionEnded?.call(shouldResume);
+  }
+
   Future<OutputDevice?> read() async {
     if (!_supported) return null;
     try {
@@ -182,7 +206,7 @@ class OutputDeviceProbe {
       }
 
       return OutputDevice(
-        id: 'android-${type.name}-$name',
+        id: '${defaultTargetPlatform.name}-${type.name}-$name',
         name: name.isEmpty ? _fallbackName(type) : name,
         type: type,
         supportedRates: rates..sort(),
@@ -211,7 +235,30 @@ class OutputDeviceProbe {
     }
   }
 
-  /// Configures preferred mixer attributes on Android 14+ (API 34+) for bit-perfect output.
+  /// Sets preferred hardware sample rate (iOS AVAudioSession or Android 14+ mixer).
+  Future<bool> setPreferredSampleRate({
+    required int sampleRate,
+    int bitDepth = 24,
+    bool bitPerfect = true,
+  }) async {
+    if (!_supported) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>(
+        'setPreferredSampleRate',
+        {
+          'sampleRate': sampleRate,
+          'bitDepth': bitDepth,
+          'bitPerfect': bitPerfect,
+        },
+      );
+      return ok ?? false;
+    } catch (e) {
+      debugPrint('[output] failed to set preferred sample rate: $e');
+      return false;
+    }
+  }
+
+  /// Configures preferred mixer attributes on Android 14+ (API 34+) or AVAudioSession on iOS.
   Future<bool> setPreferredMixerAttributes({
     required int sampleRate,
     required int bitDepth,
@@ -220,7 +267,9 @@ class OutputDeviceProbe {
     if (!_supported) return false;
     try {
       final ok = await _channel.invokeMethod<bool>(
-        'setPreferredMixerAttributes',
+        defaultTargetPlatform == TargetPlatform.iOS
+            ? 'setPreferredSampleRate'
+            : 'setPreferredMixerAttributes',
         {
           'sampleRate': sampleRate,
           'bitDepth': bitDepth,
@@ -234,11 +283,15 @@ class OutputDeviceProbe {
     }
   }
 
-  /// Clears preferred mixer attributes on Android 14+ (API 34+), resetting to system mixer.
+  /// Clears preferred mixer attributes on Android 14+ (API 34+) or AVAudioSession on iOS.
   Future<bool> clearPreferredMixerAttributes() async {
     if (!_supported) return false;
     try {
-      final ok = await _channel.invokeMethod<bool>('clearPreferredMixerAttributes');
+      final ok = await _channel.invokeMethod<bool>(
+        defaultTargetPlatform == TargetPlatform.iOS
+            ? 'clearPreferredSampleRate'
+            : 'clearPreferredMixerAttributes',
+      );
       return ok ?? false;
     } catch (e) {
       debugPrint('[output] failed to clear preferred mixer attributes: $e');
@@ -259,7 +312,7 @@ class OutputDeviceProbe {
 
   /// Lists connected USB audio class devices.
   Future<List<UsbAudioDevice>> listUsbAudioDevices() async {
-    if (!_supported) return const [];
+    if (!_isAndroidUsbHostSupported) return const [];
     try {
       final list = await _channel.invokeListMethod<Map<dynamic, dynamic>>('listUsbAudioDevices');
       if (list == null) return const [];
@@ -274,7 +327,7 @@ class OutputDeviceProbe {
 
   /// Requests Android user permission to access the raw USB device connection.
   Future<bool> requestUsbPermission(int deviceId) async {
-    if (!_supported) return false;
+    if (!_isAndroidUsbHostSupported) return false;
     try {
       final granted = await _channel.invokeMethod<bool>(
         'requestUsbPermission',
@@ -289,7 +342,7 @@ class OutputDeviceProbe {
 
   /// Opens the USB device and retrieves its raw file descriptor and identity.
   Future<Map<String, dynamic>?> openUsbDevice(int deviceId) async {
-    if (!_supported) return null;
+    if (!_isAndroidUsbHostSupported) return null;
     try {
       return await _channel.invokeMapMethod<String, dynamic>(
         'openUsbDevice',
@@ -303,7 +356,7 @@ class OutputDeviceProbe {
 
   /// Closes the currently active raw USB connection.
   Future<bool> closeUsbDevice() async {
-    if (!_supported) return false;
+    if (!_isAndroidUsbHostSupported) return false;
     try {
       final ok = await _channel.invokeMethod<bool>('closeUsbDevice');
       return ok ?? false;
@@ -368,6 +421,11 @@ class OutputDeviceProbe {
   }
 
   static bool get _supported =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
+  static bool get _isAndroidUsbHostSupported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   static String _fallbackName(DeviceType type) => switch (type) {

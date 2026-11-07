@@ -191,6 +191,20 @@ class LiveBitDropCore implements BitDropCore {
       }
     };
 
+    _outputProbe.onInterruptionBegan = () {
+      if (_audioHandler.playbackState.value.playing) {
+        debugPrint('[core] audio interruption began: pausing playback');
+        unawaited(_audioHandler.pause());
+      }
+    };
+
+    _outputProbe.onInterruptionEnded = (shouldResume) {
+      if (shouldResume && !_audioHandler.playbackState.value.playing) {
+        debugPrint('[core] audio interruption ended: resuming playback');
+        unawaited(_audioHandler.play());
+      }
+    };
+
     _playbackSub = _audioHandler.playbackState.listen((state) {
       _recomputeSignalPath();
       final isPlaying = state.playing;
@@ -2032,7 +2046,9 @@ class LiveBitDropCore implements BitDropCore {
   }
 
   static bool get _supported =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
 
   String get _currentTrackId => _nowPlaying.value?.track.id ?? '';
 
@@ -2092,6 +2108,11 @@ class LiveBitDropCore implements BitDropCore {
             'The audio engine has direct hardware control over your ${device?.name ?? "USB DAC"} at '
             '${actual.sampleRate ~/ 1000} kHz / ${actual.bitDepth}-bit format with zero OS mixer interaction or resampling.';
       }
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        return 'Bit-perfect direct stream active via iOS CoreAudio & AVAudioSession (Tier A). '
+            'The audio engine has native hardware clock control over your ${device?.name ?? "USB DAC"} at '
+            '${source.sampleRate ~/ 1000} kHz / ${source.bitDepth}-bit format with zero OS resampling or DSP.';
+      }
       return 'Bit-perfect direct stream active via Android 14+ Mixer Attributes. '
           'The audio engine has exclusive access to your ${device?.name ?? "USB DAC"} at its native '
           '${source.sampleRate ~/ 1000} kHz / ${source.bitDepth}-bit format with zero resampling or DSP.';
@@ -2102,13 +2123,15 @@ class LiveBitDropCore implements BitDropCore {
           'Bypass the equaliser to restore bit-perfect output.';
     }
     if (device?.type == DeviceType.phoneSpeaker) {
+      final osName =
+          defaultTargetPlatform == TargetPlatform.iOS ? 'iOS' : 'Android';
       if (actual.sampleRate != source.sampleRate) {
-        return 'Phone speakers route through the Android mixer at '
+        return 'Phone speakers route through the $osName mixer at '
             '${actual.sampleRate ~/ 1000} kHz, so your '
             '${source.sampleRate ~/ 1000} kHz audio is resampled. Connect a USB DAC '
             'for bit-perfect playback.';
       } else {
-        return 'Phone speaker output is routed through the Android shared audio mixer at native '
+        return 'Phone speaker output is routed through the $osName shared audio mixer at native '
             '${source.sampleRate ~/ 1000} kHz. Connect a USB DAC for direct exclusive bit-perfect playback.';
       }
     }

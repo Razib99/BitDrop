@@ -231,3 +231,60 @@ We have audited and completed the full search capabilities across BitDrop:
   - [`app/lib/features/search/search_screen.dart`](file:///home/razib/Desktop/BitDrop/app/lib/features/search/search_screen.dart): Added "Clear" action button on recent searches header, per-item deletion buttons, and auto-record on keyboard submit and track/album/artist selection.
   - [`app/test/search_test.dart`](file:///home/razib/Desktop/BitDrop/app/test/search_test.dart): Added tests ensuring clean empty start, deduplication, and removal/clear functionality (11 tests passing, 46 total in suite).
 
+---
+
+# Milestone 6: iOS Audio Engine Architecture — Walkthrough
+
+We have completed the implementation and verification of **Milestone 6: iOS Audio Engine Architecture** across all five parts:
+
+## Changes Made
+
+### 1. Part 6.1: Rust CoreAudio / CPAL Dynamic Stream Engine & Rate Negotiation
+- **Files**: [`app/rust/src/api/audio_engine.rs`](file:///home/razib/Desktop/BitDrop/app/rust/src/api/audio_engine.rs), [`app/rust/src/renderer.rs`](file:///home/razib/Desktop/BitDrop/app/rust/src/renderer.rs)
+- Added `open_cpal_output_stream(sample_rate: Option<u32>)` enabling dynamic stream instantiation and sample rate negotiation on CoreAudio and Desktop targets.
+- Updated `OutputRenderer::drop` to safely return `AUDIO_CONSUMER`, `BOUNDARY_CONSUMER`, and `TRIGGERED_PRODUCER` back to their global atomic cells.
+- Enabled track sample rate change checks across all platforms in the decoder loop, ensuring automatic stream reopening when track sampling rate changes.
+- Added Rust tests `test_dynamic_cpal_stream_reconfiguration`, `test_output_renderer_drop_consumer_restoration`, `test_cpal_output_stream_safe_invocation`. *(Committed & pushed: `8362fea`)*.
+
+### 2. Parts 6.2 & 6.3: iOS `AVAudioSession` Swift Host Broker, Rate Matching & Interruption Lifecycle
+- **File**: [`app/ios/Runner/AppDelegate.swift`](file:///home/razib/Desktop/BitDrop/app/ios/Runner/AppDelegate.swift)
+- Implemented `IosAudioHostBroker` over Flutter method channel `com.bitdrop/audio_device`:
+  - Configures `AVAudioSession` with `.playback` category, `.default` mode, and `[.defaultToSpeaker, .allowBluetooth, .allowAirPlay]` options.
+  - Route inspection via `currentOutput()`: maps `AVAudioSession.Port` (.usbAudio → usb / bit-perfect, .headphones / .lineOut → wiredAnalog, .builtInSpeaker → phoneSpeaker, .bluetoothA2DP / .bluetoothLE / .bluetoothHFP → bluetooth, .airPlay → airplay).
+  - Rate negotiation via `setPreferredSampleRate`: invokes `session.setPreferredSampleRate(rate)` and activates session, returning actual hardware sample rate.
+  - Reset rate via `clearPreferredSampleRate`: resets preferred sample rate to 0.0 for system default.
+  - Session state inspection via `getAudioSessionState`: exposes hardware sample rate, IO buffer duration, category, and input/output channel counts.
+  - Observes `AVAudioSession.routeChangeNotification`: dispatches `onDeviceChanged` and triggers `onBecomingNoisy` when `reason == .oldDeviceUnavailable`.
+  - Observes `AVAudioSession.interruptionNotification`: dispatches `onInterruptionBegan` and `onInterruptionEnded(shouldResume)`.
+  - Observes `AVAudioSession.mediaServicesWereResetNotification`: safely restores audio session and re-notifies Flutter.
+
+### 3. Part 6.4: Dart `OutputDeviceProbe` iOS Support & Signal Path Tier Resolution
+- **Files**: [`app/lib/core_live/output_device.dart`](file:///home/razib/Desktop/BitDrop/app/lib/core_live/output_device.dart), [`app/lib/core_live/live_core.dart`](file:///home/razib/Desktop/BitDrop/app/lib/core_live/live_core.dart)
+- Updated `OutputDeviceProbe` to enable iOS support alongside Android.
+- Guarded raw Android `/dev/bus/usb` host methods (`listUsbAudioDevices`, `requestUsbPermission`, `openUsbDevice`, `closeUsbDevice`) with `_isAndroidUsbHostSupported`.
+- Added `onInterruptionBegan` and `onInterruptionEnded` event channels in `OutputDeviceProbe`.
+- Wired `LiveBitDropCore` to pause playback on `onInterruptionBegan` and resume if `shouldResume` is true on `onInterruptionEnded`.
+- Updated signal path tier resolution with authentic iOS CoreAudio Tier A Bit-Perfect descriptions.
+
+### 4. Part 6.5: Comprehensive Testing & Verification Suite
+- **File**: [`app/test/ios_audio_engine_test.dart`](file:///home/razib/Desktop/BitDrop/app/test/ios_audio_engine_test.dart)
+- 12 dedicated iOS tests covering:
+  - iOS USB DAC detection and Tier A bit-perfect capability mapping.
+  - iOS wired headphones, phone speaker, and Bluetooth device reporting.
+  - `AVAudioSession` preferred sample rate negotiation and reset delegation.
+  - `onDeviceChanged`, `onBecomingNoisy`, and `onInterruptionBegan`/`onInterruptionEnded` route notifications.
+  - Live signal path tier resolution to Tier A bit-perfect with authentic iOS CoreAudio explanations.
+
+---
+
+## Verification Results
+
+1. **Rust Formatting & Clippy** (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`):
+   - Formatted cleanly, 0 warnings.
+2. **Rust Test Suite** (`cargo test`):
+   - All 116 tests passed (110 unit tests + 6 golden audio gates).
+3. **Flutter Static Analysis** (`flutter analyze lib test`):
+   - No issues found.
+4. **Flutter Test Suite** (`flutter test`):
+   - All 185 tests passed (100% pass rate, 0 failures).
+
