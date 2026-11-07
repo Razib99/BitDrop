@@ -40,6 +40,14 @@ pub struct AlbumSummaryRow {
     pub max_bit_depth: u32,
 }
 
+/// Aggregated genre summary row for instant genre list/grid rendering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenreSummary {
+    pub genre: String,
+    pub track_count: u32,
+    pub artwork_path: String,
+}
+
 /// Record of an old file_id replaced by a newly uploaded file with the same path and name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplacedFile {
@@ -217,6 +225,11 @@ impl MetadataDb {
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tracks_folder_name
              ON tracks(folder_path, name)",
+            [],
+        )?;
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tracks_genre
+             ON tracks(genre)",
             [],
         )?;
 
@@ -743,6 +756,68 @@ impl MetadataDb {
             Some(res) => res.map(Some),
             None => Ok(None),
         }
+    }
+
+    /// Aggregates distinct genres across all indexed tracks, grouping empty/null genres
+    /// into "Unknown Genre" and returning track counts and sample artwork.
+    pub fn get_genres(&self) -> Result<Vec<GenreSummary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT
+                COALESCE(NULLIF(TRIM(genre), ''), 'Unknown Genre') AS display_genre,
+                COUNT(*) AS track_count,
+                COALESCE(MAX(CASE WHEN artwork_path IS NOT NULL AND artwork_path != '' AND artwork_path NOT LIKE '%unknown_artist__unknown_album%' THEN artwork_path ELSE '' END), '') AS artwork_path
+             FROM tracks
+             GROUP BY display_genre
+             ORDER BY CASE WHEN display_genre = 'Unknown Genre' THEN 1 ELSE 0 END, display_genre COLLATE NOCASE ASC",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(GenreSummary {
+                genre: row.get(0)?,
+                track_count: row.get(1)?,
+                artwork_path: row.get(2)?,
+            })
+        })?;
+
+        rows.collect()
+    }
+
+    /// Retrieves all tracks matching a given genre, ordered by album, disc number, track number, and title.
+    pub fn get_tracks_by_genre(&self, genre: &str) -> Result<Vec<CloudTrackRow>> {
+        let trimmed = genre.trim();
+        let is_unknown = trimmed.is_empty()
+            || trimmed.eq_ignore_ascii_case("Unknown Genre")
+            || trimmed.eq_ignore_ascii_case("unknown");
+
+        let mut stmt = if is_unknown {
+            self.conn.prepare(
+                "SELECT file_id, name, folder_path, title, artist, album,
+                        album_artist, genre, year, track_number, disc_number,
+                        duration_ms, sample_rate, channels, bits_per_sample,
+                        size_bytes, tags_read, artwork_path
+                 FROM tracks
+                 WHERE genre IS NULL OR TRIM(genre) = ''
+                 ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+            )?
+        } else {
+            self.conn.prepare(
+                "SELECT file_id, name, folder_path, title, artist, album,
+                        album_artist, genre, year, track_number, disc_number,
+                        duration_ms, sample_rate, channels, bits_per_sample,
+                        size_bytes, tags_read, artwork_path
+                 FROM tracks
+                 WHERE LOWER(TRIM(genre)) = LOWER(TRIM(?1))
+                 ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+            )?
+        };
+
+        let rows = if is_unknown {
+            stmt.query_map([], Self::row_to_cloud_track)?
+        } else {
+            stmt.query_map(params![trimmed], Self::row_to_cloud_track)?
+        };
+
+        rows.collect()
     }
 
     /// Pending unscanned files.
@@ -2343,5 +2418,146 @@ mod tests {
         assert!(!db.is_artwork_checked("track_late_art").unwrap());
         db.set_artwork("track_late_art", "/cache/artwork/late.img").unwrap();
         assert!(db.is_artwork_checked("track_late_art").unwrap());
+    }
+
+    #[test]
+    fn test_get_genres_and_tracks_by_genre() {
+        let mut db = MetadataDb::new_in_memory().unwrap();
+
+        let placeholders = vec![
+            TrackPlaceholder {
+                file_id: "t1".to_string(),
+                name: "01. Rock 1.flac".to_string(),
+                folder_path: "Music/Rock".to_string(),
+                size_bytes: 20_000_000,
+            },
+            TrackPlaceholder {
+                file_id: "t2".to_string(),
+                name: "02. Rock 2.flac".to_string(),
+                folder_path: "Music/Rock".to_string(),
+                size_bytes: 25_000_000,
+            },
+            TrackPlaceholder {
+                file_id: "t3".to_string(),
+                name: "01. Jazz 1.flac".to_string(),
+                folder_path: "Music/Jazz".to_string(),
+                size_bytes: 30_000_000,
+            },
+            TrackPlaceholder {
+                file_id: "t4".to_string(),
+                name: "01. Untagged.flac".to_string(),
+                folder_path: "Music/Other".to_string(),
+                size_bytes: 15_000_000,
+            },
+        ];
+        db.batch_insert_placeholders(&placeholders).unwrap();
+
+        let updates = vec![
+            TrackTagUpdate {
+                file_id: "t1".to_string(),
+                title: "Rock 1".to_string(),
+                artist: "Band A".to_string(),
+                album: "Album A".to_string(),
+                album_artist: "Band A".to_string(),
+                genre: "Rock".to_string(),
+                year: 2020,
+                track_number: 1,
+                disc_number: 1,
+                duration_ms: 180_000,
+                sample_rate: 44100,
+                channels: 2,
+                bits_per_sample: 16,
+                artwork_path: "/cache/artwork/band_a.img".to_string(),
+            },
+            TrackTagUpdate {
+                file_id: "t2".to_string(),
+                title: "Rock 2".to_string(),
+                artist: "Band B".to_string(),
+                album: "Album B".to_string(),
+                album_artist: "Band B".to_string(),
+                genre: "Rock".to_string(),
+                year: 2021,
+                track_number: 2,
+                disc_number: 1,
+                duration_ms: 210_000,
+                sample_rate: 44100,
+                channels: 2,
+                bits_per_sample: 16,
+                artwork_path: String::new(),
+            },
+            TrackTagUpdate {
+                file_id: "t3".to_string(),
+                title: "Jazz 1".to_string(),
+                artist: "Miles Trio".to_string(),
+                album: "Blue In Green".to_string(),
+                album_artist: "Miles Trio".to_string(),
+                genre: "Jazz".to_string(),
+                year: 1959,
+                track_number: 1,
+                disc_number: 1,
+                duration_ms: 320_000,
+                sample_rate: 96000,
+                channels: 2,
+                bits_per_sample: 24,
+                artwork_path: "/cache/artwork/miles.img".to_string(),
+            },
+            TrackTagUpdate {
+                file_id: "t4".to_string(),
+                title: "Untagged".to_string(),
+                artist: "Unknown Artist".to_string(),
+                album: "Unknown Album".to_string(),
+                album_artist: "Unknown Artist".to_string(),
+                genre: String::new(),
+                year: 0,
+                track_number: 1,
+                disc_number: 1,
+                duration_ms: 120_000,
+                sample_rate: 44100,
+                channels: 2,
+                bits_per_sample: 16,
+                artwork_path: String::new(),
+            },
+        ];
+        db.batch_update_tags(&updates).unwrap();
+
+        // 1. Verify get_genres()
+        let genres = db.get_genres().unwrap();
+        assert_eq!(genres.len(), 3);
+
+        // Alphabetical: Jazz first, then Rock, then Unknown Genre last
+        assert_eq!(genres[0].genre, "Jazz");
+        assert_eq!(genres[0].track_count, 1);
+        assert_eq!(genres[0].artwork_path, "/cache/artwork/miles.img");
+
+        assert_eq!(genres[1].genre, "Rock");
+        assert_eq!(genres[1].track_count, 2);
+        assert_eq!(genres[1].artwork_path, "/cache/artwork/band_a.img");
+
+        assert_eq!(genres[2].genre, "Unknown Genre");
+        assert_eq!(genres[2].track_count, 1);
+        assert_eq!(genres[2].artwork_path, "");
+
+        // 2. Verify get_tracks_by_genre()
+        let rock_tracks = db.get_tracks_by_genre("Rock").unwrap();
+        assert_eq!(rock_tracks.len(), 2);
+        assert_eq!(rock_tracks[0].file_id, "t1");
+        assert_eq!(rock_tracks[1].file_id, "t2");
+
+        // Case-insensitive lookup
+        let rock_tracks_lower = db.get_tracks_by_genre("rock").unwrap();
+        assert_eq!(rock_tracks_lower.len(), 2);
+
+        let jazz_tracks = db.get_tracks_by_genre("Jazz").unwrap();
+        assert_eq!(jazz_tracks.len(), 1);
+        assert_eq!(jazz_tracks[0].file_id, "t3");
+
+        // Unknown Genre lookup
+        let unknown_tracks = db.get_tracks_by_genre("Unknown Genre").unwrap();
+        assert_eq!(unknown_tracks.len(), 1);
+        assert_eq!(unknown_tracks[0].file_id, "t4");
+
+        let empty_genre_tracks = db.get_tracks_by_genre("").unwrap();
+        assert_eq!(empty_genre_tracks.len(), 1);
+        assert_eq!(empty_genre_tracks[0].file_id, "t4");
     }
 }

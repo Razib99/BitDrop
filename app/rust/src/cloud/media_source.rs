@@ -1151,7 +1151,7 @@ pub fn deallocate_chunk_range(file: &std::fs::File, offset: u64, len: u64) {
     const MODE: libc::c_int = libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE;
     // Align length up to 4096-byte filesystem block boundary for Linux/Android VFS
     let aligned_len = if len > 0 {
-        ((len + 4095) / 4096) * 4096
+        len.div_ceil(4096) * 4096
     } else {
         len
     };

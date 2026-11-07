@@ -1760,13 +1760,7 @@ pub fn cloud_library_sync_missing_artwork() -> Result<u32, String> {
                 row.get::<_, String>(5)?,
             ))
         })?;
-        let mut list = Vec::new();
-        for r in rows {
-            if let Ok(item) = r {
-                list.push(item);
-            }
-        }
-        Ok(list)
+        Ok(rows.flatten().collect())
     })?;
 
     if missing_tracks.is_empty() {
