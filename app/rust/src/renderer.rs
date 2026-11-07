@@ -318,5 +318,10 @@ impl Drop for OutputRenderer {
         if let Some(reader) = self.dsp_config.take() {
             DSP_TRIPLE_BUFFER.return_consumer(reader);
         }
+        crate::api::audio_engine::return_audio_consumers(
+            self.consumer.take(),
+            self.boundary_consumer.take(),
+            self.triggered_producer.take(),
+        );
     }
 }

@@ -186,7 +186,6 @@ static STREAM_LOST: AtomicBool = AtomicBool::new(false);
 /// UI because a recovery is the one thing that explains a brief silence the
 /// user did not cause, and because a climbing count means the device is
 /// refusing the exclusive path and the engine should be told about it.
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
 static STREAM_RESTARTS: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(not(target_os = "android"))]
@@ -564,47 +563,19 @@ fn initialize_engine() {
     let (next_loaded_tx, next_loaded_rx) =
         crossbeam_channel::unbounded::<(u64, u64, String, Box<OpenedTrack>)>();
 
-    #[cfg(not(target_os = "android"))]
-    {
-        let host = cpal::default_host();
-        if let Some(device) = host.default_output_device() {
-            if let Ok(config) = device.default_output_config() {
-                let _sample_format = config.sample_format();
-                let config: cpal::StreamConfig = config.into();
-                PLAYER_STATE.lock().unwrap().target_sample_rate = config.sample_rate.0;
-                let channels = config.channels as usize;
-
-                let mut renderer = crate::renderer::OutputRenderer::new(
-                    config.sample_rate.0 as f64,
-                    Some(audio_rx),
-                    Some(boundary_rx),
-                    Some(triggered_tx),
-                );
-
-                let stream = device.build_output_stream(
-                    &config,
-                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        let _ = renderer.render_interleaved(data, channels);
-                    },
-                    |err| eprintln!("an error occurred on stream: {}", err),
-                    None,
-                );
-
-                if let Ok(stream) = stream {
-                    let _ = stream.play();
-                    CPAL_STREAM.lock().unwrap().0 = Some(stream);
-                }
-            }
-        }
-    }
+    *AUDIO_CONSUMER.lock().unwrap() = Some(audio_rx);
+    *BOUNDARY_CONSUMER.lock().unwrap() = Some(boundary_rx);
+    *TRIGGERED_PRODUCER.lock().unwrap() = Some(triggered_tx);
 
     #[cfg(target_os = "android")]
     {
-        *AUDIO_CONSUMER.lock().unwrap() = Some(audio_rx);
-        *BOUNDARY_CONSUMER.lock().unwrap() = Some(boundary_rx);
-        *TRIGGERED_PRODUCER.lock().unwrap() = Some(triggered_tx);
         open_output_stream(None);
         start_stream_watchdog();
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        open_cpal_output_stream(None);
     }
 
     // Control Thread: drains triggered boundaries and pushes reactive EngineEvents to Dart via StreamSink
@@ -1010,23 +981,23 @@ fn initialize_engine() {
                     state.gate_output = true;
                     CALLBACK_GATE_OUTPUT.store(true, Ordering::Release);
 
-                    #[cfg(target_os = "android")]
                     let stream_sr = match current_backend.as_ref().unwrap() {
                         TrackDecoderBackend::Symphonia { .. } => opened.sample_rate,
                         TrackDecoderBackend::Dsd { .. } => {
                             crate::dsd::decimator::DSD_PCM_TARGET_RATE
                         }
                     };
-                    #[cfg(target_os = "android")]
                     let cur_target = state.target_sample_rate;
 
                     publish_dsp_config(&state);
                     drop(state);
 
-                    #[cfg(target_os = "android")]
                     if stream_sr > 0 && stream_sr != cur_target {
-                        eprintln!("[bitdrop] stream rate {stream_sr} != current stream {cur_target}; rebuilding exclusive stream");
+                        eprintln!("[bitdrop] stream rate {stream_sr} != current stream {cur_target}; rebuilding output stream");
+                        #[cfg(target_os = "android")]
                         open_output_stream(Some(stream_sr));
+                        #[cfg(not(target_os = "android"))]
+                        open_cpal_output_stream(Some(stream_sr));
                     }
 
                     let mut state = PLAYER_STATE.lock().unwrap();
@@ -1610,6 +1581,156 @@ fn open_output_stream(sample_rate: Option<u32>) {
     }
 }
 
+/// Builds and starts the CPAL CoreAudio / Desktop output stream, replacing any existing one.
+#[cfg(not(target_os = "android"))]
+fn open_cpal_output_stream(sample_rate: Option<u32>) {
+    // 1. Drop existing stream so its callback drops and restores consumers to AUDIO_CONSUMER
+    *CPAL_STREAM.lock().unwrap() = CpalStreamWrapper(None);
+
+    // 2. Acquire consumer handles, with a brief retry loop in case the audio thread needs a moment to exit
+    let (consumer, boundary_consumer, triggered_producer) = {
+        let mut acquired = None;
+        for _ in 0..10 {
+            let mut c_guard = AUDIO_CONSUMER.lock().unwrap();
+            let mut b_guard = BOUNDARY_CONSUMER.lock().unwrap();
+            let mut t_guard = TRIGGERED_PRODUCER.lock().unwrap();
+            if let (Some(c), Some(b)) = (c_guard.take(), b_guard.take()) {
+                acquired = Some((c, b, t_guard.take()));
+                break;
+            }
+            drop(c_guard);
+            drop(b_guard);
+            drop(t_guard);
+            thread::sleep(Duration::from_millis(5));
+        }
+        match acquired {
+            Some(handles) => handles,
+            None => {
+                eprintln!("[bitdrop] audio ringbuffer consumers unavailable for CPAL stream");
+                return;
+            }
+        }
+    };
+
+    let host = cpal::default_host();
+    let device = match host.default_output_device() {
+        Some(d) => d,
+        None => {
+            eprintln!("[bitdrop] no default cpal output device available");
+            return_audio_consumers(Some(consumer), Some(boundary_consumer), triggered_producer);
+            return;
+        }
+    };
+
+    // 3. Negotiate matching sample rate config if requested
+    let mut chosen_config = None;
+    if let Some(target_sr) = sample_rate {
+        if target_sr > 0 {
+            if let Ok(supported_configs) = device.supported_output_configs() {
+                for config in supported_configs {
+                    if config.channels() >= 2
+                        && config.min_sample_rate().0 <= target_sr
+                        && config.max_sample_rate().0 >= target_sr
+                    {
+                        chosen_config = Some(config.with_sample_rate(cpal::SampleRate(target_sr)));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let config = match chosen_config {
+        Some(c) => c,
+        None => match device.default_output_config() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[bitdrop] failed to query default cpal output config: {e:?}");
+                return_audio_consumers(Some(consumer), Some(boundary_consumer), triggered_producer);
+                return;
+            }
+        },
+    };
+
+    let sample_format = config.sample_format();
+    let stream_config: cpal::StreamConfig = config.into();
+    let actual_rate = stream_config.sample_rate.0;
+    let channels = stream_config.channels as usize;
+
+    let mut renderer = crate::renderer::OutputRenderer::new(
+        actual_rate as f64,
+        Some(consumer),
+        Some(boundary_consumer),
+        triggered_producer,
+    );
+    renderer.fade_gain = 0.0;
+
+    {
+        let mut state = PLAYER_STATE.lock().unwrap();
+        state.target_sample_rate = actual_rate;
+        if state.hardware_sample_rate == 0 {
+            state.hardware_sample_rate = actual_rate;
+        }
+        state.hardware_format = match sample_format {
+            cpal::SampleFormat::F32 => "PCM_FLOAT".to_string(),
+            cpal::SampleFormat::I16 => "PCM_16BIT".to_string(),
+            _ => format!("{:?}", sample_format),
+        };
+        state.eq_updated = true;
+        publish_dsp_config(&state);
+        set_ramp(&mut state, 1.0, FADE_MS);
+    }
+
+    let err_fn = |err| eprintln!("[bitdrop] an error occurred on cpal stream: {err}");
+
+    let stream = match sample_format {
+        cpal::SampleFormat::F32 => device.build_output_stream(
+            &stream_config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                let _ = renderer.render_interleaved(data, channels);
+            },
+            err_fn,
+            None,
+        ),
+        cpal::SampleFormat::I16 => {
+            let mut buf: Vec<f32> = Vec::new();
+            device.build_output_stream(
+                &stream_config,
+                move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                    if buf.len() != data.len() {
+                        buf.resize(data.len(), 0.0);
+                    }
+                    let _ = renderer.render_interleaved(&mut buf, channels);
+                    for (dest, &src) in data.iter_mut().zip(buf.iter()) {
+                        *dest = (src.clamp(-1.0, 1.0) * 32767.0) as i16;
+                    }
+                },
+                err_fn,
+                None,
+            )
+        }
+        _ => {
+            eprintln!(
+                "[bitdrop] unsupported cpal sample format: {:?}",
+                sample_format
+            );
+            return;
+        }
+    };
+
+    match stream {
+        Ok(stream) => {
+            let _ = stream.play();
+            CPAL_STREAM.lock().unwrap().0 = Some(stream);
+            STREAM_RESTARTS.fetch_add(1, Ordering::Relaxed);
+            eprintln!("[bitdrop] opened cpal stream: rate={actual_rate}, channels={channels}");
+        }
+        Err(e) => {
+            eprintln!("[bitdrop] failed to build cpal output stream: {e:?}");
+        }
+    }
+}
+
 /// Watches for an output stream that has stopped pulling and rebuilds it.
 ///
 /// A disconnected AAudio stream is the single most common way for this app to
@@ -1953,8 +2074,22 @@ pub fn engine_output_state() -> EngineOutputState {
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_set_hardware_sample_rate(rate: u32) {
-    let mut state = PLAYER_STATE.lock().unwrap();
-    state.hardware_sample_rate = rate;
+    {
+        let mut state = PLAYER_STATE.lock().unwrap();
+        state.hardware_sample_rate = rate;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        if rate > 0 {
+            open_cpal_output_stream(Some(rate));
+        }
+    }
+    #[cfg(target_os = "android")]
+    {
+        if rate > 0 {
+            open_output_stream(Some(rate));
+        }
+    }
 }
 
 #[flutter_rust_bridge::frb(sync)]
@@ -2057,15 +2192,8 @@ pub fn engine_get_diagnostics() -> EngineDiagnosticsData {
     }
 }
 
-#[cfg(target_os = "android")]
 fn stream_opens() -> u32 {
     STREAM_RESTARTS.load(Ordering::Relaxed) as u32
-}
-
-/// Desktop keeps one CPAL stream for the life of the process.
-#[cfg(not(target_os = "android"))]
-fn stream_opens() -> u32 {
-    1
 }
 
 #[flutter_rust_bridge::frb(sync)]
@@ -2251,6 +2379,8 @@ pub fn engine_attach_usb_dac(
         Err(err) => {
             #[cfg(target_os = "android")]
             open_output_stream(None);
+            #[cfg(not(target_os = "android"))]
+            open_cpal_output_stream(None);
             Err(format!("Failed to attach USB DAC: {err}"))
         }
     }
@@ -2264,6 +2394,8 @@ pub fn engine_detach_usb_dac() -> Result<(), String> {
 
     #[cfg(target_os = "android")]
     open_output_stream(None);
+    #[cfg(not(target_os = "android"))]
+    open_cpal_output_stream(None);
 
     Ok(())
 }
@@ -2961,5 +3093,65 @@ mod tests {
             }
             _ => panic!("Expected TrackDecoderBackend::Dsd"),
         }
+    }
+
+    #[test]
+    fn test_dynamic_cpal_stream_reconfiguration() {
+        // Test engine_set_hardware_sample_rate updates state correctly
+        engine_set_hardware_sample_rate(96000);
+        let state = engine_output_state();
+        assert_eq!(state.hardware_sample_rate, 96000);
+
+        engine_set_hardware_sample_rate(192000);
+        let state2 = engine_output_state();
+        assert_eq!(state2.hardware_sample_rate, 192000);
+
+        // Verify buffer state telemetry surfaces stream opens counter
+        let buf_state = engine_buffer_state();
+        let _ = buf_state.stream_opens;
+    }
+
+    #[test]
+    fn test_output_renderer_drop_consumer_restoration() {
+        let (_audio_tx, audio_rx) = rtrb::RingBuffer::<f32>::new(1024);
+        let (_boundary_tx, boundary_rx) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+        let (triggered_tx, _triggered_rx) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+
+        // Clear existing globals for this test scope
+        let _ = AUDIO_CONSUMER.lock().unwrap().take();
+        let _ = BOUNDARY_CONSUMER.lock().unwrap().take();
+        let _ = TRIGGERED_PRODUCER.lock().unwrap().take();
+
+        // Create OutputRenderer with consumer handles
+        let renderer = crate::renderer::OutputRenderer::new(
+            48000.0,
+            Some(audio_rx),
+            Some(boundary_rx),
+            Some(triggered_tx),
+        );
+
+        // Before drop: globals should still be None
+        assert!(AUDIO_CONSUMER.lock().unwrap().is_none());
+        assert!(BOUNDARY_CONSUMER.lock().unwrap().is_none());
+
+        // Drop renderer: consumers must be automatically returned to globals!
+        drop(renderer);
+
+        assert!(AUDIO_CONSUMER.lock().unwrap().is_some());
+        assert!(BOUNDARY_CONSUMER.lock().unwrap().is_some());
+        assert!(TRIGGERED_PRODUCER.lock().unwrap().is_some());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "android"))]
+    fn test_cpal_output_stream_safe_invocation() {
+        // Ensure open_cpal_output_stream can be invoked safely with rates without panicking
+        open_cpal_output_stream(Some(48000));
+        let state = engine_output_state();
+        assert!(
+            state.hardware_sample_rate > 0
+                || state.output_sample_rate > 0
+                || !state.hardware_format.is_empty()
+        );
     }
 }
