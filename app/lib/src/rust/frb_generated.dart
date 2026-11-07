@@ -6,6 +6,7 @@
 import 'api/audio_engine.dart';
 import 'api/cloud_library.dart';
 import 'api/simple.dart';
+import 'cloud/db.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dsp.dart';
@@ -63,7 +64,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.0.0';
 
   @override
-  int get rustContentHash => -2083109925;
+  int get rustContentHash => -1010224618;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -211,6 +212,17 @@ abstract class RustLibApi extends BaseApi {
   Future<void> crateApiCloudLibraryCloudLibraryClear();
 
   Future<ScanCounts> crateApiCloudLibraryCloudLibraryCounts();
+
+  Future<CloudFolderListing> crateApiCloudLibraryCloudLibraryGetFolder(
+      {String? folderId});
+
+  Future<List<CloudGenre>> crateApiCloudLibraryCloudLibraryGetGenres();
+
+  Future<List<CloudTrackRow>> crateApiCloudLibraryCloudLibraryGetTracksByGenre(
+      {required String genre});
+
+  Future<List<CloudTrackRow>> crateApiCloudLibraryCloudLibraryGetTracksInFolder(
+      {required String folderPath, required bool recursive});
 
   Future<void> crateApiCloudLibraryCloudLibraryOpen(
       {required String dbPath, required String cacheDir});
@@ -1508,6 +1520,111 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<CloudFolderListing> crateApiCloudLibraryCloudLibraryGetFolder(
+      {String? folderId}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_opt_String(folderId, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 49, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_cloud_folder_listing,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiCloudLibraryCloudLibraryGetFolderConstMeta,
+      argValues: [folderId],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiCloudLibraryCloudLibraryGetFolderConstMeta =>
+      const TaskConstMeta(
+        debugName: "cloud_library_get_folder",
+        argNames: ["folderId"],
+      );
+
+  @override
+  Future<List<CloudGenre>> crateApiCloudLibraryCloudLibraryGetGenres() {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 50, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_cloud_genre,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiCloudLibraryCloudLibraryGetGenresConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiCloudLibraryCloudLibraryGetGenresConstMeta =>
+      const TaskConstMeta(
+        debugName: "cloud_library_get_genres",
+        argNames: [],
+      );
+
+  @override
+  Future<List<CloudTrackRow>> crateApiCloudLibraryCloudLibraryGetTracksByGenre(
+      {required String genre}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(genre, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 51, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_cloud_track_row,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiCloudLibraryCloudLibraryGetTracksByGenreConstMeta,
+      argValues: [genre],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiCloudLibraryCloudLibraryGetTracksByGenreConstMeta =>
+          const TaskConstMeta(
+            debugName: "cloud_library_get_tracks_by_genre",
+            argNames: ["genre"],
+          );
+
+  @override
+  Future<List<CloudTrackRow>> crateApiCloudLibraryCloudLibraryGetTracksInFolder(
+      {required String folderPath, required bool recursive}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(folderPath, serializer);
+        sse_encode_bool(recursive, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 52, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_cloud_track_row,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiCloudLibraryCloudLibraryGetTracksInFolderConstMeta,
+      argValues: [folderPath, recursive],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiCloudLibraryCloudLibraryGetTracksInFolderConstMeta =>
+          const TaskConstMeta(
+            debugName: "cloud_library_get_tracks_in_folder",
+            argNames: ["folderPath", "recursive"],
+          );
+
+  @override
   Future<void> crateApiCloudLibraryCloudLibraryOpen(
       {required String dbPath, required String cacheDir}) {
     return handler.executeNormal(NormalTask(
@@ -1516,7 +1633,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(dbPath, serializer);
         sse_encode_String(cacheDir, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 49, port: port_);
+            funcId: 53, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1542,7 +1659,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_u_32(limit, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 50, port: port_);
+            funcId: 54, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_String,
@@ -1570,7 +1687,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_list_String(folderPrefixes, serializer);
         sse_encode_list_String(validFileIds, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 51, port: port_);
+            funcId: 55, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_String,
@@ -1598,7 +1715,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(url, serializer);
         sse_encode_opt_String(authToken, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 52, port: port_);
+            funcId: 56, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
@@ -1622,7 +1739,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 53, port: port_);
+            funcId: 57, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1649,7 +1766,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_list_String(fileIds, serializer);
         sse_encode_opt_String(authToken, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 54, port: port_);
+            funcId: 58, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_32,
@@ -1676,7 +1793,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(query, serializer);
         sse_encode_opt_box_autoadd_u_32(limit, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 55, port: port_);
+            funcId: 59, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_cloud_track,
@@ -1700,7 +1817,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 56, port: port_);
+            funcId: 60, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_32,
@@ -1725,7 +1842,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 57, port: port_);
+            funcId: 61, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_cloud_track,
@@ -1749,7 +1866,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 58, port: port_);
+            funcId: 62, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_64,
@@ -1773,7 +1890,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_list_prim_u_8_loose(audioData, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 59)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 63)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_decoded_audio,
@@ -1797,7 +1914,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(path, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 60)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 64)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
@@ -1820,7 +1937,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(name, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 61)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 65)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -1843,7 +1960,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 62, port: port_);
+            funcId: 66, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1868,7 +1985,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_u_32(sampleRate, serializer);
         sse_encode_u_32(channels, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 63)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 67)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -1892,7 +2009,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(path, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 64)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 68)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_track_metadata,
@@ -1916,7 +2033,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(path, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 65)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 69)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_track_metadata,
@@ -2001,6 +2118,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudTrackRow dco_decode_box_autoadd_cloud_track_row(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_cloud_track_row(raw);
+  }
+
+  @protected
   PlayerState dco_decode_box_autoadd_player_state(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_player_state(raw);
@@ -2053,6 +2176,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudFolderEntry dco_decode_cloud_folder_entry(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return CloudFolderEntry(
+      id: dco_decode_String(arr[0]),
+      name: dco_decode_String(arr[1]),
+      isDirectory: dco_decode_bool(arr[2]),
+      itemCount: dco_decode_u_32(arr[3]),
+      sizeBytes: dco_decode_u_64(arr[4]),
+      track: dco_decode_opt_box_autoadd_cloud_track_row(arr[5]),
+    );
+  }
+
+  @protected
+  CloudFolderListing dco_decode_cloud_folder_listing(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return CloudFolderListing(
+      folderId: dco_decode_opt_String(arr[0]),
+      breadcrumb: dco_decode_list_cloud_folder_entry(arr[1]),
+      entries: dco_decode_list_cloud_folder_entry(arr[2]),
+    );
+  }
+
+  @protected
+  CloudGenre dco_decode_cloud_genre(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return CloudGenre(
+      genre: dco_decode_String(arr[0]),
+      trackCount: dco_decode_u_32(arr[1]),
+      artworkPath: dco_decode_String(arr[2]),
+    );
+  }
+
+  @protected
   CloudTrack dco_decode_cloud_track(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2077,6 +2242,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sizeBytes: dco_decode_u_64(arr[15]),
       tagsRead: dco_decode_bool(arr[16]),
       artworkPath: dco_decode_String(arr[17]),
+    );
+  }
+
+  @protected
+  CloudTrackRow dco_decode_cloud_track_row(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 18)
+      throw Exception('unexpected arr length: expect 18 but see ${arr.length}');
+    return CloudTrackRow(
+      fileId: dco_decode_String(arr[0]),
+      name: dco_decode_String(arr[1]),
+      folderPath: dco_decode_String(arr[2]),
+      title: dco_decode_String(arr[3]),
+      artist: dco_decode_String(arr[4]),
+      album: dco_decode_String(arr[5]),
+      albumArtist: dco_decode_String(arr[6]),
+      genre: dco_decode_String(arr[7]),
+      year: dco_decode_u_32(arr[8]),
+      trackNumber: dco_decode_u_32(arr[9]),
+      discNumber: dco_decode_u_32(arr[10]),
+      durationMs: dco_decode_u_32(arr[11]),
+      sampleRate: dco_decode_u_32(arr[12]),
+      channels: dco_decode_u_32(arr[13]),
+      bitsPerSample: dco_decode_u_32(arr[14]),
+      sizeBytes: dco_decode_u_64(arr[15]),
+      artworkPath: dco_decode_String(arr[16]),
+      tagsRead: dco_decode_bool(arr[17]),
     );
   }
 
@@ -2268,9 +2461,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<CloudFolderEntry> dco_decode_list_cloud_folder_entry(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_cloud_folder_entry).toList();
+  }
+
+  @protected
+  List<CloudGenre> dco_decode_list_cloud_genre(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_cloud_genre).toList();
+  }
+
+  @protected
   List<CloudTrack> dco_decode_list_cloud_track(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_cloud_track).toList();
+  }
+
+  @protected
+  List<CloudTrackRow> dco_decode_list_cloud_track_row(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_cloud_track_row).toList();
   }
 
   @protected
@@ -2340,6 +2551,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return raw == null
         ? null
         : dco_decode_box_autoadd_auto_eq_profile_data(raw);
+  }
+
+  @protected
+  CloudTrackRow? dco_decode_opt_box_autoadd_cloud_track_row(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_cloud_track_row(raw);
   }
 
   @protected
@@ -2554,6 +2771,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudTrackRow sse_decode_box_autoadd_cloud_track_row(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_cloud_track_row(deserializer));
+  }
+
+  @protected
   PlayerState sse_decode_box_autoadd_player_state(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -2603,6 +2827,49 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudFolderEntry sse_decode_cloud_folder_entry(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_String(deserializer);
+    var var_name = sse_decode_String(deserializer);
+    var var_isDirectory = sse_decode_bool(deserializer);
+    var var_itemCount = sse_decode_u_32(deserializer);
+    var var_sizeBytes = sse_decode_u_64(deserializer);
+    var var_track = sse_decode_opt_box_autoadd_cloud_track_row(deserializer);
+    return CloudFolderEntry(
+        id: var_id,
+        name: var_name,
+        isDirectory: var_isDirectory,
+        itemCount: var_itemCount,
+        sizeBytes: var_sizeBytes,
+        track: var_track);
+  }
+
+  @protected
+  CloudFolderListing sse_decode_cloud_folder_listing(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_folderId = sse_decode_opt_String(deserializer);
+    var var_breadcrumb = sse_decode_list_cloud_folder_entry(deserializer);
+    var var_entries = sse_decode_list_cloud_folder_entry(deserializer);
+    return CloudFolderListing(
+        folderId: var_folderId,
+        breadcrumb: var_breadcrumb,
+        entries: var_entries);
+  }
+
+  @protected
+  CloudGenre sse_decode_cloud_genre(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_genre = sse_decode_String(deserializer);
+    var var_trackCount = sse_decode_u_32(deserializer);
+    var var_artworkPath = sse_decode_String(deserializer);
+    return CloudGenre(
+        genre: var_genre,
+        trackCount: var_trackCount,
+        artworkPath: var_artworkPath);
+  }
+
+  @protected
   CloudTrack sse_decode_cloud_track(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_fileId = sse_decode_String(deserializer);
@@ -2642,6 +2909,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sizeBytes: var_sizeBytes,
         tagsRead: var_tagsRead,
         artworkPath: var_artworkPath);
+  }
+
+  @protected
+  CloudTrackRow sse_decode_cloud_track_row(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_fileId = sse_decode_String(deserializer);
+    var var_name = sse_decode_String(deserializer);
+    var var_folderPath = sse_decode_String(deserializer);
+    var var_title = sse_decode_String(deserializer);
+    var var_artist = sse_decode_String(deserializer);
+    var var_album = sse_decode_String(deserializer);
+    var var_albumArtist = sse_decode_String(deserializer);
+    var var_genre = sse_decode_String(deserializer);
+    var var_year = sse_decode_u_32(deserializer);
+    var var_trackNumber = sse_decode_u_32(deserializer);
+    var var_discNumber = sse_decode_u_32(deserializer);
+    var var_durationMs = sse_decode_u_32(deserializer);
+    var var_sampleRate = sse_decode_u_32(deserializer);
+    var var_channels = sse_decode_u_32(deserializer);
+    var var_bitsPerSample = sse_decode_u_32(deserializer);
+    var var_sizeBytes = sse_decode_u_64(deserializer);
+    var var_artworkPath = sse_decode_String(deserializer);
+    var var_tagsRead = sse_decode_bool(deserializer);
+    return CloudTrackRow(
+        fileId: var_fileId,
+        name: var_name,
+        folderPath: var_folderPath,
+        title: var_title,
+        artist: var_artist,
+        album: var_album,
+        albumArtist: var_albumArtist,
+        genre: var_genre,
+        year: var_year,
+        trackNumber: var_trackNumber,
+        discNumber: var_discNumber,
+        durationMs: var_durationMs,
+        sampleRate: var_sampleRate,
+        channels: var_channels,
+        bitsPerSample: var_bitsPerSample,
+        sizeBytes: var_sizeBytes,
+        artworkPath: var_artworkPath,
+        tagsRead: var_tagsRead);
   }
 
   @protected
@@ -2873,6 +3182,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<CloudFolderEntry> sse_decode_list_cloud_folder_entry(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <CloudFolderEntry>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_cloud_folder_entry(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<CloudGenre> sse_decode_list_cloud_genre(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <CloudGenre>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_cloud_genre(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<CloudTrack> sse_decode_list_cloud_track(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -2880,6 +3214,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <CloudTrack>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_cloud_track(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<CloudTrackRow> sse_decode_list_cloud_track_row(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <CloudTrackRow>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_cloud_track_row(deserializer));
     }
     return ans_;
   }
@@ -2988,6 +3335,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_auto_eq_profile_data(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  CloudTrackRow? sse_decode_opt_box_autoadd_cloud_track_row(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_cloud_track_row(deserializer));
     } else {
       return null;
     }
@@ -3233,6 +3592,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_cloud_track_row(
+      CloudTrackRow self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_cloud_track_row(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_player_state(
       PlayerState self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -3272,6 +3638,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_cloud_folder_entry(
+      CloudFolderEntry self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.id, serializer);
+    sse_encode_String(self.name, serializer);
+    sse_encode_bool(self.isDirectory, serializer);
+    sse_encode_u_32(self.itemCount, serializer);
+    sse_encode_u_64(self.sizeBytes, serializer);
+    sse_encode_opt_box_autoadd_cloud_track_row(self.track, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_folder_listing(
+      CloudFolderListing self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_String(self.folderId, serializer);
+    sse_encode_list_cloud_folder_entry(self.breadcrumb, serializer);
+    sse_encode_list_cloud_folder_entry(self.entries, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_genre(CloudGenre self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.genre, serializer);
+    sse_encode_u_32(self.trackCount, serializer);
+    sse_encode_String(self.artworkPath, serializer);
+  }
+
+  @protected
   void sse_encode_cloud_track(CloudTrack self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.fileId, serializer);
@@ -3292,6 +3687,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_64(self.sizeBytes, serializer);
     sse_encode_bool(self.tagsRead, serializer);
     sse_encode_String(self.artworkPath, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_track_row(
+      CloudTrackRow self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.fileId, serializer);
+    sse_encode_String(self.name, serializer);
+    sse_encode_String(self.folderPath, serializer);
+    sse_encode_String(self.title, serializer);
+    sse_encode_String(self.artist, serializer);
+    sse_encode_String(self.album, serializer);
+    sse_encode_String(self.albumArtist, serializer);
+    sse_encode_String(self.genre, serializer);
+    sse_encode_u_32(self.year, serializer);
+    sse_encode_u_32(self.trackNumber, serializer);
+    sse_encode_u_32(self.discNumber, serializer);
+    sse_encode_u_32(self.durationMs, serializer);
+    sse_encode_u_32(self.sampleRate, serializer);
+    sse_encode_u_32(self.channels, serializer);
+    sse_encode_u_32(self.bitsPerSample, serializer);
+    sse_encode_u_64(self.sizeBytes, serializer);
+    sse_encode_String(self.artworkPath, serializer);
+    sse_encode_bool(self.tagsRead, serializer);
   }
 
   @protected
@@ -3478,12 +3897,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_cloud_folder_entry(
+      List<CloudFolderEntry> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_cloud_folder_entry(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_cloud_genre(
+      List<CloudGenre> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_cloud_genre(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_cloud_track(
       List<CloudTrack> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_cloud_track(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_cloud_track_row(
+      List<CloudTrackRow> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_cloud_track_row(item, serializer);
     }
   }
 
@@ -3587,6 +4036,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_auto_eq_profile_data(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_track_row(
+      CloudTrackRow? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_cloud_track_row(self, serializer);
     }
   }
 

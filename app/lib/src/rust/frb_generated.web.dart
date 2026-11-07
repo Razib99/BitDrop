@@ -9,6 +9,7 @@
 import 'api/audio_engine.dart';
 import 'api/cloud_library.dart';
 import 'api/simple.dart';
+import 'cloud/db.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dsp.dart';
@@ -47,6 +48,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AutoEqProfileData dco_decode_box_autoadd_auto_eq_profile_data(dynamic raw);
 
   @protected
+  CloudTrackRow dco_decode_box_autoadd_cloud_track_row(dynamic raw);
+
+  @protected
   PlayerState dco_decode_box_autoadd_player_state(dynamic raw);
 
   @protected
@@ -62,7 +66,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CachedRangeMs dco_decode_cached_range_ms(dynamic raw);
 
   @protected
+  CloudFolderEntry dco_decode_cloud_folder_entry(dynamic raw);
+
+  @protected
+  CloudFolderListing dco_decode_cloud_folder_listing(dynamic raw);
+
+  @protected
+  CloudGenre dco_decode_cloud_genre(dynamic raw);
+
+  @protected
   CloudTrack dco_decode_cloud_track(dynamic raw);
+
+  @protected
+  CloudTrackRow dco_decode_cloud_track_row(dynamic raw);
 
   @protected
   DecodedAudio dco_decode_decoded_audio(dynamic raw);
@@ -107,7 +123,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<CachedRangeMs> dco_decode_list_cached_range_ms(dynamic raw);
 
   @protected
+  List<CloudFolderEntry> dco_decode_list_cloud_folder_entry(dynamic raw);
+
+  @protected
+  List<CloudGenre> dco_decode_list_cloud_genre(dynamic raw);
+
+  @protected
   List<CloudTrack> dco_decode_list_cloud_track(dynamic raw);
+
+  @protected
+  List<CloudTrackRow> dco_decode_list_cloud_track_row(dynamic raw);
 
   @protected
   List<EqBandSpec> dco_decode_list_eq_band_spec(dynamic raw);
@@ -142,6 +167,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   AutoEqProfileData? dco_decode_opt_box_autoadd_auto_eq_profile_data(
       dynamic raw);
+
+  @protected
+  CloudTrackRow? dco_decode_opt_box_autoadd_cloud_track_row(dynamic raw);
 
   @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
@@ -204,6 +232,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  CloudTrackRow sse_decode_box_autoadd_cloud_track_row(
+      SseDeserializer deserializer);
+
+  @protected
   PlayerState sse_decode_box_autoadd_player_state(SseDeserializer deserializer);
 
   @protected
@@ -219,7 +251,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CachedRangeMs sse_decode_cached_range_ms(SseDeserializer deserializer);
 
   @protected
+  CloudFolderEntry sse_decode_cloud_folder_entry(SseDeserializer deserializer);
+
+  @protected
+  CloudFolderListing sse_decode_cloud_folder_listing(
+      SseDeserializer deserializer);
+
+  @protected
+  CloudGenre sse_decode_cloud_genre(SseDeserializer deserializer);
+
+  @protected
   CloudTrack sse_decode_cloud_track(SseDeserializer deserializer);
+
+  @protected
+  CloudTrackRow sse_decode_cloud_track_row(SseDeserializer deserializer);
 
   @protected
   DecodedAudio sse_decode_decoded_audio(SseDeserializer deserializer);
@@ -270,7 +315,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  List<CloudFolderEntry> sse_decode_list_cloud_folder_entry(
+      SseDeserializer deserializer);
+
+  @protected
+  List<CloudGenre> sse_decode_list_cloud_genre(SseDeserializer deserializer);
+
+  @protected
   List<CloudTrack> sse_decode_list_cloud_track(SseDeserializer deserializer);
+
+  @protected
+  List<CloudTrackRow> sse_decode_list_cloud_track_row(
+      SseDeserializer deserializer);
 
   @protected
   List<EqBandSpec> sse_decode_list_eq_band_spec(SseDeserializer deserializer);
@@ -307,6 +363,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AutoEqProfileData? sse_decode_opt_box_autoadd_auto_eq_profile_data(
+      SseDeserializer deserializer);
+
+  @protected
+  CloudTrackRow? sse_decode_opt_box_autoadd_cloud_track_row(
       SseDeserializer deserializer);
 
   @protected
@@ -376,6 +436,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       AutoEqProfileData self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_cloud_track_row(
+      CloudTrackRow self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_player_state(
       PlayerState self, SseSerializer serializer);
 
@@ -392,7 +456,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_cached_range_ms(CachedRangeMs self, SseSerializer serializer);
 
   @protected
+  void sse_encode_cloud_folder_entry(
+      CloudFolderEntry self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cloud_folder_listing(
+      CloudFolderListing self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cloud_genre(CloudGenre self, SseSerializer serializer);
+
+  @protected
   void sse_encode_cloud_track(CloudTrack self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cloud_track_row(CloudTrackRow self, SseSerializer serializer);
 
   @protected
   void sse_encode_decoded_audio(DecodedAudio self, SseSerializer serializer);
@@ -443,8 +521,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<CachedRangeMs> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_cloud_folder_entry(
+      List<CloudFolderEntry> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_cloud_genre(
+      List<CloudGenre> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_cloud_track(
       List<CloudTrack> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_cloud_track_row(
+      List<CloudTrackRow> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_eq_band_spec(
@@ -487,6 +577,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_auto_eq_profile_data(
       AutoEqProfileData? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_track_row(
+      CloudTrackRow? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);

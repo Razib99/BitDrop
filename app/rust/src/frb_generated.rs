@@ -37,7 +37,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.0.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -2083109925;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1010224618;
 
 // Section: executor
 
@@ -1668,6 +1668,143 @@ fn wire__crate__api__cloud_library__cloud_library_counts_impl(
         },
     )
 }
+fn wire__crate__api__cloud_library__cloud_library_get_folder_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud_library_get_folder",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_folder_id = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok =
+                        crate::api::cloud_library::cloud_library_get_folder(api_folder_id)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__cloud_library__cloud_library_get_genres_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud_library_get_genres",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::cloud_library::cloud_library_get_genres()?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__cloud_library__cloud_library_get_tracks_by_genre_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud_library_get_tracks_by_genre",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_genre = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok =
+                        crate::api::cloud_library::cloud_library_get_tracks_by_genre(api_genre)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__cloud_library__cloud_library_get_tracks_in_folder_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud_library_get_tracks_in_folder",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_folder_path = <String>::sse_decode(&mut deserializer);
+            let api_recursive = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::cloud_library::cloud_library_get_tracks_in_folder(
+                        api_folder_path,
+                        api_recursive,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__cloud_library__cloud_library_open_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2359,6 +2496,56 @@ impl SseDecode for crate::api::audio_engine::CachedRangeMs {
     }
 }
 
+impl SseDecode for crate::api::cloud_library::CloudFolderEntry {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <String>::sse_decode(deserializer);
+        let mut var_name = <String>::sse_decode(deserializer);
+        let mut var_isDirectory = <bool>::sse_decode(deserializer);
+        let mut var_itemCount = <u32>::sse_decode(deserializer);
+        let mut var_sizeBytes = <u64>::sse_decode(deserializer);
+        let mut var_track = <Option<crate::cloud::db::CloudTrackRow>>::sse_decode(deserializer);
+        return crate::api::cloud_library::CloudFolderEntry {
+            id: var_id,
+            name: var_name,
+            is_directory: var_isDirectory,
+            item_count: var_itemCount,
+            size_bytes: var_sizeBytes,
+            track: var_track,
+        };
+    }
+}
+
+impl SseDecode for crate::api::cloud_library::CloudFolderListing {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_folderId = <Option<String>>::sse_decode(deserializer);
+        let mut var_breadcrumb =
+            <Vec<crate::api::cloud_library::CloudFolderEntry>>::sse_decode(deserializer);
+        let mut var_entries =
+            <Vec<crate::api::cloud_library::CloudFolderEntry>>::sse_decode(deserializer);
+        return crate::api::cloud_library::CloudFolderListing {
+            folder_id: var_folderId,
+            breadcrumb: var_breadcrumb,
+            entries: var_entries,
+        };
+    }
+}
+
+impl SseDecode for crate::api::cloud_library::CloudGenre {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_genre = <String>::sse_decode(deserializer);
+        let mut var_trackCount = <u32>::sse_decode(deserializer);
+        let mut var_artworkPath = <String>::sse_decode(deserializer);
+        return crate::api::cloud_library::CloudGenre {
+            genre: var_genre,
+            track_count: var_trackCount,
+            artwork_path: var_artworkPath,
+        };
+    }
+}
+
 impl SseDecode for crate::api::cloud_library::CloudTrack {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2399,6 +2586,50 @@ impl SseDecode for crate::api::cloud_library::CloudTrack {
             size_bytes: var_sizeBytes,
             tags_read: var_tagsRead,
             artwork_path: var_artworkPath,
+        };
+    }
+}
+
+impl SseDecode for crate::cloud::db::CloudTrackRow {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_fileId = <String>::sse_decode(deserializer);
+        let mut var_name = <String>::sse_decode(deserializer);
+        let mut var_folderPath = <String>::sse_decode(deserializer);
+        let mut var_title = <String>::sse_decode(deserializer);
+        let mut var_artist = <String>::sse_decode(deserializer);
+        let mut var_album = <String>::sse_decode(deserializer);
+        let mut var_albumArtist = <String>::sse_decode(deserializer);
+        let mut var_genre = <String>::sse_decode(deserializer);
+        let mut var_year = <u32>::sse_decode(deserializer);
+        let mut var_trackNumber = <u32>::sse_decode(deserializer);
+        let mut var_discNumber = <u32>::sse_decode(deserializer);
+        let mut var_durationMs = <u32>::sse_decode(deserializer);
+        let mut var_sampleRate = <u32>::sse_decode(deserializer);
+        let mut var_channels = <u32>::sse_decode(deserializer);
+        let mut var_bitsPerSample = <u32>::sse_decode(deserializer);
+        let mut var_sizeBytes = <u64>::sse_decode(deserializer);
+        let mut var_artworkPath = <String>::sse_decode(deserializer);
+        let mut var_tagsRead = <bool>::sse_decode(deserializer);
+        return crate::cloud::db::CloudTrackRow {
+            file_id: var_fileId,
+            name: var_name,
+            folder_path: var_folderPath,
+            title: var_title,
+            artist: var_artist,
+            album: var_album,
+            album_artist: var_albumArtist,
+            genre: var_genre,
+            year: var_year,
+            track_number: var_trackNumber,
+            disc_number: var_discNumber,
+            duration_ms: var_durationMs,
+            sample_rate: var_sampleRate,
+            channels: var_channels,
+            bits_per_sample: var_bitsPerSample,
+            size_bytes: var_sizeBytes,
+            artwork_path: var_artworkPath,
+            tags_read: var_tagsRead,
         };
     }
 }
@@ -2675,6 +2906,34 @@ impl SseDecode for Vec<crate::api::audio_engine::CachedRangeMs> {
     }
 }
 
+impl SseDecode for Vec<crate::api::cloud_library::CloudFolderEntry> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::cloud_library::CloudFolderEntry>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::cloud_library::CloudGenre> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::cloud_library::CloudGenre>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::cloud_library::CloudTrack> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2684,6 +2943,18 @@ impl SseDecode for Vec<crate::api::cloud_library::CloudTrack> {
             ans_.push(<crate::api::cloud_library::CloudTrack>::sse_decode(
                 deserializer,
             ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::cloud::db::CloudTrackRow> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(<crate::cloud::db::CloudTrackRow>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -2797,6 +3068,17 @@ impl SseDecode for Option<crate::api::cloud_library::AutoEqProfileData> {
             return Some(<crate::api::cloud_library::AutoEqProfileData>::sse_decode(
                 deserializer,
             ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::cloud::db::CloudTrackRow> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::cloud::db::CloudTrackRow>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -3132,67 +3414,91 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        49 => wire__crate__api__cloud_library__cloud_library_open_impl(
+        49 => wire__crate__api__cloud_library__cloud_library_get_folder_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        50 => wire__crate__api__cloud_library__cloud_library_pending_impl(
+        50 => wire__crate__api__cloud_library__cloud_library_get_genres_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        51 => wire__crate__api__cloud_library__cloud_library_prune_missing_impl(
+        51 => wire__crate__api__cloud_library__cloud_library_get_tracks_by_genre_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        52 => wire__crate__api__cloud_library__cloud_library_read_tags_impl(
+        52 => wire__crate__api__cloud_library__cloud_library_get_tracks_in_folder_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        53 => wire__crate__api__cloud_library__cloud_library_rebuild_albums_impl(
+        53 => wire__crate__api__cloud_library__cloud_library_open_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        54 => wire__crate__api__cloud_library__cloud_library_scan_tags_batch_impl(
+        54 => wire__crate__api__cloud_library__cloud_library_pending_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        55 => wire__crate__api__cloud_library__cloud_library_search_impl(
+        55 => wire__crate__api__cloud_library__cloud_library_prune_missing_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        56 => wire__crate__api__cloud_library__cloud_library_sync_missing_artwork_impl(
+        56 => wire__crate__api__cloud_library__cloud_library_read_tags_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        57 => wire__crate__api__cloud_library__cloud_library_tracks_impl(
+        57 => wire__crate__api__cloud_library__cloud_library_rebuild_albums_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        58 => wire__crate__api__cloud_library__get_total_cache_bytes_impl(
+        58 => wire__crate__api__cloud_library__cloud_library_scan_tags_batch_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        62 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        59 => wire__crate__api__cloud_library__cloud_library_search_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        60 => wire__crate__api__cloud_library__cloud_library_sync_missing_artwork_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        61 => wire__crate__api__cloud_library__cloud_library_tracks_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        62 => wire__crate__api__cloud_library__get_total_cache_bytes_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        66 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3251,12 +3557,12 @@ fn pde_ffi_dispatcher_sync_impl(
             rust_vec_len,
             data_len,
         ),
-        59 => wire__crate__api__simple__decode_flac_full_impl(ptr, rust_vec_len, data_len),
-        60 => wire__crate__api__simple__get_cover_art_impl(ptr, rust_vec_len, data_len),
-        61 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-        63 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
-        64 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
-        65 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
+        63 => wire__crate__api__simple__decode_flac_full_impl(ptr, rust_vec_len, data_len),
+        64 => wire__crate__api__simple__get_cover_art_impl(ptr, rust_vec_len, data_len),
+        65 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        67 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
+        68 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
+        69 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3384,6 +3690,75 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::audio_engine::CachedRangeMs>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudFolderEntry {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.name.into_into_dart().into_dart(),
+            self.is_directory.into_into_dart().into_dart(),
+            self.item_count.into_into_dart().into_dart(),
+            self.size_bytes.into_into_dart().into_dart(),
+            self.track.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_library::CloudFolderEntry
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::CloudFolderEntry>
+    for crate::api::cloud_library::CloudFolderEntry
+{
+    fn into_into_dart(self) -> crate::api::cloud_library::CloudFolderEntry {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudFolderListing {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.folder_id.into_into_dart().into_dart(),
+            self.breadcrumb.into_into_dart().into_dart(),
+            self.entries.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_library::CloudFolderListing
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::CloudFolderListing>
+    for crate::api::cloud_library::CloudFolderListing
+{
+    fn into_into_dart(self) -> crate::api::cloud_library::CloudFolderListing {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudGenre {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.genre.into_into_dart().into_dart(),
+            self.track_count.into_into_dart().into_dart(),
+            self.artwork_path.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_library::CloudGenre
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::CloudGenre>
+    for crate::api::cloud_library::CloudGenre
+{
+    fn into_into_dart(self) -> crate::api::cloud_library::CloudGenre {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudTrack {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -3417,6 +3792,43 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::CloudTrack>
     for crate::api::cloud_library::CloudTrack
 {
     fn into_into_dart(self) -> crate::api::cloud_library::CloudTrack {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::cloud::db::CloudTrackRow {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.file_id.into_into_dart().into_dart(),
+            self.name.into_into_dart().into_dart(),
+            self.folder_path.into_into_dart().into_dart(),
+            self.title.into_into_dart().into_dart(),
+            self.artist.into_into_dart().into_dart(),
+            self.album.into_into_dart().into_dart(),
+            self.album_artist.into_into_dart().into_dart(),
+            self.genre.into_into_dart().into_dart(),
+            self.year.into_into_dart().into_dart(),
+            self.track_number.into_into_dart().into_dart(),
+            self.disc_number.into_into_dart().into_dart(),
+            self.duration_ms.into_into_dart().into_dart(),
+            self.sample_rate.into_into_dart().into_dart(),
+            self.channels.into_into_dart().into_dart(),
+            self.bits_per_sample.into_into_dart().into_dart(),
+            self.size_bytes.into_into_dart().into_dart(),
+            self.artwork_path.into_into_dart().into_dart(),
+            self.tags_read.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::cloud::db::CloudTrackRow
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::cloud::db::CloudTrackRow>
+    for crate::cloud::db::CloudTrackRow
+{
+    fn into_into_dart(self) -> crate::cloud::db::CloudTrackRow {
         self
     }
 }
@@ -3869,6 +4281,36 @@ impl SseEncode for crate::api::audio_engine::CachedRangeMs {
     }
 }
 
+impl SseEncode for crate::api::cloud_library::CloudFolderEntry {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.id, serializer);
+        <String>::sse_encode(self.name, serializer);
+        <bool>::sse_encode(self.is_directory, serializer);
+        <u32>::sse_encode(self.item_count, serializer);
+        <u64>::sse_encode(self.size_bytes, serializer);
+        <Option<crate::cloud::db::CloudTrackRow>>::sse_encode(self.track, serializer);
+    }
+}
+
+impl SseEncode for crate::api::cloud_library::CloudFolderListing {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Option<String>>::sse_encode(self.folder_id, serializer);
+        <Vec<crate::api::cloud_library::CloudFolderEntry>>::sse_encode(self.breadcrumb, serializer);
+        <Vec<crate::api::cloud_library::CloudFolderEntry>>::sse_encode(self.entries, serializer);
+    }
+}
+
+impl SseEncode for crate::api::cloud_library::CloudGenre {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.genre, serializer);
+        <u32>::sse_encode(self.track_count, serializer);
+        <String>::sse_encode(self.artwork_path, serializer);
+    }
+}
+
 impl SseEncode for crate::api::cloud_library::CloudTrack {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3890,6 +4332,30 @@ impl SseEncode for crate::api::cloud_library::CloudTrack {
         <u64>::sse_encode(self.size_bytes, serializer);
         <bool>::sse_encode(self.tags_read, serializer);
         <String>::sse_encode(self.artwork_path, serializer);
+    }
+}
+
+impl SseEncode for crate::cloud::db::CloudTrackRow {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.file_id, serializer);
+        <String>::sse_encode(self.name, serializer);
+        <String>::sse_encode(self.folder_path, serializer);
+        <String>::sse_encode(self.title, serializer);
+        <String>::sse_encode(self.artist, serializer);
+        <String>::sse_encode(self.album, serializer);
+        <String>::sse_encode(self.album_artist, serializer);
+        <String>::sse_encode(self.genre, serializer);
+        <u32>::sse_encode(self.year, serializer);
+        <u32>::sse_encode(self.track_number, serializer);
+        <u32>::sse_encode(self.disc_number, serializer);
+        <u32>::sse_encode(self.duration_ms, serializer);
+        <u32>::sse_encode(self.sample_rate, serializer);
+        <u32>::sse_encode(self.channels, serializer);
+        <u32>::sse_encode(self.bits_per_sample, serializer);
+        <u64>::sse_encode(self.size_bytes, serializer);
+        <String>::sse_encode(self.artwork_path, serializer);
+        <bool>::sse_encode(self.tags_read, serializer);
     }
 }
 
@@ -4096,12 +4562,42 @@ impl SseEncode for Vec<crate::api::audio_engine::CachedRangeMs> {
     }
 }
 
+impl SseEncode for Vec<crate::api::cloud_library::CloudFolderEntry> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::cloud_library::CloudFolderEntry>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::cloud_library::CloudGenre> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::cloud_library::CloudGenre>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::cloud_library::CloudTrack> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::cloud_library::CloudTrack>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::cloud::db::CloudTrackRow> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::cloud::db::CloudTrackRow>::sse_encode(item, serializer);
         }
     }
 }
@@ -4192,6 +4688,16 @@ impl SseEncode for Option<crate::api::cloud_library::AutoEqProfileData> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::cloud_library::AutoEqProfileData>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::cloud::db::CloudTrackRow> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::cloud::db::CloudTrackRow>::sse_encode(value, serializer);
         }
     }
 }

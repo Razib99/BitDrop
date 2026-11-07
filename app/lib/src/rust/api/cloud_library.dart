@@ -3,13 +3,14 @@
 
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
+import '../cloud/db.dart';
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `fetch_online_cover_art`, `parse_filename_metadata`, `parse_index_number`, `parse_track_and_title`, `parse_year`, `sanitize_filename`, `url_encode`
+// These functions are ignored because they are not marked as `pub`: `fetch_online_cover_art`, `parse_filename_metadata`, `parse_index_number`, `parse_track_and_title`, `parse_year`, `sanitize_filename`, `throttle_itunes`, `url_encode`
 // These functions are ignored because they have generic arguments: `with_db_mut`, `with_db`
 // These types are ignored because they are not used by any `pub` functions: `CACHE_DIR`, `DB`, `HTTP_CLIENT`, `RATE_LIMITER`, `RT`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Opens (or creates) the library database. Safe to call repeatedly.
 Future<void> cloudLibraryOpen(
@@ -203,6 +204,27 @@ bool cloudCacheRemoveTrack(
 Future<int> cloudLibrarySyncMissingArtwork() =>
     RustLib.instance.api.crateApiCloudLibraryCloudLibrarySyncMissingArtwork();
 
+/// Retrieves all distinct genres with aggregated track counts and artwork.
+Future<List<CloudGenre>> cloudLibraryGetGenres() =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryGetGenres();
+
+/// Retrieves all tracks belonging to a given genre.
+Future<List<CloudTrackRow>> cloudLibraryGetTracksByGenre(
+        {required String genre}) =>
+    RustLib.instance.api
+        .crateApiCloudLibraryCloudLibraryGetTracksByGenre(genre: genre);
+
+/// Retrieves a hierarchical folder listing including breadcrumbs, subfolders, and direct audio files.
+Future<CloudFolderListing> cloudLibraryGetFolder({String? folderId}) =>
+    RustLib.instance.api
+        .crateApiCloudLibraryCloudLibraryGetFolder(folderId: folderId);
+
+/// Retrieves all tracks within `folder_path` (recursively or non-recursively).
+Future<List<CloudTrackRow>> cloudLibraryGetTracksInFolder(
+        {required String folderPath, required bool recursive}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryGetTracksInFolder(
+        folderPath: folderPath, recursive: recursive);
+
 /// Materialized album summary for instant grid/list rendering.
 class AlbumSummary {
   final String albumKey;
@@ -360,6 +382,98 @@ class CacheUsage {
           audioBytes == other.audioBytes &&
           trackCount == other.trackCount &&
           artworkBytes == other.artworkBytes;
+}
+
+/// A directory or file entry in the hierarchical folder browser.
+class CloudFolderEntry {
+  final String id;
+  final String name;
+  final bool isDirectory;
+  final int itemCount;
+  final BigInt sizeBytes;
+  final CloudTrackRow? track;
+
+  const CloudFolderEntry({
+    required this.id,
+    required this.name,
+    required this.isDirectory,
+    required this.itemCount,
+    required this.sizeBytes,
+    this.track,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      isDirectory.hashCode ^
+      itemCount.hashCode ^
+      sizeBytes.hashCode ^
+      track.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudFolderEntry &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          isDirectory == other.isDirectory &&
+          itemCount == other.itemCount &&
+          sizeBytes == other.sizeBytes &&
+          track == other.track;
+}
+
+/// A complete folder listing with breadcrumbs and directory entries.
+class CloudFolderListing {
+  final String? folderId;
+  final List<CloudFolderEntry> breadcrumb;
+  final List<CloudFolderEntry> entries;
+
+  const CloudFolderListing({
+    this.folderId,
+    required this.breadcrumb,
+    required this.entries,
+  });
+
+  @override
+  int get hashCode =>
+      folderId.hashCode ^ breadcrumb.hashCode ^ entries.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudFolderListing &&
+          runtimeType == other.runtimeType &&
+          folderId == other.folderId &&
+          breadcrumb == other.breadcrumb &&
+          entries == other.entries;
+}
+
+/// Genre summary with track count and artwork for library UI.
+class CloudGenre {
+  final String genre;
+  final int trackCount;
+  final String artworkPath;
+
+  const CloudGenre({
+    required this.genre,
+    required this.trackCount,
+    required this.artworkPath,
+  });
+
+  @override
+  int get hashCode =>
+      genre.hashCode ^ trackCount.hashCode ^ artworkPath.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudGenre &&
+          runtimeType == other.runtimeType &&
+          genre == other.genre &&
+          trackCount == other.trackCount &&
+          artworkPath == other.artworkPath;
 }
 
 /// A track as the UI sees it.

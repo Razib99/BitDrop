@@ -11,6 +11,7 @@ import '../core_api/enums.dart';
 import '../core_api/models.dart';
 import '../features/storage/google_drive_service.dart';
 import '../src/rust/api/cloud_library.dart' as rust;
+import '../src/rust/cloud/db.dart' as rust_db;
 
 /// Builds and serves the cloud library.
 ///
@@ -398,6 +399,42 @@ class CloudLibrary {
       'ogg' => Codec.opus,
       _ => Codec.flac,
     };
+  }
+
+  /// Converts an indexed SQLite track row from Rust into a model [Track].
+  static Track trackFromRow(rust_db.CloudTrackRow r) {
+    final artist = r.artist.isNotEmpty ? r.artist : 'Unknown artist';
+    final album = r.album.isNotEmpty ? r.album : 'Unknown album';
+    final albumArtist = r.albumArtist.isNotEmpty ? r.albumArtist : artist;
+    final albumId = albumIdFor(album, albumArtist);
+
+    return Track(
+      id: r.fileId,
+      title: r.title,
+      artist: artist,
+      albumTitle: album,
+      albumId: albumId,
+      durationMs: r.durationMs,
+      format: AudioFormat(
+        codec: _codecFor(r.name),
+        bitDepth: r.bitsPerSample == 0 ? 16 : r.bitsPerSample,
+        sampleRate: r.sampleRate == 0 ? 44100 : r.sampleRate,
+        channels: r.channels == 0 ? 2 : r.channels,
+      ),
+      availability: Availability.cloudOnly,
+      sizeBytes: r.sizeBytes.toInt(),
+      artwork: Artwork(
+        seed: albumId.hashCode,
+        dominantColor: _tintFor(albumId),
+        uri: r.artworkPath.isEmpty ? null : r.artworkPath,
+      ),
+      trackNumber: r.trackNumber == 0 ? null : r.trackNumber,
+      discNumber: r.discNumber == 0 ? 1 : r.discNumber,
+      year: r.year == 0 ? null : r.year,
+      genre: r.genre.isEmpty ? null : r.genre,
+      folderPath: r.folderPath,
+      tagsPending: !r.tagsRead,
+    );
   }
 
   Track _toTrack(rust.CloudTrack r) {

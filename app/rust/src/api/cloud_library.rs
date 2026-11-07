@@ -86,6 +86,33 @@ impl From<AlbumSummaryRow> for AlbumSummary {
     }
 }
 
+/// Genre summary with track count and artwork for library UI.
+#[derive(Debug, Clone)]
+pub struct CloudGenre {
+    pub genre: String,
+    pub track_count: u32,
+    pub artwork_path: String,
+}
+
+/// A directory or file entry in the hierarchical folder browser.
+#[derive(Debug, Clone)]
+pub struct CloudFolderEntry {
+    pub id: String,
+    pub name: String,
+    pub is_directory: bool,
+    pub item_count: u32,
+    pub size_bytes: u64,
+    pub track: Option<CloudTrackRow>,
+}
+
+/// A complete folder listing with breadcrumbs and directory entries.
+#[derive(Debug, Clone)]
+pub struct CloudFolderListing {
+    pub folder_id: Option<String>,
+    pub breadcrumb: Vec<CloudFolderEntry>,
+    pub entries: Vec<CloudFolderEntry>,
+}
+
 /// A track as the UI sees it.
 pub struct CloudTrack {
     pub file_id: String,
@@ -1845,3 +1872,104 @@ pub fn cloud_library_sync_missing_artwork() -> Result<u32, String> {
 
     Ok(updated_count)
 }
+
+/// Retrieves all distinct genres with aggregated track counts and artwork.
+pub fn cloud_library_get_genres() -> Result<Vec<CloudGenre>, String> {
+    with_db(|db| {
+        let list = db.get_genres()?;
+        Ok(list
+            .into_iter()
+            .map(|g| CloudGenre {
+                genre: g.genre,
+                track_count: g.track_count,
+                artwork_path: g.artwork_path,
+            })
+            .collect())
+    })
+}
+
+/// Retrieves all tracks belonging to a given genre.
+pub fn cloud_library_get_tracks_by_genre(genre: String) -> Result<Vec<CloudTrackRow>, String> {
+    with_db(|db| {
+        let tracks = db.get_tracks_by_genre(&genre)?;
+        Ok(tracks)
+    })
+}
+
+/// Retrieves a hierarchical folder listing including breadcrumbs, subfolders, and direct audio files.
+pub fn cloud_library_get_folder(folder_id: Option<String>) -> Result<CloudFolderListing, String> {
+    with_db(|db| {
+        let fid = folder_id
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty() && *s != "/" && !s.eq_ignore_ascii_case("root"));
+
+        // 1. Breadcrumbs
+        let mut breadcrumb = Vec::new();
+        if let Some(target_path) = fid {
+            let segments: Vec<&str> = target_path
+                .split('/')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let mut accum = Vec::new();
+            for seg in segments {
+                accum.push(seg);
+                let path = accum.join("/");
+                breadcrumb.push(CloudFolderEntry {
+                    id: path,
+                    name: seg.to_string(),
+                    is_directory: true,
+                    item_count: 0,
+                    size_bytes: 0,
+                    track: None,
+                });
+            }
+        }
+
+        // 2. Immediate subfolders
+        let subfolders = db.get_folders(fid)?;
+        let mut entries = Vec::new();
+        for f in subfolders {
+            entries.push(CloudFolderEntry {
+                id: f.path,
+                name: f.name,
+                is_directory: true,
+                item_count: f.track_count,
+                size_bytes: f.total_size_bytes,
+                track: None,
+            });
+        }
+
+        // 3. Direct tracks inside this folder
+        let direct_tracks = db.get_tracks_in_folder(fid.unwrap_or(""), false)?;
+        for t in direct_tracks {
+            entries.push(CloudFolderEntry {
+                id: t.file_id.clone(),
+                name: t.title.clone(),
+                is_directory: false,
+                item_count: 0,
+                size_bytes: t.size_bytes,
+                track: Some(t),
+            });
+        }
+
+        Ok(CloudFolderListing {
+            folder_id: fid.map(|s| s.to_string()),
+            breadcrumb,
+            entries,
+        })
+    })
+}
+
+/// Retrieves all tracks within `folder_path` (recursively or non-recursively).
+pub fn cloud_library_get_tracks_in_folder(
+    folder_path: String,
+    recursive: bool,
+) -> Result<Vec<CloudTrackRow>, String> {
+    with_db(|db| {
+        let tracks = db.get_tracks_in_folder(&folder_path, recursive)?;
+        Ok(tracks)
+    })
+}
+

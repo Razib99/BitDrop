@@ -211,6 +211,7 @@ final playlistsProvider = FutureProvider<List<Playlist>>((ref) {
 
 final genresProvider = FutureProvider<List<String>>((ref) {
   ref.watch(scenarioRevisionProvider);
+  ref.watch(libraryRevisionProvider);
   return ref.watch(coreProvider).genres();
 });
 

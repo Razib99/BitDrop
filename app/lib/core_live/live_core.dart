@@ -805,11 +805,17 @@ class LiveBitDropCore implements BitDropCore {
   @override
   Future<Paged<Album>> albums(AlbumQuery q) async {
     final favAlbum = _favoritesAlbum();
-    final items = <Album>[
+    var items = <Album>[
       if (q.artistId == null) favAlbum,
       ..._cloudAlbums.map(_enrichAlbum),
       if (_realAlbum != null) _enrichAlbum(_realAlbum!),
     ];
+    if (q.filters.genre != null && q.filters.genre!.isNotEmpty) {
+      items = items
+          .where((a) =>
+              a.genre?.toLowerCase() == q.filters.genre!.toLowerCase())
+          .toList();
+    }
     return Paged(items: items, total: items.length);
   }
 
@@ -897,8 +903,63 @@ class LiveBitDropCore implements BitDropCore {
   }
 
   @override
-  Future<FolderListing> folder(String? folderId) async =>
-      const FolderListing(folderId: null, breadcrumb: [], entries: []);
+  Future<FolderListing> folder(String? folderId) async {
+    try {
+      final listing =
+          await rust_cache.cloudLibraryGetFolder(folderId: folderId);
+      final entries = listing.entries.map((e) {
+        if (e.isDirectory) {
+          return FolderEntry(
+            id: e.id,
+            name: e.name,
+            isDirectory: true,
+            itemCount: e.itemCount,
+            sizeBytes: e.sizeBytes.toInt(),
+          );
+        } else {
+          Track? track;
+          if (e.track != null) {
+            track = CloudLibrary.trackFromRow(e.track!);
+            _realTracks[track.id] = track;
+            track = _enrichTrack(track);
+          } else {
+            track = _lookupTrack(e.id);
+            if (track != null) {
+              track = _enrichTrack(track);
+            }
+          }
+          return FolderEntry(
+            id: e.id,
+            name: e.name,
+            isDirectory: false,
+            sizeBytes: e.sizeBytes.toInt(),
+            track: track,
+          );
+        }
+      }).toList();
+
+      final breadcrumb = listing.breadcrumb
+          .map((b) => FolderEntry(
+                id: b.id,
+                name: b.name,
+                isDirectory: true,
+              ))
+          .toList();
+
+      return FolderListing(
+        folderId: listing.folderId,
+        breadcrumb: breadcrumb,
+        entries: entries,
+      );
+    } catch (e) {
+      debugPrint('[core] failed to get folder $folderId: $e');
+      return FolderListing(
+        folderId: folderId,
+        breadcrumb: const [],
+        entries: const [],
+      );
+    }
+  }
   @override
   Future<List<Playlist>> playlists() async {
     final favTracks = _allCandidateTracks
@@ -923,7 +984,28 @@ class LiveBitDropCore implements BitDropCore {
   }
 
   @override
-  Future<List<String>> genres() async => const [];
+  Future<List<String>> genres() async {
+    try {
+      final list = await rust_cache.cloudLibraryGetGenres();
+      if (list.isNotEmpty) {
+        return list.map((g) => g.genre).toList();
+      }
+    } catch (e) {
+      debugPrint('[core] failed to get genres: $e');
+    }
+    final set = <String>{};
+    for (final t in _allCandidateTracks) {
+      if (t.genre != null && t.genre!.trim().isNotEmpty) {
+        set.add(t.genre!.trim());
+      }
+    }
+    if (set.isNotEmpty) {
+      final l = set.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      return l;
+    }
+    return MockCatalog.genreList;
+  }
   @override
   Future<SearchResults> search(String text, SearchFilters f) async {
     final q = text.trim();
@@ -1332,7 +1414,8 @@ class LiveBitDropCore implements BitDropCore {
   List<audio_svc.MediaItem> _resolveMediaItems(List<String> trackIds) {
     final tracks = trackIds.map(_lookupTrack).whereType<Track>().toList();
     return tracks.map((t) {
-      final isCloud = _cloud?.trackById(t.id) != null;
+      final isCloud = _cloud?.trackById(t.id) != null ||
+          (_cloud != null && !t.id.startsWith('/'));
       return audio_svc.MediaItem(
         id: t.id,
         title: t.title,
@@ -1363,16 +1446,38 @@ class LiveBitDropCore implements BitDropCore {
         return;
       }
       _currentContextLabel = cmd.contextLabel;
-      final tracks = cmd.trackIds.map(_lookupTrack).whereType<Track>().toList();
+      var trackIds = cmd.trackIds;
+      if (trackIds.isEmpty &&
+          cmd.contextId.isNotEmpty &&
+          cmd.contextId != 'root' &&
+          cmd.contextId != 'queue') {
+        try {
+          final rows = await rust_cache.cloudLibraryGetTracksInFolder(
+            folderPath: cmd.contextId,
+            recursive: true,
+          );
+          final resolved = rows.map((r) {
+            final t = CloudLibrary.trackFromRow(r);
+            _realTracks[t.id] = t;
+            return _enrichTrack(t);
+          }).toList();
+          trackIds = resolved.map((t) => t.id).toList();
+        } catch (e) {
+          debugPrint(
+              '[play] could not resolve folder tracks for ${cmd.contextId}: $e');
+        }
+      }
+
+      final tracks = trackIds.map(_lookupTrack).whereType<Track>().toList();
       debugPrint('[play] PlayContext ${cmd.contextId}: '
-          '${cmd.trackIds.length} ids -> ${tracks.length} resolved, '
+          '${trackIds.length} ids -> ${tracks.length} resolved, '
           'startIndex ${cmd.startIndex}, shuffle: ${cmd.shuffle}');
       if (tracks.isEmpty) {
         debugPrint('[play] nothing resolved; first id was '
-            '${cmd.trackIds.isEmpty ? '(none)' : cmd.trackIds.first}');
+            '${trackIds.isEmpty ? '(none)' : trackIds.first}');
       }
       if (tracks.isNotEmpty) {
-        final items = _resolveMediaItems(cmd.trackIds);
+        final items = _resolveMediaItems(trackIds);
 
         await _audioHandler.setQueueAndPlay(
           items,
