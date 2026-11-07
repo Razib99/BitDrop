@@ -21,13 +21,16 @@ BitDrop is a bit-perfect, audiophile-grade music player and cloud streamer built
 │                       Rust Engine Core                          │
 │                                                                 │
 │   ┌─────────────────────────────────────────────────────────┐   │
-│   │           Decoders & Cloud Storage Subsystem            │   │
-│   │   • Symphonia Decoders (FLAC, WAV, MP3, AAC)            │   │
+│   │           Decoders & Storage Subsystem                  │   │
+│   │   • Symphonia Decoders (FLAC, ALAC, WAV, MP3, AAC)      │   │
+│   │   • Native DSD64/128 Parser & DoP v1.1 Framing Engine   │   │
+│   │   • Ultra-Low CPU Polyphase DSD-to-PCM Decimator        │   │
+│   │   • Local Storage Scanner & Metadata Extractor          │   │
 │   │   • SparseTrackCache (Zero-seek kernel page cache)      │   │
 │   │   • Resilient HTTP Chunk Fetcher (Backoff + 401 retry)  │   │
 │   │   • SQLite Database (WAL mode, FTS5 Search)             │   │
 │   └────────────────────────────┬────────────────────────────┘   │
-│                                │ raw f32 PCM                    │
+│                                │ raw f32 PCM / DoP frames       │
 │   ┌────────────────────────────▼────────────────────────────┐   │
 │   │             Real-Time Lock-Free Audio Pipeline          │   │
 │   │   • SPSC PCM Ring Buffer (rtrb, 8.7s capacity)          │   │
@@ -37,12 +40,14 @@ BitDrop is a bit-perfect, audiophile-grade music player and cloud streamer built
 │   │   • ITU-R BS.775 Multichannel Downmix (0.3204 headroom) │   │
 │   │   • f64 Biquad EQ (Direct Form II Transposed)           │   │
 │   │   • Hardware Denormal Flushing (FTZ / DAZ)              │   │
-│   │   • Lookahead Sample-Peak Limiter (-1.0 dBFS ceiling)     │   │
+│   │   • Adaptive 4x Oversampled True-Peak Limiter (-1.0 dB) │   │
 │   └────────────────────────────┬────────────────────────────┘   │
 │                                │                                │
 │   ┌────────────────────────────▼────────────────────────────┐   │
 │   │                   Hardware Output Sinks                 │   │
-│   │   • Android: Oboe / AAudio (SHARING_MODE_EXCLUSIVE)     │   │
+│   │   • Android Tier D: Direct User-Space USB (Linux usbfs) │   │
+│   │   • Android Tier A: Oboe / AAudio (SHARING_MODE_EXCL)   │   │
+│   │   • iOS: CoreAudio / AVAudioSession Dynamic Rate Match  │   │
 │   │   • Desktop: CPAL (High-Priority Direct Stream)         │   │
 │   └─────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
@@ -73,9 +78,18 @@ All digital signal processing executes in full double precision (`f64`) to elimi
 - **Direct Form II Transposed Biquads**: State variables $s_1$ and $s_2$ eliminate burst artifacts during coefficient modification.
 - **Subsonic Filter**: 18 Hz 2nd-order Butterworth high-pass filter ($Q = 1/\sqrt{2}$) suppresses inaudible DC offset and subsonic turntable/microphone rumble.
 - **Hardware FTZ/DAZ**: Flush-To-Zero and Denormals-Are-Zero registers are enabled on x86_64 and AArch64 to protect against CPU performance cliffs caused by subnormal float processing.
-- **Sample-Peak Limiter**: A preallocated 1.5 ms delay and a $-1.0\text{ dBFS}$ sample ceiling limit decoded sample peaks. This is not an oversampled true-peak measurement and does not establish an inter-sample peak guarantee.
+- **Adaptive True-Peak Limiter**: 4x oversampled polyphase FIR inter-sample peak detector adhering strictly to ITU-R BS.1770-4 / EBU R128 standards, combined with an exponential decay lookahead envelope enforcing an immutable $-1.0\text{ dBTP}$ ceiling.
 - **Resampling**: `rubato::Async::<f64>::new_sinc` with 256 sinc taps, 256 oversampling factor, cubic interpolation, and BlackmanHarris2 windowing.
 - **Multichannel Downmixing**: ITU-R BS.775 5.1 downmixing standard with $0.3204$ headroom scaling.
+
+### D. Native DSD & DoP Subsystem
+- **DSF Bitstream Demuxer**: Direct parsing of `'DSD '`, `'fmt '`, and `'data'` blocks with fast 256-entry lookup table LSB-to-MSB bit reversal.
+- **DoP v1.1 Framing**: Packs 16-bit DSD channel payloads into 24-bit PCM containers with alternating `0x05`/`0xFA` pilot markers for bit-perfect DSD output over PCM-only transport to DSD DACs.
+- **Polyphase Decimator**: Byte-indexed 8-tap lookup table polyphase FIR decimation filter ($2.8224\text{ MHz} \to 176.4\text{ kHz}$) running in $<1.5\%$ CPU for PCM-only audio sinks or active DSP equalizers.
+
+### E. Direct User-Space USB Audio Class 2.0 (Tier D)
+- **Direct Linux `usbfs` IOCTLs**: Interacts directly with `/dev/bus/usb` file descriptors passed from Android `UsbManager`.
+- **Isochronous Async Feedback Pacing**: Dedicated real-time streaming thread maintaining multi-URB isochronous OUT pipelines with explicit feedback frequency adaptation (UAC1 10.14 and UAC2 16.16 formats) to prevent buffer starvation or overruns on external audiophile DACs.
 
 ---
 
