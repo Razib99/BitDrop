@@ -48,6 +48,17 @@ pub struct GenreSummary {
     pub artwork_path: String,
 }
 
+/// Summary of an immediate subfolder within the hierarchical directory tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderSummary {
+    pub folder_id: String,
+    pub name: String,
+    pub path: String,
+    pub track_count: u32,
+    pub subfolder_count: u32,
+    pub total_size_bytes: u64,
+}
+
 /// Record of an old file_id replaced by a newly uploaded file with the same path and name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplacedFile {
@@ -817,6 +828,188 @@ impl MetadataDb {
             stmt.query_map(params![trimmed], Self::row_to_cloud_track)?
         };
 
+        rows.collect()
+    }
+
+    /// Aggregates immediate subfolders under `parent_path` from indexed tracks.
+    ///
+    /// If `parent_path` is None, empty, "/", or "root", queries the root directories.
+    /// Returns each immediate subfolder with cumulative track count, immediate subfolder count,
+    /// and total byte size.
+    pub fn get_folders(&self, parent_path: Option<&str>) -> Result<Vec<FolderSummary>> {
+        use std::collections::{BTreeMap, HashSet};
+
+        let parent_norm: Vec<String> = match parent_path {
+            Some(p) => {
+                let s = p.trim();
+                if s.is_empty() || s == "/" || s.eq_ignore_ascii_case("root") {
+                    Vec::new()
+                } else {
+                    s.split('/')
+                        .map(|seg| seg.trim().to_string())
+                        .filter(|seg| !seg.is_empty())
+                        .collect()
+                }
+            }
+            None => Vec::new(),
+        };
+
+        let mut stmt = self.conn.prepare(
+            "SELECT folder_path, COUNT(*), COALESCE(SUM(size_bytes), 0)
+             FROM tracks
+             WHERE folder_path IS NOT NULL AND TRIM(folder_path) != ''
+             GROUP BY folder_path",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let path: String = row.get(0)?;
+            let count: u32 = row.get(1)?;
+            let size: i64 = row.get(2)?;
+            Ok((path, count, size as u64))
+        })?;
+
+        // child_name -> (full_path, cumulative_tracks, cumulative_size, Set<immediate_subfolder_names>)
+        let mut children: BTreeMap<String, (String, u32, u64, HashSet<String>)> = BTreeMap::new();
+
+        for r in rows.flatten() {
+            let (raw_path, count, size) = r;
+            let segments: Vec<String> = raw_path
+                .split('/')
+                .map(|seg| seg.trim().to_string())
+                .filter(|seg| !seg.is_empty())
+                .collect();
+
+            if segments.len() <= parent_norm.len() {
+                continue;
+            }
+
+            let mut matches_parent = true;
+            for (i, p_seg) in parent_norm.iter().enumerate() {
+                if !segments[i].eq_ignore_ascii_case(p_seg) {
+                    matches_parent = false;
+                    break;
+                }
+            }
+
+            if !matches_parent {
+                continue;
+            }
+
+            let child_idx = parent_norm.len();
+            let child_name = segments[child_idx].clone();
+
+            let child_full_path = if parent_norm.is_empty() {
+                child_name.clone()
+            } else {
+                let mut path_segs = parent_norm.clone();
+                path_segs.push(child_name.clone());
+                path_segs.join("/")
+            };
+
+            let entry = children
+                .entry(child_name)
+                .or_insert_with(|| (child_full_path, 0, 0, HashSet::new()));
+
+            entry.1 += count;
+            entry.2 += size;
+
+            if segments.len() > child_idx + 1 {
+                entry.3.insert(segments[child_idx + 1].clone());
+            }
+        }
+
+        let mut result = Vec::new();
+        for (name, (full_path, track_count, total_size, subfolders)) in children {
+            result.push(FolderSummary {
+                folder_id: full_path.clone(),
+                name,
+                path: full_path,
+                track_count,
+                subfolder_count: subfolders.len() as u32,
+                total_size_bytes: total_size,
+            });
+        }
+
+        result.sort_by_key(|a| a.name.to_lowercase());
+        Ok(result)
+    }
+
+    /// Retrieves all tracks located in `folder_path`.
+    ///
+    /// If `recursive` is false, only returns tracks directly within `folder_path`.
+    /// If `recursive` is true, returns all tracks within `folder_path` and all its nested subdirectories.
+    pub fn get_tracks_in_folder(
+        &self,
+        folder_path: &str,
+        recursive: bool,
+    ) -> Result<Vec<CloudTrackRow>> {
+        let trimmed = folder_path.trim();
+        let is_root = trimmed.is_empty() || trimmed == "/" || trimmed.eq_ignore_ascii_case("root");
+
+        let segments: Vec<&str> = trimmed
+            .split('/')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let slash_path = segments.join("/");
+        let space_slash_path = segments.join(" / ");
+
+        let mut stmt = if is_root {
+            if recursive {
+                self.conn.prepare(
+                    "SELECT file_id, name, folder_path, title, artist, album,
+                            album_artist, genre, year, track_number, disc_number,
+                            duration_ms, sample_rate, channels, bits_per_sample,
+                            size_bytes, tags_read, artwork_path
+                     FROM tracks
+                     ORDER BY folder_path, album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+                )?
+            } else {
+                self.conn.prepare(
+                    "SELECT file_id, name, folder_path, title, artist, album,
+                            album_artist, genre, year, track_number, disc_number,
+                            duration_ms, sample_rate, channels, bits_per_sample,
+                            size_bytes, tags_read, artwork_path
+                     FROM tracks
+                     WHERE folder_path = '' OR folder_path = '/'
+                     ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+                )?
+            }
+        } else if recursive {
+            let slash_prefix = format!("{}/%", slash_path);
+            let space_prefix = format!("{} / %", space_slash_path);
+            let mut s = self.conn.prepare(
+                "SELECT file_id, name, folder_path, title, artist, album,
+                        album_artist, genre, year, track_number, disc_number,
+                        duration_ms, sample_rate, channels, bits_per_sample,
+                        size_bytes, tags_read, artwork_path
+                 FROM tracks
+                 WHERE folder_path = ?1 OR folder_path = ?2 OR folder_path LIKE ?3 OR folder_path LIKE ?4
+                 ORDER BY folder_path, album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+            )?;
+            let rows = s.query_map(
+                params![slash_path, space_slash_path, slash_prefix, space_prefix],
+                Self::row_to_cloud_track,
+            )?;
+            return rows.collect();
+        } else {
+            let mut s = self.conn.prepare(
+                "SELECT file_id, name, folder_path, title, artist, album,
+                        album_artist, genre, year, track_number, disc_number,
+                        duration_ms, sample_rate, channels, bits_per_sample,
+                        size_bytes, tags_read, artwork_path
+                 FROM tracks
+                 WHERE folder_path = ?1 OR folder_path = ?2
+                 ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+            )?;
+            let rows = s.query_map(
+                params![slash_path, space_slash_path],
+                Self::row_to_cloud_track,
+            )?;
+            return rows.collect();
+        };
+
+        let rows = stmt.query_map([], Self::row_to_cloud_track)?;
         rows.collect()
     }
 
@@ -2559,5 +2752,110 @@ mod tests {
         let empty_genre_tracks = db.get_tracks_by_genre("").unwrap();
         assert_eq!(empty_genre_tracks.len(), 1);
         assert_eq!(empty_genre_tracks[0].file_id, "t4");
+    }
+
+    #[test]
+    fn test_hierarchical_folders_root_and_subfolder() {
+        let mut db = MetadataDb::new_in_memory().unwrap();
+
+        let placeholders = vec![
+            TrackPlaceholder {
+                file_id: "root_1".to_string(),
+                name: "00. Root Intro.flac".to_string(),
+                folder_path: "".to_string(),
+                size_bytes: 5_000_000,
+            },
+            TrackPlaceholder {
+                file_id: "music_direct".to_string(),
+                name: "01. Music Track.flac".to_string(),
+                folder_path: "Music".to_string(),
+                size_bytes: 15_000_000,
+            },
+            TrackPlaceholder {
+                file_id: "pf_1".to_string(),
+                name: "01. Comfortably Numb.flac".to_string(),
+                folder_path: "Music/Rock/Pink Floyd".to_string(),
+                size_bytes: 10_000_000,
+            },
+            TrackPlaceholder {
+                file_id: "pf_2".to_string(),
+                name: "02. Time.flac".to_string(),
+                folder_path: "Music/Rock/Pink Floyd".to_string(),
+                size_bytes: 10_000_000,
+            },
+            TrackPlaceholder {
+                file_id: "queen_1".to_string(),
+                name: "01. Bohemian Rhapsody.flac".to_string(),
+                folder_path: "Music/Rock/Queen".to_string(),
+                size_bytes: 10_000_000,
+            },
+            TrackPlaceholder {
+                file_id: "jazz_1".to_string(),
+                name: "01. So What.flac".to_string(),
+                folder_path: "Music/Jazz/Miles Davis".to_string(),
+                size_bytes: 30_000_000,
+            },
+        ];
+        db.batch_insert_placeholders(&placeholders).unwrap();
+
+        // 1. Root folder query (parent_path = None, "", or "root")
+        let root_folders = db.get_folders(None).unwrap();
+        assert_eq!(root_folders.len(), 1);
+        assert_eq!(root_folders[0].name, "Music");
+        assert_eq!(root_folders[0].path, "Music");
+        assert_eq!(root_folders[0].track_count, 5); // 1 direct + 2 pf + 1 queen + 1 jazz
+        assert_eq!(root_folders[0].subfolder_count, 2); // Rock, Jazz
+        assert_eq!(root_folders[0].total_size_bytes, 75_000_000);
+
+        // 2. Immediate subfolders of "Music"
+        let music_folders = db.get_folders(Some("Music")).unwrap();
+        assert_eq!(music_folders.len(), 2);
+        // Alphabetical: Jazz first, then Rock
+        assert_eq!(music_folders[0].name, "Jazz");
+        assert_eq!(music_folders[0].path, "Music/Jazz");
+        assert_eq!(music_folders[0].track_count, 1);
+        assert_eq!(music_folders[0].subfolder_count, 1); // Miles Davis
+        assert_eq!(music_folders[0].total_size_bytes, 30_000_000);
+
+        assert_eq!(music_folders[1].name, "Rock");
+        assert_eq!(music_folders[1].path, "Music/Rock");
+        assert_eq!(music_folders[1].track_count, 3); // 2 pf + 1 queen
+        assert_eq!(music_folders[1].subfolder_count, 2); // Pink Floyd, Queen
+        assert_eq!(music_folders[1].total_size_bytes, 30_000_000);
+
+        // 3. Immediate subfolders of "Music/Rock"
+        let rock_folders = db.get_folders(Some("Music/Rock")).unwrap();
+        assert_eq!(rock_folders.len(), 2);
+        assert_eq!(rock_folders[0].name, "Pink Floyd");
+        assert_eq!(rock_folders[0].path, "Music/Rock/Pink Floyd");
+        assert_eq!(rock_folders[0].track_count, 2);
+        assert_eq!(rock_folders[0].subfolder_count, 0);
+
+        assert_eq!(rock_folders[1].name, "Queen");
+        assert_eq!(rock_folders[1].path, "Music/Rock/Queen");
+        assert_eq!(rock_folders[1].track_count, 1);
+        assert_eq!(rock_folders[1].subfolder_count, 0);
+
+        // 4. Verify get_tracks_in_folder (non-recursive vs recursive)
+        // Direct tracks in "Music" (non-recursive)
+        let direct_music_tracks = db.get_tracks_in_folder("Music", false).unwrap();
+        assert_eq!(direct_music_tracks.len(), 1);
+        assert_eq!(direct_music_tracks[0].file_id, "music_direct");
+
+        // All tracks under "Music" (recursive)
+        let all_music_tracks = db.get_tracks_in_folder("Music", true).unwrap();
+        assert_eq!(all_music_tracks.len(), 5);
+
+        // Tracks in "Music/Rock/Pink Floyd"
+        let pf_tracks = db.get_tracks_in_folder("Music/Rock/Pink Floyd", false).unwrap();
+        assert_eq!(pf_tracks.len(), 2);
+
+        // Tracks at root
+        let root_direct = db.get_tracks_in_folder("", false).unwrap();
+        assert_eq!(root_direct.len(), 1);
+        assert_eq!(root_direct[0].file_id, "root_1");
+
+        let root_recursive = db.get_tracks_in_folder("", true).unwrap();
+        assert_eq!(root_recursive.len(), 6);
     }
 }
