@@ -1,9 +1,14 @@
 package com.bitdrop.bitdrop
 
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbDeviceConnection
+import android.hardware.usb.UsbManager
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
@@ -25,6 +30,12 @@ class MainActivity : AudioServiceActivity() {
     private var noisyReceiver: BroadcastReceiver? = null
     private var audioDeviceCallback: AudioDeviceCallback? = null
 
+    private var activeUsbConnection: UsbDeviceConnection? = null
+    private var activeUsbDevice: UsbDevice? = null
+    private var usbPermissionReceiver: BroadcastReceiver? = null
+    private var usbDetachReceiver: BroadcastReceiver? = null
+    private val ACTION_USB_PERMISSION = "com.bitdrop.bitdrop.USB_PERMISSION"
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -44,6 +55,16 @@ class MainActivity : AudioServiceActivity() {
                 "clearPreferredMixerAttributes" -> {
                     result.success(clearPreferredMixerAttributes())
                 }
+                "listUsbAudioDevices" -> result.success(listUsbAudioDevices())
+                "requestUsbPermission" -> {
+                    val deviceId = call.argument<Int>("deviceId") ?: -1
+                    requestUsbPermission(deviceId, result)
+                }
+                "openUsbDevice" -> {
+                    val deviceId = call.argument<Int>("deviceId") ?: -1
+                    openUsbDevice(deviceId, result)
+                }
+                "closeUsbDevice" -> result.success(closeUsbDevice())
                 else -> result.notImplemented()
             }
         }
@@ -83,6 +104,34 @@ class MainActivity : AudioServiceActivity() {
         } else {
             registerReceiver(receiver, filter)
         }
+
+        // Real-time USB device detachment monitoring
+        val detachReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (UsbManager.ACTION_USB_DEVICE_DETACHED == intent?.action) {
+                    val device: UsbDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                    }
+                    if (device != null && device.deviceId == activeUsbDevice?.deviceId) {
+                        closeUsbDevice()
+                    }
+                    runOnUiThread {
+                        methodChannel?.invokeMethod("onUsbDeviceDetached", device?.deviceId)
+                        methodChannel?.invokeMethod("onDeviceChanged", null)
+                    }
+                }
+            }
+        }
+        usbDetachReceiver = detachReceiver
+        val detachFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(detachReceiver, detachFilter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(detachReceiver, detachFilter)
+        }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
@@ -99,6 +148,22 @@ class MainActivity : AudioServiceActivity() {
             } catch (_: Exception) {}
         }
         noisyReceiver = null
+
+        usbDetachReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
+        }
+        usbDetachReceiver = null
+
+        usbPermissionReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
+        }
+        usbPermissionReceiver = null
+
+        closeUsbDevice()
         methodChannel = null
     }
 
@@ -116,6 +181,22 @@ class MainActivity : AudioServiceActivity() {
             } catch (_: Exception) {}
         }
         noisyReceiver = null
+
+        usbDetachReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
+        }
+        usbDetachReceiver = null
+
+        usbPermissionReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
+        }
+        usbPermissionReceiver = null
+
+        closeUsbDevice()
         methodChannel = null
     }
 
@@ -355,5 +436,144 @@ class MainActivity : AudioServiceActivity() {
         AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "bluetooth"
         AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "speaker"
         else -> "unknown"
+    }
+
+    private fun isUsbAudioDevice(device: UsbDevice): Boolean {
+        if (device.deviceClass == UsbConstants.USB_CLASS_AUDIO) return true
+        for (i in 0 until device.interfaceCount) {
+            val iface = device.getInterface(i)
+            if (iface.interfaceClass == UsbConstants.USB_CLASS_AUDIO) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun listUsbAudioDevices(): List<Map<String, Any?>> {
+        val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager ?: return emptyList()
+        val devices = usbManager.deviceList.values.filter { isUsbAudioDevice(it) }
+        return devices.map { d ->
+            mapOf(
+                "deviceId" to d.deviceId,
+                "deviceName" to d.deviceName,
+                "productName" to (d.productName?.trim() ?: "USB Audio Device"),
+                "manufacturerName" to (d.manufacturerName?.trim() ?: "Unknown"),
+                "vendorId" to d.vendorId,
+                "productId" to d.productId,
+                "hasPermission" to usbManager.hasPermission(d)
+            )
+        }
+    }
+
+    private fun requestUsbPermission(deviceId: Int, result: MethodChannel.Result) {
+        val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager
+        if (usbManager == null) {
+            result.error("USB_UNAVAILABLE", "USB Manager not available", null)
+            return
+        }
+        val device = usbManager.deviceList.values.firstOrNull { it.deviceId == deviceId }
+        if (device == null) {
+            result.error("DEVICE_NOT_FOUND", "USB device $deviceId not found", null)
+            return
+        }
+        if (usbManager.hasPermission(device)) {
+            result.success(true)
+            return
+        }
+
+        usbPermissionReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
+        }
+
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        val intent = Intent(ACTION_USB_PERMISSION)
+        intent.setPackage(packageName)
+        val pendingIntent = PendingIntent.getBroadcast(this, deviceId, intent, flags)
+
+        val permReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (ACTION_USB_PERMISSION == intent?.action) {
+                    val dev: UsbDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                    }
+                    val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                    try {
+                        unregisterReceiver(this)
+                    } catch (_: Exception) {}
+                    usbPermissionReceiver = null
+                    runOnUiThread {
+                        result.success(granted)
+                    }
+                }
+            }
+        }
+        usbPermissionReceiver = permReceiver
+        val filter = IntentFilter(ACTION_USB_PERMISSION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(permReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(permReceiver, filter)
+        }
+        usbManager.requestPermission(device, pendingIntent)
+    }
+
+    private fun openUsbDevice(deviceId: Int, result: MethodChannel.Result) {
+        val usbManager = getSystemService(Context.USB_SERVICE) as? UsbManager
+        if (usbManager == null) {
+            result.error("USB_UNAVAILABLE", "USB Manager not available", null)
+            return
+        }
+        val device = usbManager.deviceList.values.firstOrNull { it.deviceId == deviceId }
+        if (device == null) {
+            result.error("DEVICE_NOT_FOUND", "USB device $deviceId not found", null)
+            return
+        }
+        if (!usbManager.hasPermission(device)) {
+            result.error("PERMISSION_DENIED", "Permission not granted for USB device $deviceId", null)
+            return
+        }
+
+        closeUsbDevice()
+
+        val connection = usbManager.openDevice(device)
+        if (connection == null) {
+            result.error("OPEN_FAILED", "Could not open USB connection for device $deviceId", null)
+            return
+        }
+
+        activeUsbConnection = connection
+        activeUsbDevice = device
+        val fd = connection.fileDescriptor
+
+        result.success(
+            mapOf(
+                "fd" to fd,
+                "deviceId" to device.deviceId,
+                "vendorId" to device.vendorId,
+                "productId" to device.productId,
+                "productName" to (device.productName?.trim() ?: "USB Audio Device"),
+                "manufacturerName" to (device.manufacturerName?.trim() ?: "Unknown")
+            )
+        )
+    }
+
+    private fun closeUsbDevice(): Boolean {
+        activeUsbConnection?.let {
+            try {
+                it.close()
+            } catch (_: Exception) {}
+        }
+        activeUsbConnection = null
+        activeUsbDevice = null
+        return true
     }
 }

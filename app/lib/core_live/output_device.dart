@@ -6,6 +6,57 @@ import 'package:flutter/services.dart';
 import '../core_api/enums.dart';
 import '../core_api/models.dart';
 
+/// Represents a physical USB Audio Class device connected to Android USB host.
+@immutable
+class UsbAudioDevice {
+  const UsbAudioDevice({
+    required this.deviceId,
+    required this.deviceName,
+    required this.productName,
+    required this.manufacturerName,
+    required this.vendorId,
+    required this.productId,
+    required this.hasPermission,
+  });
+
+  final int deviceId;
+  final String deviceName;
+  final String productName;
+  final String manufacturerName;
+  final int vendorId;
+  final int productId;
+  final bool hasPermission;
+
+  factory UsbAudioDevice.fromMap(Map<String, dynamic> map) {
+    return UsbAudioDevice(
+      deviceId: map['deviceId'] as int? ?? 0,
+      deviceName: map['deviceName'] as String? ?? '',
+      productName: map['productName'] as String? ?? 'USB Audio Device',
+      manufacturerName: map['manufacturerName'] as String? ?? 'Unknown',
+      vendorId: map['vendorId'] as int? ?? 0,
+      productId: map['productId'] as int? ?? 0,
+      hasPermission: map['hasPermission'] as bool? ?? false,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UsbAudioDevice &&
+          runtimeType == other.runtimeType &&
+          deviceId == other.deviceId &&
+          vendorId == other.vendorId &&
+          productId == other.productId &&
+          hasPermission == other.hasPermission;
+
+  @override
+  int get hashCode =>
+      deviceId.hashCode ^
+      vendorId.hashCode ^
+      productId.hashCode ^
+      hasPermission.hashCode;
+}
+
 /// Reads the real output device from Android's AudioManager.
 ///
 /// BitDrop's premise is never claiming a quality it has not verified, so this
@@ -24,6 +75,9 @@ class OutputDeviceProbe {
   /// (e.g. wired headphones, USB-C DAC, or Bluetooth earbuds unplugged).
   VoidCallback? onBecomingNoisy;
 
+  /// Invoked when a USB audio device is detached from the host port.
+  ValueChanged<int>? onUsbDeviceDetached;
+
   OutputDeviceProbe({
     MethodChannel channel = _defaultChannel,
     bool autoPoll = true,
@@ -40,6 +94,10 @@ class OutputDeviceProbe {
           break;
         case 'onBecomingNoisy':
           onBecomingNoisy?.call();
+          break;
+        case 'onUsbDeviceDetached':
+          final devId = call.arguments as int?;
+          if (devId != null) onUsbDeviceDetached?.call(devId);
           break;
       }
     });
@@ -192,6 +250,62 @@ class OutputDeviceProbe {
     } catch (e) {
       debugPrint('[output] failed to get mixer attributes: $e');
       return null;
+    }
+  }
+
+  /// Lists connected USB audio class devices.
+  Future<List<UsbAudioDevice>> listUsbAudioDevices() async {
+    if (!_supported) return const [];
+    try {
+      final list = await _channel.invokeListMethod<Map<dynamic, dynamic>>('listUsbAudioDevices');
+      if (list == null) return const [];
+      return list
+          .map((m) => UsbAudioDevice.fromMap(Map<String, dynamic>.from(m)))
+          .toList();
+    } catch (e) {
+      debugPrint('[output] failed to list USB devices: $e');
+      return const [];
+    }
+  }
+
+  /// Requests Android user permission to access the raw USB device connection.
+  Future<bool> requestUsbPermission(int deviceId) async {
+    if (!_supported) return false;
+    try {
+      final granted = await _channel.invokeMethod<bool>(
+        'requestUsbPermission',
+        {'deviceId': deviceId},
+      );
+      return granted ?? false;
+    } catch (e) {
+      debugPrint('[output] failed to request USB permission: $e');
+      return false;
+    }
+  }
+
+  /// Opens the USB device and retrieves its raw file descriptor and identity.
+  Future<Map<String, dynamic>?> openUsbDevice(int deviceId) async {
+    if (!_supported) return null;
+    try {
+      return await _channel.invokeMapMethod<String, dynamic>(
+        'openUsbDevice',
+        {'deviceId': deviceId},
+      );
+    } catch (e) {
+      debugPrint('[output] failed to open USB device $deviceId: $e');
+      return null;
+    }
+  }
+
+  /// Closes the currently active raw USB connection.
+  Future<bool> closeUsbDevice() async {
+    if (!_supported) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>('closeUsbDevice');
+      return ok ?? false;
+    } catch (e) {
+      debugPrint('[output] failed to close USB device: $e');
+      return false;
     }
   }
 
