@@ -225,6 +225,18 @@ Future<List<CloudTrackRow>> cloudLibraryGetTracksInFolder(
     RustLib.instance.api.crateApiCloudLibraryCloudLibraryGetTracksInFolder(
         folderPath: folderPath, recursive: recursive);
 
+/// Recursively scans a local directory, extracts metadata, indexes tracks into SQLite,
+/// prunes deleted tracks under `label`, and rebuilds albums summary.
+Future<int> cloudLibraryScanLocalFolder(
+        {required String directoryPath, required String label}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryScanLocalFolder(
+        directoryPath: directoryPath, label: label);
+
+/// Prunes indexed local tracks whose files no longer exist on disk.
+Future<int> cloudLibraryPruneLocalTracks({required String rootLabel}) =>
+    RustLib.instance.api
+        .crateApiCloudLibraryCloudLibraryPruneLocalTracks(rootLabel: rootLabel);
+
 /// Materialized album summary for instant grid/list rendering.
 class AlbumSummary {
   final String albumKey;

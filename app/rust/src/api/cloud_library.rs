@@ -1656,6 +1656,96 @@ mod tests {
             elapsed
         );
     }
+
+    #[test]
+    fn test_cloud_library_scan_local_folder_and_browse() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("bitdrop_api_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let db_dir = temp_dir.join("db");
+        let cache_dir = temp_dir.join("cache");
+        let music_dir = temp_dir.join("Music");
+        let jazz_dir = music_dir.join("Hi-Res/Jazz");
+        let rock_dir = music_dir.join("Rock");
+
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        std::fs::create_dir_all(&jazz_dir).unwrap();
+        std::fs::create_dir_all(&rock_dir).unwrap();
+
+        let track1 = jazz_dir.join("01 - So What.flac");
+        let track2 = rock_dir.join("02 - Time.wav");
+        std::fs::write(&track1, [0u8; 128]).unwrap();
+        std::fs::write(&track2, [0u8; 128]).unwrap();
+
+        let db_path = db_dir.join("library.db").to_string_lossy().to_string();
+        let cache_str = cache_dir.to_string_lossy().to_string();
+
+        cloud_library_open(db_path, cache_str).unwrap();
+
+        let scanned = cloud_library_scan_local_folder(
+            music_dir.to_string_lossy().to_string(),
+            "Local Music".to_string(),
+        )
+        .unwrap();
+        assert_eq!(scanned, 2);
+
+        // 1. Root folder listing (storage roots)
+        let root_listing = cloud_library_get_folder(None).unwrap();
+        assert_eq!(root_listing.folder_id, None);
+        assert!(root_listing.breadcrumb.is_empty());
+        assert_eq!(root_listing.entries.len(), 1);
+        let root_entry = &root_listing.entries[0];
+        assert_eq!(root_entry.name, "Local Music");
+        assert!(root_entry.is_directory);
+        assert_eq!(root_entry.item_count, 2);
+
+        // 2. Local Music folder listing
+        let music_listing = cloud_library_get_folder(Some("Local Music".to_string())).unwrap();
+        assert_eq!(music_listing.folder_id, Some("Local Music".to_string()));
+        assert_eq!(music_listing.breadcrumb.len(), 1);
+        assert_eq!(music_listing.breadcrumb[0].name, "Local Music");
+        assert_eq!(music_listing.entries.len(), 2); // Hi-Res, Rock
+        let names: Vec<String> = music_listing
+            .entries
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        assert!(names.contains(&"Hi-Res".to_string()));
+        assert!(names.contains(&"Rock".to_string()));
+
+        // 3. Deep subfolder listing (Jazz)
+        let jazz_listing =
+            cloud_library_get_folder(Some("Local Music / Hi-Res / Jazz".to_string())).unwrap();
+        assert_eq!(jazz_listing.breadcrumb.len(), 3);
+        assert_eq!(jazz_listing.breadcrumb[0].name, "Local Music");
+        assert_eq!(jazz_listing.breadcrumb[1].name, "Hi-Res");
+        assert_eq!(jazz_listing.breadcrumb[2].name, "Jazz");
+        assert_eq!(jazz_listing.entries.len(), 1);
+        assert!(!jazz_listing.entries[0].is_directory);
+        assert_eq!(jazz_listing.entries[0].name, "So What");
+        assert!(jazz_listing.entries[0].track.is_some());
+
+        // 4. Recursive tracks resolution
+        let all_tracks =
+            cloud_library_get_tracks_in_folder("Local Music".to_string(), true).unwrap();
+        assert_eq!(all_tracks.len(), 2);
+
+        // 5. Prune test
+        std::fs::remove_file(&track1).unwrap();
+        let pruned = cloud_library_prune_local_tracks("Local Music".to_string()).unwrap();
+        assert_eq!(pruned, 1);
+
+        let after_prune =
+            cloud_library_get_tracks_in_folder("Local Music".to_string(), true).unwrap();
+        assert_eq!(after_prune.len(), 1);
+        assert_eq!(after_prune[0].title, "Time");
+
+        // Clean up global state and temp dir
+        *DB.lock().unwrap() = None;
+        *CACHE_DIR.lock().unwrap() = None;
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
 
 /// Downloads through the same bounded cache writer used by streaming playback.
@@ -1972,9 +2062,14 @@ pub fn cloud_library_get_folder(folder_id: Option<String>) -> Result<CloudFolder
         // 3. Direct tracks inside this folder
         let direct_tracks = db.get_tracks_in_folder(fid.unwrap_or(""), false)?;
         for t in direct_tracks {
+            let display_name = if !t.title.trim().is_empty() {
+                t.title.clone()
+            } else {
+                t.name.clone()
+            };
             entries.push(CloudFolderEntry {
                 id: t.file_id.clone(),
-                name: t.title.clone(),
+                name: display_name,
                 is_directory: false,
                 item_count: 0,
                 size_bytes: t.size_bytes,
@@ -1998,5 +2093,57 @@ pub fn cloud_library_get_tracks_in_folder(
     with_db(|db| {
         let tracks = db.get_tracks_in_folder(&folder_path, recursive)?;
         Ok(tracks)
+    })
+}
+
+/// Recursively scans a local directory, extracts metadata, indexes tracks into SQLite,
+/// prunes deleted tracks under `label`, and rebuilds albums summary.
+pub fn cloud_library_scan_local_folder(
+    directory_path: String,
+    label: String,
+) -> Result<u32, String> {
+    use crate::cloud::local_scanner::scan_local_directory;
+    use std::path::Path;
+
+    let path = Path::new(&directory_path);
+    if !path.exists() {
+        return Err(format!("Directory does not exist: {}", directory_path));
+    }
+    if !path.is_dir() {
+        return Err(format!("Path is not a directory: {}", directory_path));
+    }
+
+    let root_label = if label.trim().is_empty() {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Local Music")
+    } else {
+        label.trim()
+    };
+
+    let art_dir = CACHE_DIR
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+        .map(|base| std::path::PathBuf::from(base).join("artwork"));
+    if let Some(ref dir) = art_dir {
+        let _ = std::fs::create_dir_all(dir);
+    }
+
+    let scanned = scan_local_directory(path, root_label, art_dir.as_deref(), |_progress| {})
+        .map_err(|e| format!("Scan failed: {:?}", e))?;
+
+    with_db_mut(|db| {
+        db.batch_insert_local_tracks(&scanned)?;
+        let _ = db.prune_missing_local_tracks(root_label)?;
+        Ok(scanned.len() as u32)
+    })
+}
+
+/// Prunes indexed local tracks whose files no longer exist on disk.
+pub fn cloud_library_prune_local_tracks(root_label: String) -> Result<u32, String> {
+    with_db_mut(|db| {
+        let count = db.prune_missing_local_tracks(root_label.trim())?;
+        Ok(count as u32)
     })
 }
