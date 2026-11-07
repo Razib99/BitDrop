@@ -412,6 +412,39 @@ impl UsbDeviceHandle {
         Ok(ret as usize)
     }
 
+    /// Retrieves the raw configuration descriptor for the active configuration.
+    pub fn get_active_config_descriptor(&self) -> Result<Vec<u8>, UsbFsError> {
+        let mut header = [0u8; 9];
+        // Standard GET_DESCRIPTOR: bRequestType = 0x80, bRequest = 0x06, wValue = (USB_DT_CONFIG << 8) | 0
+        let read = self.control_transfer(
+            0x80,
+            0x06,
+            2 << 8,
+            0,
+            &mut header,
+            1000,
+        )?;
+        if read < 9 {
+            return Err(UsbFsError::InvalidArgument);
+        }
+        let total_length = u16::from_le_bytes([header[2], header[3]]) as usize;
+        if !(9..=8192).contains(&total_length) {
+            return Err(UsbFsError::InvalidArgument);
+        }
+
+        let mut buffer = vec![0u8; total_length];
+        let full_read = self.control_transfer(
+            0x80,
+            0x06,
+            2 << 8,
+            0,
+            &mut buffer,
+            2000,
+        )?;
+        buffer.truncate(full_read);
+        Ok(buffer)
+    }
+
     /// Submits an asynchronous URB to the Linux USB core.
     ///
     /// # Safety
