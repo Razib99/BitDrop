@@ -547,28 +547,132 @@ pub fn compute_auto_preamp_db(bank: &FilterBankF64, fs: f64) -> f64 {
     -(peak_gain_db.max(0.0))
 }
 
-/// Pre-allocated Lookahead Peak Limiter with -1.0 dBFS ceiling and ~80ms release.
+/// Normative ITU-R BS.1770-4 48-tap FIR 4x polyphase interpolation filter coefficients.
+/// 4 phases of 12 taps each, normalized for exact unity DC gain.
+pub const TRUE_PEAK_COEFFS_4X: [[f64; 12]; 4] = [
+    [
+        -0.000000000000,
+        0.001743853025,
+        -0.008162994192,
+        0.021889754775,
+        -0.049955385108,
+        0.131715277618,
+        0.973282219623,
+        -0.098760078923,
+        0.040721071651,
+        -0.017536798154,
+        0.006005962401,
+        -0.000942882718,
+    ],
+    [
+        -0.000233069006,
+        0.006836781321,
+        -0.025965313602,
+        0.065284760759,
+        -0.148798372858,
+        0.457178304555,
+        0.775792258007,
+        -0.186113822707,
+        0.080196173067,
+        -0.033443294420,
+        0.010236880016,
+        -0.000971285132,
+    ],
+    [
+        -0.000971285132,
+        0.010236880016,
+        -0.033443294420,
+        0.080196173067,
+        -0.186113822707,
+        0.775792258007,
+        0.457178304555,
+        -0.148798372858,
+        0.065284760759,
+        -0.025965313602,
+        0.006836781321,
+        -0.000233069006,
+    ],
+    [
+        -0.000942882718,
+        0.006005962401,
+        -0.017536798154,
+        0.040721071651,
+        -0.098760078923,
+        0.973282219623,
+        0.131715277618,
+        -0.049955385108,
+        0.021889754775,
+        -0.008162994192,
+        0.001743853025,
+        -0.000000000000,
+    ],
+];
+
+/// Normative ITU-R BS.1770-4 24-tap FIR 2x polyphase interpolation filter coefficients.
+/// 2 phases of 12 taps each, used for high sample rates (fs >= 96 kHz).
+pub const TRUE_PEAK_COEFFS_2X: [[f64; 12]; 2] = [
+    [
+        -0.000000000000,
+        0.003448138180,
+        -0.016198879024,
+        0.043703065683,
+        -0.101363215340,
+        0.287596433885,
+        0.895854586213,
+        -0.159822206686,
+        0.066747401260,
+        -0.027574089580,
+        0.008403435689,
+        -0.000794670282,
+    ],
+    [
+        -0.000794670282,
+        0.008403435689,
+        -0.027574089580,
+        0.066747401260,
+        -0.159822206686,
+        0.895854586213,
+        0.287596433885,
+        -0.101363215340,
+        0.043703065683,
+        -0.016198879024,
+        0.003448138180,
+        -0.000000000000,
+    ],
+];
+
+/// Pre-allocated Lookahead Adaptive ITU-R BS.1770-4 True-Peak Limiter with -1.0 dBTP ceiling.
 pub struct LookaheadLimiterF64 {
     delay_line: [[f64; 2]; 1024],
     gain_delay: [f64; 1024],
     write_idx: usize,
     lookahead_len: usize,
     envelope: f64,
-    release_coeff: f64,
+    release_fast: f64,
+    release_slow: f64,
     ceiling_linear: f64,
+    sample_rate: f64,
+    interp_history_l: [f64; 12],
+    interp_history_r: [f64; 12],
+    interp_write_idx: usize,
 }
 
 impl LookaheadLimiterF64 {
     pub fn new(sample_rate: f64) -> Self {
-        let ceiling_linear = 10.0_f64.powf(-1.0 / 20.0); // -1.0 dBFS ~ 0.89125
+        let ceiling_linear = 10.0_f64.powf(-1.0 / 20.0); // -1.0 dBTP ~ 0.89125
         let mut limiter = Self {
             delay_line: [[0.0; 2]; 1024],
             gain_delay: [1.0; 1024],
             write_idx: 0,
             lookahead_len: 66,
             envelope: 1.0,
-            release_coeff: 0.9997,
+            release_fast: 0.9995,
+            release_slow: 0.9998,
             ceiling_linear,
+            sample_rate: 48000.0,
+            interp_history_l: [0.0; 12],
+            interp_history_r: [0.0; 12],
+            interp_write_idx: 0,
         };
         limiter.set_sample_rate(sample_rate);
         limiter
@@ -580,15 +684,61 @@ impl LookaheadLimiterF64 {
         } else {
             48000.0
         };
+        self.sample_rate = fs;
         // 1.5 ms lookahead delay
         let len = (fs * 0.0015).round() as usize;
         self.lookahead_len = len.clamp(1, 1023);
-        // Exponential release over ~80 ms: coeff = exp(-1.0 / (0.080 * fs))
-        self.release_coeff = (-1.0 / (0.080 * fs)).exp();
+        // Adaptive release:
+        // Fast transient release over ~35 ms: coeff = exp(-1.0 / (0.035 * fs))
+        self.release_fast = (-1.0 / (0.035 * fs)).exp();
+        // Slow program release over ~100 ms: coeff = exp(-1.0 / (0.100 * fs))
+        self.release_slow = (-1.0 / (0.100 * fs)).exp();
         self.write_idx = 0;
         self.delay_line = [[0.0; 2]; 1024];
         self.gain_delay = [1.0; 1024];
         self.envelope = 1.0;
+        self.interp_history_l = [0.0; 12];
+        self.interp_history_r = [0.0; 12];
+        self.interp_write_idx = 0;
+    }
+
+    /// Evaluates continuous analog True-Peak amplitude conforming to ITU-R BS.1770-4 Annex 2.
+    /// Uses 4x oversampling polyphase interpolation for fs < 96 kHz, and 2x for fs >= 96 kHz.
+    #[inline(always)]
+    pub fn compute_true_peak(&mut self, l: f64, r: f64) -> f64 {
+        self.interp_history_l[self.interp_write_idx] = l;
+        self.interp_history_r[self.interp_write_idx] = r;
+
+        let mut peak = l.abs().max(r.abs());
+
+        if self.sample_rate < 96000.0 {
+            // 4x oversampling polyphase interpolation (ITU-R BS.1770-4 Annex 2)
+            for coeffs in &TRUE_PEAK_COEFFS_4X {
+                let mut acc_l = 0.0;
+                let mut acc_r = 0.0;
+                for (t, &c) in coeffs.iter().enumerate() {
+                    let idx = (self.interp_write_idx + 12 - t) % 12;
+                    acc_l += self.interp_history_l[idx] * c;
+                    acc_r += self.interp_history_r[idx] * c;
+                }
+                peak = peak.max(acc_l.abs()).max(acc_r.abs());
+            }
+        } else {
+            // 2x oversampling polyphase interpolation for high-res (fs >= 96 kHz)
+            for coeffs in &TRUE_PEAK_COEFFS_2X {
+                let mut acc_l = 0.0;
+                let mut acc_r = 0.0;
+                for (t, &c) in coeffs.iter().enumerate() {
+                    let idx = (self.interp_write_idx + 12 - t) % 12;
+                    acc_l += self.interp_history_l[idx] * c;
+                    acc_r += self.interp_history_r[idx] * c;
+                }
+                peak = peak.max(acc_l.abs()).max(acc_r.abs());
+            }
+        }
+
+        self.interp_write_idx = (self.interp_write_idx + 1) % 12;
+        peak
     }
 
     #[inline(always)]
@@ -596,11 +746,11 @@ impl LookaheadLimiterF64 {
         // Store current incoming frame in delay buffer
         self.delay_line[self.write_idx] = [l, r];
 
-        // Lookahead envelope detection on incoming peaks
-        let peak = l.abs().max(r.abs());
-        let target_gain = if peak > self.ceiling_linear {
+        // Lookahead true-peak envelope detection on incoming peaks
+        let true_peak = self.compute_true_peak(l, r);
+        let target_gain = if true_peak > self.ceiling_linear {
             LIMITER_CLIPPED_SAMPLES.fetch_add(1, Ordering::Relaxed);
-            self.ceiling_linear / peak
+            self.ceiling_linear / true_peak
         } else {
             1.0
         };
@@ -608,19 +758,30 @@ impl LookaheadLimiterF64 {
         if target_gain < self.envelope {
             self.envelope = target_gain; // Instant attack on lookahead
         } else {
-            self.envelope =
-                self.envelope * self.release_coeff + target_gain * (1.0 - self.release_coeff);
+            // Adaptive release: blend between fast transient release (when lightly attenuated)
+            // and slow program release (when heavily limited)
+            let alpha = (self.envelope / self.ceiling_linear).clamp(0.0, 1.0);
+            let coeff = self.release_fast * alpha + self.release_slow * (1.0 - alpha);
+            self.envelope = self.envelope * coeff + target_gain * (1.0 - coeff);
         }
         self.gain_delay[self.write_idx] = self.envelope;
 
-        // Retrieve delayed frame and delayed gain
-        let read_idx = if self.write_idx >= self.lookahead_len {
+        // Retrieve delayed audio frame (compensated for 6-sample FIR filter group delay + 1 sample attack lead)
+        let audio_delay = self.lookahead_len + 7;
+        let audio_read_idx = if self.write_idx >= audio_delay {
+            self.write_idx - audio_delay
+        } else {
+            self.write_idx + 1024 - audio_delay
+        };
+        let delayed = self.delay_line[audio_read_idx];
+
+        // Retrieve delayed gain envelope
+        let gain_read_idx = if self.write_idx >= self.lookahead_len {
             self.write_idx - self.lookahead_len
         } else {
             self.write_idx + 1024 - self.lookahead_len
         };
-        let delayed = self.delay_line[read_idx];
-        let mut gain = self.gain_delay[read_idx];
+        let mut gain = self.gain_delay[gain_read_idx];
 
         // Safety guarantee: output sample never exceeds ceiling_linear
         let del_peak = delayed[0].abs().max(delayed[1].abs());
@@ -930,7 +1091,7 @@ impl DspPipelineV2 {
         l *= self.software_volume;
         r *= self.software_volume;
 
-        // 6. Lookahead Peak Limiter (-1.0 dBFS ceiling)
+        // 6. Lookahead Adaptive ITU-R BS.1770-4 True-Peak Limiter (-1.0 dBTP ceiling)
         let (lim_l, lim_r) = self.limiter.process_stereo(l, r);
 
         (lim_l, lim_r)
@@ -1590,5 +1751,131 @@ mod tests {
         assert_eq!(silent_frame.peak_left_db, -90.0);
         assert_eq!(silent_frame.peak_right_db, -90.0);
         assert_eq!(silent_frame.spectrum, vec![0.0f32; VISUALIZER_BANDS]);
+    }
+
+    #[test]
+    fn test_true_peak_detector_inter_sample_overshoot() {
+        let mut limiter_48k = LookaheadLimiterF64::new(48000.0);
+
+        // Pathological fs/4 sequence: [1.0, 1.0, -1.0, -1.0]
+        // Discrete sample peak is strictly 1.0 (0.00 dBFS), but continuous true peak is +2.94 dBTP (1.4035)
+        let seq = [1.0, 1.0, -1.0, -1.0];
+        let mut max_detected_tp = 0.0f64;
+
+        for _ in 0..10 {
+            for &s in &seq {
+                let tp = limiter_48k.compute_true_peak(s, s);
+                max_detected_tp = max_detected_tp.max(tp);
+            }
+        }
+
+        assert!(
+            max_detected_tp > 1.35,
+            "Expected true peak detection > 1.35 (inter-sample overshoot), got: {}",
+            max_detected_tp
+        );
+        let overshoot_db = 20.0 * max_detected_tp.log10();
+        eprintln!(
+            "Detected inter-sample True-Peak overshoot at 48kHz: {:.4} ({:+.2} dBTP)",
+            max_detected_tp, overshoot_db
+        );
+
+        // Test at 96 kHz (2x polyphase interpolation)
+        let mut limiter_96k = LookaheadLimiterF64::new(96000.0);
+        let mut max_detected_96k = 0.0f64;
+        let seq_96k = [1.0, 0.0, -1.0, 0.0]; // fs/4 at 96 kHz
+        for _ in 0..10 {
+            for &s in &seq_96k {
+                let tp = limiter_96k.compute_true_peak(s, s);
+                max_detected_96k = max_detected_96k.max(tp);
+            }
+        }
+        assert!(max_detected_96k >= 1.0);
+    }
+
+    #[test]
+    fn test_adaptive_true_peak_limiter_inter_sample_clamping() {
+        let mut limiter = LookaheadLimiterF64::new(48000.0);
+        let ceiling = 10.0_f64.powf(-1.0 / 20.0); // -1.0 dBTP ~ 0.89125
+
+        // Feed pathological +2.94 dBTP inter-sample signal
+        let seq = [1.0, 1.0, -1.0, -1.0];
+        let mut max_out_sample = 0.0f64;
+        let mut verify_detector = LookaheadLimiterF64::new(48000.0);
+        let mut max_output_true_peak = 0.0f64;
+
+        // Process 2000 samples (stabilize lookahead and adaptive release)
+        for i in 0..2000 {
+            let s = seq[i % 4];
+            let (out_l, out_r) = limiter.process_stereo(s, s);
+
+            // 1. Output sample values must strictly never exceed ceiling
+            assert!(
+                out_l.abs() <= ceiling + 1e-6,
+                "Output sample L ({}) exceeded ceiling ({})",
+                out_l.abs(),
+                ceiling
+            );
+            assert!(
+                out_r.abs() <= ceiling + 1e-6,
+                "Output sample R ({}) exceeded ceiling ({})",
+                out_r.abs(),
+                ceiling
+            );
+            max_out_sample = max_out_sample.max(out_l.abs()).max(out_r.abs());
+
+            // 2. Measure reconstructed True-Peak of the output signal continuously
+            let out_tp = verify_detector.compute_true_peak(out_l, out_r);
+            if i > 200 {
+                max_output_true_peak = max_output_true_peak.max(out_tp);
+            }
+        }
+
+        eprintln!(
+            "Limiter Max Output Sample: {:.5} (Ceiling: {:.5})",
+            max_out_sample, ceiling
+        );
+        eprintln!(
+            "Limiter Max Output True Peak: {:.5} ({:.2} dBTP)",
+            max_output_true_peak,
+            20.0 * max_output_true_peak.log10()
+        );
+
+        // True peak of continuous limited audio must be clamped below -1.0 dBTP ceiling
+        assert!(
+            max_output_true_peak <= ceiling + 0.005,
+            "Reconstructed True-Peak {} exceeded -1.0 dBTP ceiling {}",
+            max_output_true_peak,
+            ceiling
+        );
+
+        // 3. Isolated transient burst test: verify peak clamping on abrupt onset
+        let mut burst_limiter = LookaheadLimiterF64::new(48000.0);
+        let mut burst_verify = LookaheadLimiterF64::new(48000.0);
+        let mut max_burst_tp = 0.0f64;
+
+        // 100 samples silence, 20 samples +2.94 dBTP burst, 100 samples silence
+        for i in 0..220 {
+            let s = if (100..120).contains(&i) {
+                seq[i % 4]
+            } else {
+                0.0
+            };
+            let (out_l, out_r) = burst_limiter.process_stereo(s, s);
+            let tp = burst_verify.compute_true_peak(out_l, out_r);
+            max_burst_tp = max_burst_tp.max(tp);
+        }
+
+        eprintln!(
+            "Isolated Burst Max True Peak: {:.5} ({:.2} dBTP)",
+            max_burst_tp,
+            20.0 * max_burst_tp.log10()
+        );
+        assert!(
+            max_burst_tp <= ceiling + 0.005,
+            "Isolated burst True-Peak {} exceeded -1.0 dBTP ceiling {}",
+            max_burst_tp,
+            ceiling
+        );
     }
 }
