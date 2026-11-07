@@ -625,7 +625,10 @@ async fn fetch_online_cover_art(artist: &str, album: &str, title: &str) -> Optio
     // 2. Search iTunes by album (entity=album)
     if has_valid_album {
         let terms = if has_valid_artist {
-            vec![format!("{} {}", clean_artist, clean_album), clean_album.to_string()]
+            vec![
+                format!("{} {}", clean_artist, clean_album),
+                clean_album.to_string(),
+            ]
         } else {
             vec![clean_album.to_string()]
         };
@@ -975,7 +978,9 @@ pub fn cloud_library_scan_tags_batch(
                             } else {
                                 "unknown_artist"
                             };
-                            let album_key = if album_clean == "unknown_album" && artist_clean == "unknown_artist" {
+                            let album_key = if album_clean == "unknown_album"
+                                && artist_clean == "unknown_artist"
+                            {
                                 format!("track_{}", sanitize_filename(&file_id))
                             } else {
                                 format!(
@@ -987,7 +992,9 @@ pub fn cloud_library_scan_tags_batch(
                             let art_target =
                                 art_dir.join(format!("{}.img", sanitize_filename(&album_key)));
 
-                            if art_target.exists() && art_target.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+                            if art_target.exists()
+                                && art_target.metadata().map(|m| m.len() > 0).unwrap_or(false)
+                            {
                                 artwork_path = art_target.to_string_lossy().to_string();
                             } else if let Some(pic) = meta.pictures.first() {
                                 if pic.data_offset + pic.data_length as u64 <= bytes.len() as u64 {
@@ -1183,20 +1190,23 @@ pub fn cloud_library_scan_tags_batch(
                         } else {
                             "unknown_artist"
                         };
-                        let album_key = if album_clean == "unknown_album" && artist_clean == "unknown_artist" {
-                            format!("track_{}", sanitize_filename(&file_id))
-                        } else {
-                            format!(
-                                "{}::{}",
-                                artist_clean.trim().to_lowercase(),
-                                album_clean.trim().to_lowercase()
-                            )
-                        };
+                        let album_key =
+                            if album_clean == "unknown_album" && artist_clean == "unknown_artist" {
+                                format!("track_{}", sanitize_filename(&file_id))
+                            } else {
+                                format!(
+                                    "{}::{}",
+                                    artist_clean.trim().to_lowercase(),
+                                    album_clean.trim().to_lowercase()
+                                )
+                            };
                         let art_target =
                             art_dir.join(format!("{}.img", sanitize_filename(&album_key)));
                         let mut artwork_path = String::new();
 
-                        if art_target.exists() && art_target.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+                        if art_target.exists()
+                            && art_target.metadata().map(|m| m.len() > 0).unwrap_or(false)
+                        {
                             artwork_path = art_target.to_string_lossy().to_string();
                         } else if let Some(vb) = visual_bytes {
                             if std::fs::write(&art_target, &vb).is_ok() {
@@ -1252,19 +1262,22 @@ pub fn cloud_library_scan_tags_batch(
                     } else {
                         "unknown_artist"
                     };
-                    let album_key = if album_clean == "unknown_album" && artist_clean == "unknown_artist" {
-                        format!("track_{}", sanitize_filename(&file_id))
-                    } else {
-                        format!(
-                            "{}::{}",
-                            artist_clean.trim().to_lowercase(),
-                            album_clean.trim().to_lowercase()
-                        )
-                    };
+                    let album_key =
+                        if album_clean == "unknown_album" && artist_clean == "unknown_artist" {
+                            format!("track_{}", sanitize_filename(&file_id))
+                        } else {
+                            format!(
+                                "{}::{}",
+                                artist_clean.trim().to_lowercase(),
+                                album_clean.trim().to_lowercase()
+                            )
+                        };
                     let art_target = art_dir.join(format!("{}.img", sanitize_filename(&album_key)));
                     let mut artwork_path = String::new();
 
-                    if art_target.exists() && art_target.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+                    if art_target.exists()
+                        && art_target.metadata().map(|m| m.len() > 0).unwrap_or(false)
+                    {
                         artwork_path = art_target.to_string_lossy().to_string();
                     } else if !album.is_empty() || !title.is_empty() {
                         if let Some(online_b) =
@@ -1804,10 +1817,16 @@ pub fn cloud_library_sync_missing_artwork() -> Result<u32, String> {
             } else if !fn_title.is_empty() {
                 fn_title
             } else {
-                name.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or(name.clone())
+                name.rsplit_once('.')
+                    .map(|(s, _)| s.to_string())
+                    .unwrap_or(name.clone())
             };
             let (_, pure_title) = parse_track_and_title(&title);
-            let clean_title = if !pure_title.is_empty() { pure_title } else { title };
+            let clean_title = if !pure_title.is_empty() {
+                pure_title
+            } else {
+                title
+            };
 
             let clean_artist = if !raw_album_artist.is_empty() {
                 raw_album_artist
@@ -1828,17 +1847,26 @@ pub fn cloud_library_sync_missing_artwork() -> Result<u32, String> {
             };
 
             let mut found = false;
-            if let Some(art_bytes) = fetch_online_cover_art(&clean_artist, &clean_album, &clean_title).await {
-                let target_file_name = if clean_album.is_empty() || clean_album.to_lowercase() == "unknown album" {
-                    format!("track_{}.img", sanitize_filename(&file_id))
-                } else {
-                    let art_key = format!(
-                        "{}::{}",
-                        if clean_artist.is_empty() { "various_artists" } else { &clean_artist }.trim().to_lowercase(),
-                        clean_album.trim().to_lowercase()
-                    );
-                    format!("{}.img", sanitize_filename(&art_key))
-                };
+            if let Some(art_bytes) =
+                fetch_online_cover_art(&clean_artist, &clean_album, &clean_title).await
+            {
+                let target_file_name =
+                    if clean_album.is_empty() || clean_album.to_lowercase() == "unknown album" {
+                        format!("track_{}.img", sanitize_filename(&file_id))
+                    } else {
+                        let art_key = format!(
+                            "{}::{}",
+                            if clean_artist.is_empty() {
+                                "various_artists"
+                            } else {
+                                &clean_artist
+                            }
+                            .trim()
+                            .to_lowercase(),
+                            clean_album.trim().to_lowercase()
+                        );
+                        format!("{}.img", sanitize_filename(&art_key))
+                    };
                 let target_path = art_dir_clone.join(&target_file_name);
                 if std::fs::write(&target_path, &art_bytes).is_ok() {
                     let path_str = target_path.to_string_lossy().to_string();
@@ -1972,4 +2000,3 @@ pub fn cloud_library_get_tracks_in_folder(
         Ok(tracks)
     })
 }
-

@@ -213,9 +213,10 @@ impl MetadataDb {
         let _ = self
             .conn
             .execute("ALTER TABLE tracks ADD COLUMN picture_length INTEGER", []);
-        let _ = self
-            .conn
-            .execute("ALTER TABLE tracks ADD COLUMN artwork_checked INTEGER NOT NULL DEFAULT 0", []);
+        let _ = self.conn.execute(
+            "ALTER TABLE tracks ADD COLUMN artwork_checked INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
 
         // 2. Covering indexes for zero-heap UI sorting (<1.5ms at 100k tracks)
         self.conn.execute(
@@ -2609,7 +2610,8 @@ mod tests {
         }];
         db.batch_insert_placeholders(&p3).unwrap();
         assert!(!db.is_artwork_checked("track_late_art").unwrap());
-        db.set_artwork("track_late_art", "/cache/artwork/late.img").unwrap();
+        db.set_artwork("track_late_art", "/cache/artwork/late.img")
+            .unwrap();
         assert!(db.is_artwork_checked("track_late_art").unwrap());
     }
 
@@ -2847,7 +2849,9 @@ mod tests {
         assert_eq!(all_music_tracks.len(), 5);
 
         // Tracks in "Music/Rock/Pink Floyd"
-        let pf_tracks = db.get_tracks_in_folder("Music/Rock/Pink Floyd", false).unwrap();
+        let pf_tracks = db
+            .get_tracks_in_folder("Music/Rock/Pink Floyd", false)
+            .unwrap();
         assert_eq!(pf_tracks.len(), 2);
 
         // Tracks at root

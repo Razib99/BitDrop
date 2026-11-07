@@ -19,10 +19,7 @@ const IOC_WRITE: u32 = 1;
 const IOC_READ: u32 = 2;
 
 const fn _ioc(dir: u32, type_char: u8, nr: u32, size: usize) -> u32 {
-    (dir << 30)
-        | ((type_char as u32) << 8)
-        | nr
-        | (((size as u32) & 0x3FFF) << 16)
+    (dir << 30) | ((type_char as u32) << 8) | nr | (((size as u32) & 0x3FFF) << 16)
 }
 
 const fn _io(type_char: u8, nr: u32) -> u32 {
@@ -38,7 +35,12 @@ const fn _iow<T>(type_char: u8, nr: u32) -> u32 {
 }
 
 const fn _iowr<T>(type_char: u8, nr: u32) -> u32 {
-    _ioc(IOC_READ | IOC_WRITE, type_char, nr, std::mem::size_of::<T>())
+    _ioc(
+        IOC_READ | IOC_WRITE,
+        type_char,
+        nr,
+        std::mem::size_of::<T>(),
+    )
 }
 
 // Exact Linux <linux/usbdevice_fs.h> ioctls
@@ -416,14 +418,7 @@ impl UsbDeviceHandle {
     pub fn get_active_config_descriptor(&self) -> Result<Vec<u8>, UsbFsError> {
         let mut header = [0u8; 9];
         // Standard GET_DESCRIPTOR: bRequestType = 0x80, bRequest = 0x06, wValue = (USB_DT_CONFIG << 8) | 0
-        let read = self.control_transfer(
-            0x80,
-            0x06,
-            2 << 8,
-            0,
-            &mut header,
-            1000,
-        )?;
+        let read = self.control_transfer(0x80, 0x06, 2 << 8, 0, &mut header, 1000)?;
         if read < 9 {
             return Err(UsbFsError::InvalidArgument);
         }
@@ -433,14 +428,7 @@ impl UsbDeviceHandle {
         }
 
         let mut buffer = vec![0u8; total_length];
-        let full_read = self.control_transfer(
-            0x80,
-            0x06,
-            2 << 8,
-            0,
-            &mut buffer,
-            2000,
-        )?;
+        let full_read = self.control_transfer(0x80, 0x06, 2 << 8, 0, &mut buffer, 2000)?;
         buffer.truncate(full_read);
         Ok(buffer)
     }
@@ -628,7 +616,10 @@ mod tests {
         }
         // Verify fd is still open and valid by checking fcntl
         let flags = unsafe { libc::fcntl(fds[0], libc::F_GETFD) };
-        assert!(flags >= 0, "Borrowed fd should remain open after handle drop");
+        assert!(
+            flags >= 0,
+            "Borrowed fd should remain open after handle drop"
+        );
 
         // Owned handle: drop MUST close the file descriptor
         {
@@ -637,7 +628,10 @@ mod tests {
         }
         // Verify fd is closed
         let flags_closed = unsafe { libc::fcntl(fds[0], libc::F_GETFD) };
-        assert_eq!(flags_closed, -1, "Owned fd should be closed after handle drop");
+        assert_eq!(
+            flags_closed, -1,
+            "Owned fd should be closed after handle drop"
+        );
 
         // Clean up second pipe fd
         unsafe {
@@ -663,4 +657,3 @@ mod tests {
         }
     }
 }
-

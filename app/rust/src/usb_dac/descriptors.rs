@@ -122,15 +122,24 @@ impl fmt::Display for DescriptorParseError {
         match self {
             Self::EmptyDescriptor => write!(f, "Descriptor buffer is empty"),
             Self::InvalidHeaderLength { expected, actual } => {
-                write!(f, "Invalid header length: expected >= {expected}, got {actual}")
+                write!(
+                    f,
+                    "Invalid header length: expected >= {expected}, got {actual}"
+                )
             }
             Self::InvalidTotalLength { total, buffer_len } => {
-                write!(f, "wTotalLength {total} exceeds descriptor buffer size {buffer_len}")
+                write!(
+                    f,
+                    "wTotalLength {total} exceeds descriptor buffer size {buffer_len}"
+                )
             }
             Self::MalformedDescriptor { offset, reason } => {
                 write!(f, "Malformed descriptor at byte offset {offset}: {reason}")
             }
-            Self::NoAudioInterfacesFound => write!(f, "No USB Audio Class interfaces discovered in configuration"),
+            Self::NoAudioInterfacesFound => write!(
+                f,
+                "No USB Audio Class interfaces discovered in configuration"
+            ),
         }
     }
 }
@@ -209,14 +218,19 @@ impl ParsedAudioDevice {
             match desc_type {
                 USB_DT_IAD => {
                     // Check if this IAD declares UAC2 protocol
-                    if desc_len >= 8 && desc_slice[4] == USB_CLASS_AUDIO && desc_slice[6] == AUDIO_PROTOCOL_UAC2 {
+                    if desc_len >= 8
+                        && desc_slice[4] == USB_CLASS_AUDIO
+                        && desc_slice[6] == AUDIO_PROTOCOL_UAC2
+                    {
                         overall_protocol = AudioClassProtocol::Uac2;
                     }
                 }
 
                 USB_DT_INTERFACE => {
                     // Flush existing active alt setting if present
-                    if let (Some(iface_idx), Some(alt)) = (current_streaming_iface_idx, current_alt_setting.take()) {
+                    if let (Some(iface_idx), Some(alt)) =
+                        (current_streaming_iface_idx, current_alt_setting.take())
+                    {
                         streaming_interfaces[iface_idx].alt_settings.push(alt);
                     }
 
@@ -228,7 +242,9 @@ impl ParsedAudioDevice {
                         let iface_proto = desc_slice[7];
 
                         if iface_class == USB_CLASS_AUDIO {
-                            let proto = if iface_proto == AUDIO_PROTOCOL_UAC2 || overall_protocol == AudioClassProtocol::Uac2 {
+                            let proto = if iface_proto == AUDIO_PROTOCOL_UAC2
+                                || overall_protocol == AudioClassProtocol::Uac2
+                            {
                                 overall_protocol = AudioClassProtocol::Uac2;
                                 AudioClassProtocol::Uac2
                             } else {
@@ -252,7 +268,10 @@ impl ParsedAudioDevice {
                                 }
                                 AUDIO_SUBCLASS_STREAMING => {
                                     // Find or create streaming interface entry
-                                    let idx = match streaming_interfaces.iter().position(|s| s.interface_number == iface_nr) {
+                                    let idx = match streaming_interfaces
+                                        .iter()
+                                        .position(|s| s.interface_number == iface_nr)
+                                    {
                                         Some(existing) => existing,
                                         None => {
                                             streaming_interfaces.push(AudioStreamingInterface {
@@ -288,15 +307,18 @@ impl ParsedAudioDevice {
                             match subtype {
                                 AS_GENERAL => {
                                     // UAC2 AS General includes channel count & format tags
-                                    if overall_protocol == AudioClassProtocol::Uac2 && desc_len >= 16 {
+                                    if overall_protocol == AudioClassProtocol::Uac2
+                                        && desc_len >= 16
+                                    {
                                         let channels = desc_slice[10];
-                                        let format = alt.format.get_or_insert_with(|| AudioFormatInfo {
-                                            protocol: AudioClassProtocol::Uac2,
-                                            channels,
-                                            bit_resolution: 0,
-                                            subslot_size: 0,
-                                            sample_rates: Vec::new(),
-                                        });
+                                        let format =
+                                            alt.format.get_or_insert_with(|| AudioFormatInfo {
+                                                protocol: AudioClassProtocol::Uac2,
+                                                channels,
+                                                bit_resolution: 0,
+                                                subslot_size: 0,
+                                                sample_rates: Vec::new(),
+                                            });
                                         format.channels = channels;
                                     }
                                 }
@@ -307,13 +329,14 @@ impl ParsedAudioDevice {
                                         if overall_protocol == AudioClassProtocol::Uac2 {
                                             let subslot = desc_slice[4];
                                             let bit_res = desc_slice[5];
-                                            let format = alt.format.get_or_insert_with(|| AudioFormatInfo {
-                                                protocol: AudioClassProtocol::Uac2,
-                                                channels: 2,
-                                                bit_resolution: bit_res,
-                                                subslot_size: subslot,
-                                                sample_rates: Vec::new(),
-                                            });
+                                            let format =
+                                                alt.format.get_or_insert_with(|| AudioFormatInfo {
+                                                    protocol: AudioClassProtocol::Uac2,
+                                                    channels: 2,
+                                                    bit_resolution: bit_res,
+                                                    subslot_size: subslot,
+                                                    sample_rates: Vec::new(),
+                                                });
                                             format.subslot_size = subslot;
                                             format.bit_resolution = bit_res;
                                         } else {
@@ -321,7 +344,8 @@ impl ParsedAudioDevice {
                                             let channels = desc_slice[4];
                                             let subslot = desc_slice[5];
                                             let bit_res = desc_slice[6];
-                                            let sam_freq_type = if desc_len >= 8 { desc_slice[7] } else { 0 };
+                                            let sam_freq_type =
+                                                if desc_len >= 8 { desc_slice[7] } else { 0 };
 
                                             let mut rates = Vec::new();
                                             if sam_freq_type > 0 {
@@ -329,8 +353,10 @@ impl ParsedAudioDevice {
                                                 for _ in 0..sam_freq_type {
                                                     if f_offset + 3 <= desc_len {
                                                         let r = desc_slice[f_offset] as u32
-                                                            | ((desc_slice[f_offset + 1] as u32) << 8)
-                                                            | ((desc_slice[f_offset + 2] as u32) << 16);
+                                                            | ((desc_slice[f_offset + 1] as u32)
+                                                                << 8)
+                                                            | ((desc_slice[f_offset + 2] as u32)
+                                                                << 16);
                                                         rates.push(r);
                                                         f_offset += 3;
                                                     }
@@ -419,7 +445,10 @@ impl ParsedAudioDevice {
                     };
 
                     if let Some(ref mut alt) = current_alt_setting {
-                        if usage_type == EndpointUsageType::Feedback || (direction == EndpointDirection::In && sync_type == EndpointSyncType::NoSync) {
+                        if usage_type == EndpointUsageType::Feedback
+                            || (direction == EndpointDirection::In
+                                && sync_type == EndpointSyncType::NoSync)
+                        {
                             alt.feedback_endpoint = Some(ep);
                         } else if direction == EndpointDirection::Out {
                             alt.data_endpoint = Some(ep);
@@ -434,7 +463,9 @@ impl ParsedAudioDevice {
         }
 
         // Flush trailing active alt setting if present
-        if let (Some(iface_idx), Some(alt)) = (current_streaming_iface_idx, current_alt_setting.take()) {
+        if let (Some(iface_idx), Some(alt)) =
+            (current_streaming_iface_idx, current_alt_setting.take())
+        {
             streaming_interfaces[iface_idx].alt_settings.push(alt);
         }
 
@@ -451,7 +482,10 @@ impl ParsedAudioDevice {
 
     /// Selects the best Audio Streaming interface and alternate setting for playback.
     /// Prefers highest bit depth and matching channel count (stereo).
-    pub fn find_best_streaming_alt(&self, preferred_bit_depth: u8) -> Option<(&AudioStreamingInterface, &StreamingAltSetting)> {
+    pub fn find_best_streaming_alt(
+        &self,
+        preferred_bit_depth: u8,
+    ) -> Option<(&AudioStreamingInterface, &StreamingAltSetting)> {
         let mut best: Option<(&AudioStreamingInterface, &StreamingAltSetting)> = None;
 
         for iface in &self.streaming_interfaces {
@@ -469,11 +503,16 @@ impl ParsedAudioDevice {
                     None => best = Some((iface, alt)),
                     Some((_, current_best)) => {
                         let cur_format = current_best.format.as_ref().unwrap();
-                        let cur_diff = (cur_format.bit_resolution as i32 - preferred_bit_depth as i32).abs();
-                        let new_diff = (format.bit_resolution as i32 - preferred_bit_depth as i32).abs();
+                        let cur_diff =
+                            (cur_format.bit_resolution as i32 - preferred_bit_depth as i32).abs();
+                        let new_diff =
+                            (format.bit_resolution as i32 - preferred_bit_depth as i32).abs();
 
                         // Prefer closest bit resolution, then higher resolution
-                        if new_diff < cur_diff || (new_diff == cur_diff && format.bit_resolution > cur_format.bit_resolution) {
+                        if new_diff < cur_diff
+                            || (new_diff == cur_diff
+                                && format.bit_resolution > cur_format.bit_resolution)
+                        {
                             best = Some((iface, alt));
                         }
                     }
@@ -538,8 +577,7 @@ mod tests {
         data.extend([7, 0x24, 0x01, 1, 1, 1, 0]);
         // Format Type I UAC1 (14 bytes): 2 channels, 2 bytes/sample, 16 bits, 2 discrete rates (44100, 48000)
         data.extend([
-            14, 0x24, 0x02, 1, 2, 2, 16, 2,
-            0x44, 0xAC, 0x00, // 44100
+            14, 0x24, 0x02, 1, 2, 2, 16, 2, 0x44, 0xAC, 0x00, // 44100
             0x80, 0xBB, 0x00, // 48000
         ]);
         // Adaptive OUT Endpoint (7 bytes)
@@ -579,13 +617,19 @@ mod tests {
         assert_eq!(fmt.bit_resolution, 24);
         assert_eq!(fmt.subslot_size, 4);
 
-        let ep_out = alt1.data_endpoint.as_ref().expect("Data endpoint must exist");
+        let ep_out = alt1
+            .data_endpoint
+            .as_ref()
+            .expect("Data endpoint must exist");
         assert_eq!(ep_out.address, 0x01);
         assert_eq!(ep_out.direction, EndpointDirection::Out);
         assert_eq!(ep_out.sync_type, EndpointSyncType::Asynchronous);
         assert_eq!(ep_out.max_packet_size, 1024);
 
-        let ep_fb = alt1.feedback_endpoint.as_ref().expect("Feedback endpoint must exist");
+        let ep_fb = alt1
+            .feedback_endpoint
+            .as_ref()
+            .expect("Feedback endpoint must exist");
         assert_eq!(ep_fb.address, 0x81);
         assert_eq!(ep_fb.direction, EndpointDirection::In);
     }
@@ -609,7 +653,10 @@ mod tests {
         assert_eq!(fmt.subslot_size, 2);
         assert_eq!(fmt.sample_rates, vec![44100, 48000]);
 
-        let ep = alt1.data_endpoint.as_ref().expect("Data endpoint must exist");
+        let ep = alt1
+            .data_endpoint
+            .as_ref()
+            .expect("Data endpoint must exist");
         assert_eq!(ep.address, 0x02);
         assert_eq!(ep.direction, EndpointDirection::Out);
         assert_eq!(ep.sync_type, EndpointSyncType::Adaptive);
@@ -620,7 +667,9 @@ mod tests {
         let raw = build_mock_uac2_descriptor();
         let dev = ParsedAudioDevice::parse(&raw).unwrap();
 
-        let (iface, alt) = dev.find_best_streaming_alt(24).expect("Should find best alt");
+        let (iface, alt) = dev
+            .find_best_streaming_alt(24)
+            .expect("Should find best alt");
         assert_eq!(iface.interface_number, 1);
         assert_eq!(alt.alt_setting, 1);
         assert_eq!(alt.format.as_ref().unwrap().bit_resolution, 24);
