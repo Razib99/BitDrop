@@ -45,7 +45,7 @@ void main() {
   group('Signal Path Reporting & Hardware Rate Disentanglement', () {
     testWidgets('Case 1: Bit-Perfect Tier A renders emerald badge with source rate/bit-depth', (tester) async {
       const source = AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 96000);
-      final path = SignalPath(
+      const path = SignalPath(
         tier: OutputTier.bitPerfect,
         source: source,
         requested: source,
@@ -57,7 +57,7 @@ void main() {
       );
 
       await tester.pumpWidget(wrapWithTheme(
-        Column(
+        const Column(
           children: [
             NowPlayingSignalChip(signal: path),
             SignalPathDiagram(path: path),
@@ -73,20 +73,20 @@ void main() {
 
     testWidgets('Case 2: Native Rate + 64-Bit DSP renders cyan badge with Native {sr} kHz', (tester) async {
       const source = AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 48000);
-      final path = SignalPath(
+      const path = SignalPath(
         tier: OutputTier.nativeRate,
         source: source,
         requested: source,
         actual: source,
         dspActive: true,
-        dspChain: const ['Equaliser'],
+        dspChain: ['Equaliser'],
         volume: VolumeMode.softwareDithered,
         device: dacDeviceS10,
         explanation: 'Audio is running at native 48 kHz. Equaliser active.',
       );
 
       await tester.pumpWidget(wrapWithTheme(
-        Column(
+        const Column(
           children: [
             NowPlayingSignalChip(signal: path),
             SignalPathDiagram(path: path),
@@ -101,7 +101,7 @@ void main() {
 
     testWidgets('Case 3: Native Rate · Android Mixed renders neutral/sky blue badge and NEVER says Resampled 44.1 -> 44.1', (tester) async {
       const source = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
-      final path = SignalPath(
+      const path = SignalPath(
         tier: OutputTier.nativeRate,
         source: source,
         requested: source,
@@ -113,7 +113,7 @@ void main() {
       );
 
       await tester.pumpWidget(wrapWithTheme(
-        Column(
+        const Column(
           children: [
             NowPlayingSignalChip(signal: path),
             SignalPathDiagram(path: path),
@@ -134,7 +134,7 @@ void main() {
     testWidgets('Case 4: Resampled 44.1 -> 48 kHz renders amber badge with rate transition', (tester) async {
       const source = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
       const actual = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 48000);
-      final path = SignalPath(
+      const path = SignalPath(
         tier: OutputTier.resampled,
         source: source,
         requested: source,
@@ -146,7 +146,7 @@ void main() {
       );
 
       await tester.pumpWidget(wrapWithTheme(
-        Column(
+        const Column(
           children: [
             NowPlayingSignalChip(signal: path),
             SignalPathDiagram(path: path),
@@ -161,7 +161,7 @@ void main() {
 
     testWidgets('Device node clearly separates DAC Hardware Capability from OS Routing Ceiling', (tester) async {
       const source = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
-      final path = SignalPath(
+      const path = SignalPath(
         tier: OutputTier.nativeRate,
         source: source,
         requested: source,
@@ -172,7 +172,7 @@ void main() {
         explanation: 'Test explanation',
       );
 
-      await tester.pumpWidget(wrapWithTheme(SignalPathDiagram(path: path)));
+      await tester.pumpWidget(wrapWithTheme(const SignalPathDiagram(path: path)));
 
       // Verifies hardware capability up to 192 kHz / 24-bit with OS routing ceiling Android 31
       expect(

@@ -1303,7 +1303,20 @@ pub fn cache_usage(chunk_dirs: Vec<String>, artwork_dir: String) -> CacheUsage {
                 continue;
             }
             if let Ok(meta) = entry.metadata() {
-                audio_bytes += meta.len();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    if name.ends_with(".sparse") {
+                        // Accurately account for punched holes via allocated 512-byte blocks
+                        audio_bytes += meta.blocks() * 512;
+                    } else {
+                        audio_bytes += meta.len();
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    audio_bytes += meta.len();
+                }
             }
             // "<fileId>_chunk_<n>.dat" or "<fileId>.sparse"
             if let Some(idx) = name.rfind("_chunk_") {

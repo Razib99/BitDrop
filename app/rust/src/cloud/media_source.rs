@@ -1148,13 +1148,19 @@ impl Drop for CloudMediaSource {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn deallocate_chunk_range(file: &std::fs::File, offset: u64, len: u64) {
     use std::os::unix::io::AsRawFd;
-    // FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE = 0x02 | 0x01 = 0x03
+    const MODE: libc::c_int = libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE;
+    // Align length up to 4096-byte filesystem block boundary for Linux/Android VFS
+    let aligned_len = if len > 0 {
+        ((len + 4095) / 4096) * 4096
+    } else {
+        len
+    };
     unsafe {
         libc::fallocate(
             file.as_raw_fd(),
-            3,
+            MODE,
             offset as libc::off_t,
-            len as libc::off_t,
+            aligned_len as libc::off_t,
         );
     }
 }
@@ -1523,6 +1529,46 @@ mod tests {
             !idx_a.exists(),
             "Index file should be deleted when 0 chunks remain"
         );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_sparse_hole_punching_block_accounting() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("bitdrop_test_hole_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let sparse_file_path = temp_dir.join("test_sparse.sparse");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&sparse_file_path)
+            .unwrap();
+
+        let chunk_data = vec![0xABu8; 4 * 1024 * 1024];
+        std::io::Write::write_all(&mut &file, &chunk_data).unwrap();
+        file.sync_all().unwrap();
+
+        let meta_before = file.metadata().unwrap();
+        assert_eq!(meta_before.len(), 4 * 1024 * 1024);
+
+        // Punch a 2 MB hole in the first half
+        deallocate_chunk_range(&file, 0, 2 * 1024 * 1024);
+        file.sync_all().unwrap();
+
+        let meta_after = file.metadata().unwrap();
+        // File logical length MUST remain 4 MB (FALLOC_FL_KEEP_SIZE)
+        assert_eq!(meta_after.len(), 4 * 1024 * 1024);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert!(meta_after.blocks() <= meta_before.blocks());
+        }
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
