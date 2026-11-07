@@ -54,7 +54,9 @@ class OutputScreen extends ConsumerWidget {
                 note: device.type == DeviceType.bluetooth
                     ? 'Bluetooth uses its own codec — lossless bit-perfect '
                         'is not possible on any phone.'
-                    : null,
+                    : (device.type == DeviceType.usb && signal?.tier != OutputTier.bitPerfect
+                        ? 'Currently routed via Android system mixer. Enable Direct USB DAC driver below to unlock bit-perfect playback.'
+                        : null),
                 onRunSafetyCheck: () => context.push(Routes.safety),
               ),
             ),

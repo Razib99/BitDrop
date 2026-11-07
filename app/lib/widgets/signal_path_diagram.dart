@@ -217,7 +217,9 @@ class SignalPathDiagram extends StatelessWidget {
                   OutputTier.bitPerfect => path.explanation.contains('Tier D')
                       ? 'Direct USB (Tier D)'
                       : 'Bit-perfect USB',
-                  OutputTier.nativeRate => 'Native rate',
+                  OutputTier.nativeRate => path.dspActive
+                      ? 'Native rate · 64-bit DSP'
+                      : 'Native rate · System mixed',
                   OutputTier.resampled =>
                     'Android mixer → ${Fmt.kHz(path.actual.sampleRate)}',
                   OutputTier.unknown => 'Unknown',

@@ -1820,10 +1820,12 @@ class LiveBitDropCore implements BitDropCore {
       bitrateKbps: actualBitrate,
     );
 
+    final bool isRateShifted = !isDirectUsb && (actualSampleRate != source.sampleRate);
+
     final OutputTier tier;
     if (isDirectUsb) {
       tier = OutputTier.bitPerfect;
-    } else if (resampled) {
+    } else if (isRateShifted) {
       tier = OutputTier.resampled;
     } else if (isExclusiveBitPerfect) {
       tier = OutputTier.bitPerfect;
@@ -1932,14 +1934,22 @@ class LiveBitDropCore implements BitDropCore {
     }
     if (tier == OutputTier.resampled &&
         actual.sampleRate != source.sampleRate) {
-      return 'This phone mixes all audio at '
+      final apiText = device?.apiLevel != null ? 'Android ${device!.apiLevel}\'s' : 'the Android';
+      final devName = device?.name ?? 'your audio device';
+      return '$apiText system mixer (AudioFlinger) mixes audio at '
           '${actual.sampleRate ~/ 1000} kHz, so your '
-          '${source.sampleRate ~/ 1000} kHz file is resampled before it '
-          'reaches the output. Connect a USB DAC for bit-perfect output.';
+          '${source.sampleRate ~/ 1000} kHz file is resampled before it reaches $devName. '
+          '${device?.type == DeviceType.usb ? "Enable the Direct USB DAC driver in Settings to bypass the mixer." : "Connect a USB DAC for bit-perfect output."}';
     }
     if (dsp) {
       return 'The equaliser or DSP is active, altering the audio samples. '
           'Bypass the equaliser to restore bit-perfect output.';
+    }
+    if (device != null && device.type == DeviceType.usb && !isDirectUsb) {
+      final apiText = device.apiLevel != null ? 'Android ${device.apiLevel}\'s' : 'the Android';
+      return 'Your ${device.name} is running at native ${source.sampleRate ~/ 1000} kHz, '
+          'routed through $apiText shared system mixer (AudioFlinger). '
+          'Enable the Direct USB DAC driver in Settings to bypass the mixer and unlock bit-perfect output.';
     }
     if (device != null && !device.supportsBitPerfect) {
       final apiText = device.apiLevel != null ? 'Android ${device.apiLevel}\'s' : 'the Android';

@@ -180,5 +180,43 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets('Output node renders "Native rate · System mixed" on untouched OS-routed stream', (tester) async {
+      const source = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
+      const path = SignalPath(
+        tier: OutputTier.nativeRate,
+        source: source,
+        requested: source,
+        actual: source,
+        dspActive: false,
+        volume: VolumeMode.system,
+        device: dacDeviceS10,
+        explanation: 'Routed via Android mixer without resampling.',
+      );
+
+      await tester.pumpWidget(wrapWithTheme(const SignalPathDiagram(path: path)));
+
+      expect(find.text('Native rate · System mixed'), findsOneWidget);
+    });
+
+    testWidgets('Output node renders "Native rate · 64-bit DSP" when DSP equaliser is active', (tester) async {
+      const source = AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 48000);
+      const path = SignalPath(
+        tier: OutputTier.nativeRate,
+        source: source,
+        requested: source,
+        actual: source,
+        dspActive: true,
+        dspChain: ['Equaliser'],
+        volume: VolumeMode.softwareDithered,
+        device: dacDeviceS10,
+        explanation: 'Audio is running at native 48 kHz with equaliser.',
+      );
+
+      await tester.pumpWidget(wrapWithTheme(const SignalPathDiagram(path: path)));
+
+      expect(find.text('Native rate · 64-bit DSP'), findsOneWidget);
+    });
   });
 }
+
