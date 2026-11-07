@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../core_api/enums.dart';
 import '../core_api/models.dart';
+import '../src/rust/api/audio_engine.dart' as rust;
 
 /// Represents a physical USB Audio Class device connected to Android USB host.
 @immutable
@@ -97,7 +98,10 @@ class OutputDeviceProbe {
           break;
         case 'onUsbDeviceDetached':
           final devId = call.arguments as int?;
-          if (devId != null) onUsbDeviceDetached?.call(devId);
+          if (devId != null) {
+            onUsbDeviceDetached?.call(devId);
+            unawaited(detachDirectUsbDac());
+          }
           break;
       }
     });
@@ -306,6 +310,60 @@ class OutputDeviceProbe {
     } catch (e) {
       debugPrint('[output] failed to close USB device: $e');
       return false;
+    }
+  }
+
+  /// Connects to a raw USB DAC using Tier D direct user-space driver.
+  Future<rust.EngineUsbDacDiagnostics?> attachDirectUsbDac({
+    required int deviceId,
+    int sampleRate = 0,
+    int bitDepth = 0,
+  }) async {
+    final devInfo = await openUsbDevice(deviceId);
+    if (devInfo == null || devInfo['fd'] == null) {
+      debugPrint('[output] failed to obtain raw fd for device $deviceId');
+      return null;
+    }
+    final fd = devInfo['fd'] as int;
+    try {
+      final diag = rust.engineAttachUsbDac(
+        fd: fd,
+        sampleRate: sampleRate,
+        bitDepth: bitDepth,
+      );
+      return diag;
+    } catch (e) {
+      debugPrint('[output] engineAttachUsbDac failed: $e');
+      await closeUsbDevice();
+      return null;
+    }
+  }
+
+  /// Detaches the direct user-space USB DAC session and cleanly closes the device.
+  Future<void> detachDirectUsbDac() async {
+    try {
+      rust.engineDetachUsbDac();
+    } catch (e) {
+      debugPrint('[output] engineDetachUsbDac error: $e');
+    }
+    await closeUsbDevice();
+  }
+
+  /// Returns current stream backend ('Standard' or 'DirectUsb').
+  String getStreamBackend() {
+    try {
+      return rust.engineGetStreamBackend();
+    } catch (_) {
+      return 'Standard';
+    }
+  }
+
+  /// Returns active Tier D USB DAC diagnostics.
+  rust.EngineUsbDacDiagnostics? getUsbDacDiagnostics() {
+    try {
+      return rust.engineGetUsbDacDiagnostics();
+    } catch (_) {
+      return null;
     }
   }
 

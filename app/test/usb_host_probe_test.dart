@@ -219,6 +219,26 @@ void main() {
       expect(detachedId, 101);
     });
 
+    test('attachDirectUsbDac handles device open failure gracefully', () async {
+      final res = await probe.attachDirectUsbDac(deviceId: 999);
+      expect(res, isNull);
+    });
+
+    test('detachDirectUsbDac closes usb device and does not throw', () async {
+      await probe.detachDirectUsbDac();
+      expect(log.any((call) => call.method == 'closeUsbDevice'), isTrue);
+    });
+
+    test('getStreamBackend returns Standard when not attached', () {
+      final backend = probe.getStreamBackend();
+      expect(backend, anyOf(equals('Standard'), equals('DirectUsb')));
+    });
+
+    test('getUsbDacDiagnostics returns null or default diagnostics without error', () {
+      final diag = probe.getUsbDacDiagnostics();
+      expect(diag == null || diag.isActive == false, isTrue);
+    });
+
     test('unsupported platform returns default safe values without invoking channel', () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
 

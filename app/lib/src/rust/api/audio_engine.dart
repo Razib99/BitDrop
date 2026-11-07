@@ -10,9 +10,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'audio_engine.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `emit_event`, `initialize_engine`, `is_current`, `open_media_source`, `request_load`, `set_ramp`, `stage_load`, `stream_opens`
-// These types are ignored because they are not used by any `pub` functions: `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DSP_TRIPLE_BUFFER`, `DecoderCmd`, `EVENT_SINK`, `LOAD_SENDER`, `LoadRequest`, `OpenedTrack`, `PLAYER_STATE`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `default`, `default`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
+// These functions are ignored because they are not marked as `pub`: `emit_event`, `initialize_engine`, `is_current`, `open_media_source`, `request_load`, `return_audio_consumers`, `set_ramp`, `stage_load`, `stream_opens`
+// These types are ignored because they are not used by any `pub` functions: `AUDIO_CONSUMER`, `BOUNDARY_CONSUMER`, `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DSP_TRIPLE_BUFFER`, `DecoderCmd`, `EVENT_SINK`, `LOAD_SENDER`, `LoadRequest`, `OpenedTrack`, `PLAYER_STATE`, `TRIGGERED_PRODUCER`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `default`, `default`, `default`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `eq`, `fmt`, `fmt`, `fmt`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Enables hardware Flush-to-Zero (FTZ) and Denormals-are-Zero (DAZ) mode.
 /// On ARM64 (Android), this sets bits 24 (FZ) and 19 (DN) of FPCR.
@@ -142,6 +142,24 @@ void engineSetEq({required List<double> gains}) =>
 
 void engineSetEqEnabled({required bool enabled}) => RustLib.instance.api
     .crateApiAudioEngineEngineSetEqEnabled(enabled: enabled);
+
+/// Attaches a direct user-space USB Audio DAC (Tier D bit-perfect bypass).
+EngineUsbDacDiagnostics engineAttachUsbDac(
+        {required int fd, required int sampleRate, required int bitDepth}) =>
+    RustLib.instance.api.crateApiAudioEngineEngineAttachUsbDac(
+        fd: fd, sampleRate: sampleRate, bitDepth: bitDepth);
+
+/// Detaches active USB DAC session and seamlessly restores standard audio output.
+void engineDetachUsbDac() =>
+    RustLib.instance.api.crateApiAudioEngineEngineDetachUsbDac();
+
+/// Returns telemetry diagnostics for the active USB DAC stream.
+EngineUsbDacDiagnostics engineGetUsbDacDiagnostics() =>
+    RustLib.instance.api.crateApiAudioEngineEngineGetUsbDacDiagnostics();
+
+/// Returns the current audio engine stream backend ("Standard" vs "DirectUsb").
+String engineGetStreamBackend() =>
+    RustLib.instance.api.crateApiAudioEngineEngineGetStreamBackend();
 
 /// A span of the current track that is already on disk.
 class CachedRangeMs {
@@ -378,6 +396,62 @@ class EngineOutputState {
           hasTrack == other.hasTrack &&
           hardwareSampleRate == other.hardwareSampleRate &&
           hardwareFormat == other.hardwareFormat;
+}
+
+/// Diagnostic telemetry for the active Tier D direct USB stream.
+class EngineUsbDacDiagnostics {
+  final bool isActive;
+  final String deviceName;
+  final int sampleRate;
+  final int bitDepth;
+  final int channels;
+  final String formatName;
+  final String pacerMode;
+  final BigInt framesPlayed;
+  final int underruns;
+  final int feedbackRateQ16;
+
+  const EngineUsbDacDiagnostics({
+    required this.isActive,
+    required this.deviceName,
+    required this.sampleRate,
+    required this.bitDepth,
+    required this.channels,
+    required this.formatName,
+    required this.pacerMode,
+    required this.framesPlayed,
+    required this.underruns,
+    required this.feedbackRateQ16,
+  });
+
+  @override
+  int get hashCode =>
+      isActive.hashCode ^
+      deviceName.hashCode ^
+      sampleRate.hashCode ^
+      bitDepth.hashCode ^
+      channels.hashCode ^
+      formatName.hashCode ^
+      pacerMode.hashCode ^
+      framesPlayed.hashCode ^
+      underruns.hashCode ^
+      feedbackRateQ16.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is EngineUsbDacDiagnostics &&
+          runtimeType == other.runtimeType &&
+          isActive == other.isActive &&
+          deviceName == other.deviceName &&
+          sampleRate == other.sampleRate &&
+          bitDepth == other.bitDepth &&
+          channels == other.channels &&
+          formatName == other.formatName &&
+          pacerMode == other.pacerMode &&
+          framesPlayed == other.framesPlayed &&
+          underruns == other.underruns &&
+          feedbackRateQ16 == other.feedbackRateQ16;
 }
 
 class PlayerState {

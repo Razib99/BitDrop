@@ -1778,9 +1778,15 @@ class LiveBitDropCore implements BitDropCore {
       channels: sourceChannels,
     );
 
+    String streamBackend = 'Standard';
+    try {
+      streamBackend = rust.engineGetStreamBackend();
+    } catch (_) {}
+    final isDirectUsb = streamBackend == 'DirectUsb';
+
     final dsp = out.dspActive;
-    final isExclusiveBitPerfect =
-        (device?.type == DeviceType.usb && device?.supportsBitPerfect == true) && !dsp;
+    final isExclusiveBitPerfect = isDirectUsb ||
+        ((device?.type == DeviceType.usb && device?.supportsBitPerfect == true) && !dsp);
 
     // What actually leaves the hardware:
     final hwRate = out.hardwareSampleRate != 0
@@ -1788,21 +1794,30 @@ class LiveBitDropCore implements BitDropCore {
         : (device?.systemSampleRate ?? 0);
 
     // Resampling only occurs when sample rates actually differ between source and output
-    final resampled = (!isExclusiveBitPerfect && hwRate != 0 && hwRate != source.sampleRate) ||
-        (out.outputSampleRate != 0 && out.outputSampleRate != source.sampleRate);
+    final resampled = !isDirectUsb &&
+        ((!isExclusiveBitPerfect && hwRate != 0 && hwRate != source.sampleRate) ||
+            (out.outputSampleRate != 0 && out.outputSampleRate != source.sampleRate));
 
-    final actualSampleRate = resampled && hwRate != 0
-        ? hwRate
-        : (out.outputSampleRate == 0 ? source.sampleRate : out.outputSampleRate);
+    final actualSampleRate = isDirectUsb
+        ? (out.hardwareSampleRate != 0 ? out.hardwareSampleRate : source.sampleRate)
+        : (resampled && hwRate != 0
+            ? hwRate
+            : (out.outputSampleRate == 0 ? source.sampleRate : out.outputSampleRate));
+    final actualBitDepth = isDirectUsb && out.hardwareFormat.isNotEmpty
+        ? (out.hardwareFormat.contains('32') ? 32 : (out.hardwareFormat.contains('24') ? 24 : 16))
+        : sourceBitDepth;
     final actualBitrate =
-        (sourceBitDepth * actualSampleRate * sourceChannels) ~/ 1000;
+        (actualBitDepth * actualSampleRate * sourceChannels) ~/ 1000;
     final actual = source.copyWith(
+      bitDepth: actualBitDepth,
       sampleRate: actualSampleRate,
       bitrateKbps: actualBitrate,
     );
 
     final OutputTier tier;
-    if (resampled) {
+    if (isDirectUsb) {
+      tier = OutputTier.bitPerfect;
+    } else if (resampled) {
       tier = OutputTier.resampled;
     } else if (isExclusiveBitPerfect) {
       tier = OutputTier.bitPerfect;
@@ -1810,7 +1825,7 @@ class LiveBitDropCore implements BitDropCore {
       tier = OutputTier.nativeRate;
     }
 
-    if (device?.type == DeviceType.usb && _supported) {
+    if (device?.type == DeviceType.usb && _supported && !isDirectUsb) {
       unawaited(_outputProbe.setPreferredMixerAttributes(
         sampleRate: source.sampleRate,
         bitDepth: source.bitDepth,
@@ -1835,7 +1850,7 @@ class LiveBitDropCore implements BitDropCore {
           : 'This device',
       decoderLabel: '${source.codec.label} -> '
           '${source.bitDepth}-bit integer PCM',
-      explanation: _explain(tier, source, actual, dsp, device),
+      explanation: _explain(tier, source, actual, dsp, device, isDirectUsb: isDirectUsb),
     ));
   }
 
@@ -1876,9 +1891,15 @@ class LiveBitDropCore implements BitDropCore {
     AudioFormat source,
     AudioFormat actual,
     bool dsp,
-    OutputDevice? device,
-  ) {
+    OutputDevice? device, {
+    bool isDirectUsb = false,
+  }) {
     if (tier == OutputTier.bitPerfect) {
+      if (isDirectUsb) {
+        return 'Bit-perfect direct stream active via User-Space USB Audio (Tier D). '
+            'The audio engine has direct hardware control over your ${device?.name ?? "USB DAC"} at '
+            '${actual.sampleRate ~/ 1000} kHz / ${actual.bitDepth}-bit format with zero OS mixer interaction or resampling.';
+      }
       return 'Bit-perfect direct stream active via Android 14+ Mixer Attributes. '
           'The audio engine has exclusive access to your ${device?.name ?? "USB DAC"} at its native '
           '${source.sampleRate ~/ 1000} kHz / ${source.bitDepth}-bit format with zero resampling or DSP.';
@@ -1982,7 +2003,15 @@ class LiveBitDropCore implements BitDropCore {
     final source = track?.format ??
         const AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 96000);
     final signal = _signalPath.value;
-    final device = _outputProbe.current?.name ?? 'System Audio';
+    String device = _outputProbe.current?.name ?? 'System Audio';
+    try {
+      if (rust.engineGetStreamBackend() == 'DirectUsb') {
+        final usbDiag = rust.engineGetUsbDacDiagnostics();
+        if (usbDiag.isActive) {
+          device = '${usbDiag.deviceName} (Direct UAC2)';
+        }
+      }
+    } catch (_) {}
 
     rust.EngineDiagnosticsData? engDiag;
     try {

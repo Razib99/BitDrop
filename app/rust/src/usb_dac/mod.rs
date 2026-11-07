@@ -2,10 +2,17 @@
 //!
 //! Provides direct bit-perfect hardware bypass for USB DACs on Android 12+ and Linux.
 
+pub mod backend;
 pub mod controls;
 pub mod descriptors;
 pub mod streaming;
 pub mod usbfs;
+
+pub use backend::{
+    attach_direct_usb_device, check_and_execute_failover, detach_direct_usb_device,
+    get_active_stream_backend, get_usb_dac_diagnostics, is_direct_usb_active,
+    set_active_stream_backend, DirectUsbSession, StreamBackend, UsbAudioSource, UsbDacDiagnostics,
+};
 
 pub use controls::{
     negotiate_device_sample_rate, parse_uac2_sample_rate_ranges, parse_uac2_volume_range,

@@ -94,6 +94,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   EngineOutputState dco_decode_engine_output_state(dynamic raw);
 
   @protected
+  EngineUsbDacDiagnostics dco_decode_engine_usb_dac_diagnostics(dynamic raw);
+
+  @protected
   EqBandSpec dco_decode_eq_band_spec(dynamic raw);
 
   @protected
@@ -104,6 +107,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   double dco_decode_f_64(dynamic raw);
+
+  @protected
+  int dco_decode_i_32(dynamic raw);
 
   @protected
   KeyValuePair dco_decode_key_value_pair(dynamic raw);
@@ -283,6 +289,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  EngineUsbDacDiagnostics sse_decode_engine_usb_dac_diagnostics(
+      SseDeserializer deserializer);
+
+  @protected
   EqBandSpec sse_decode_eq_band_spec(SseDeserializer deserializer);
 
   @protected
@@ -293,6 +303,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   double sse_decode_f_64(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
   KeyValuePair sse_decode_key_value_pair(SseDeserializer deserializer);
@@ -406,9 +419,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  int sse_decode_i_32(SseDeserializer deserializer);
-
-  @protected
   void sse_encode_AnyhowException(
       AnyhowException self, SseSerializer serializer);
 
@@ -489,6 +499,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       EngineOutputState self, SseSerializer serializer);
 
   @protected
+  void sse_encode_engine_usb_dac_diagnostics(
+      EngineUsbDacDiagnostics self, SseSerializer serializer);
+
+  @protected
   void sse_encode_eq_band_spec(EqBandSpec self, SseSerializer serializer);
 
   @protected
@@ -499,6 +513,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_f_64(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_key_value_pair(KeyValuePair self, SseSerializer serializer);
@@ -618,9 +635,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_visualizer_frame_data(
       VisualizerFrameData self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer);
 }
 
 // Section: wire_class

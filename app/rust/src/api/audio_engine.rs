@@ -157,6 +157,9 @@ impl LoadRequest {
 lazy_static::lazy_static! {
     static ref ACTIVE_STREAM: Mutex<Option<AudioStreamAsync<Output, PlayerCallback>>> =
         Mutex::new(None);
+}
+
+lazy_static::lazy_static! {
     /// Direct consumer handles held across routing changes without mutex contention.
     static ref AUDIO_CONSUMER: Mutex<Option<rtrb::Consumer<f32>>> =
         Mutex::new(None);
@@ -1458,6 +1461,19 @@ fn start_stream_watchdog() {
         loop {
             thread::sleep(Duration::from_millis(500));
 
+            // Automatic failover bridge: if DirectUsb was active and the stream died, fall back to standard stream
+            if crate::usb_dac::get_active_stream_backend()
+                == crate::usb_dac::StreamBackend::DirectUsb
+            {
+                if crate::usb_dac::check_and_execute_failover(|| {
+                    open_output_stream(None);
+                }) {
+                    last_frames = CONSUMED_FRAMES.load(Ordering::Relaxed);
+                    stalled_ticks = 0;
+                    continue;
+                }
+            }
+
             let current_sr = {
                 let state = PLAYER_STATE.lock().unwrap();
                 if state.source_sample_rate > 0 {
@@ -1961,6 +1977,143 @@ pub fn engine_set_eq_enabled(enabled: bool) {
     state.eq_enabled = enabled;
     state.eq_updated = true;
     publish_dsp_config(&state);
+}
+
+/// Diagnostic telemetry for the active Tier D direct USB stream.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EngineUsbDacDiagnostics {
+    pub is_active: bool,
+    pub device_name: String,
+    pub sample_rate: u32,
+    pub bit_depth: u8,
+    pub channels: u8,
+    pub format_name: String,
+    pub pacer_mode: String,
+    pub frames_played: u64,
+    pub underruns: u32,
+    pub feedback_rate_q16: u32,
+}
+
+impl From<crate::usb_dac::UsbDacDiagnostics> for EngineUsbDacDiagnostics {
+    fn from(d: crate::usb_dac::UsbDacDiagnostics) -> Self {
+        Self {
+            is_active: d.is_active,
+            device_name: d.device_name,
+            sample_rate: d.sample_rate,
+            bit_depth: d.bit_depth,
+            channels: d.channels,
+            format_name: d.format_name,
+            pacer_mode: d.pacer_mode,
+            frames_played: d.frames_played,
+            underruns: d.underruns,
+            feedback_rate_q16: d.feedback_rate_q16,
+        }
+    }
+}
+
+pub(crate) fn return_audio_consumers(
+    consumer: Option<rtrb::Consumer<f32>>,
+    boundary_consumer: Option<rtrb::Consumer<crate::dsp::BoundaryMarker>>,
+    triggered_producer: Option<rtrb::Producer<crate::dsp::BoundaryMarker>>,
+) {
+    if let Some(c) = consumer {
+        *AUDIO_CONSUMER.lock().unwrap() = Some(c);
+    }
+    if let Some(bc) = boundary_consumer {
+        *BOUNDARY_CONSUMER.lock().unwrap() = Some(bc);
+    }
+    if let Some(tp) = triggered_producer {
+        *TRIGGERED_PRODUCER.lock().unwrap() = Some(tp);
+    }
+}
+
+/// Attaches a direct user-space USB Audio DAC (Tier D bit-perfect bypass).
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_attach_usb_dac(
+    fd: i32,
+    sample_rate: u32,
+    bit_depth: u32,
+) -> Result<EngineUsbDacDiagnostics, String> {
+    #[cfg(target_os = "android")]
+    {
+        *ACTIVE_STREAM.lock().unwrap() = None;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = CPAL_STREAM.lock().unwrap().0.take();
+    }
+
+    let (consumer, boundary_consumer, triggered_producer) = {
+        let mut c_guard = AUDIO_CONSUMER.lock().unwrap();
+        let mut b_guard = BOUNDARY_CONSUMER.lock().unwrap();
+        let mut t_guard = TRIGGERED_PRODUCER.lock().unwrap();
+        match (c_guard.take(), b_guard.take()) {
+            (Some(c), Some(b)) => (c, b, t_guard.take()),
+            _ => return Err("Audio ringbuffer consumers unavailable".into()),
+        }
+    };
+
+    let target_sr = if sample_rate > 0 {
+        sample_rate as f64
+    } else {
+        48000.0
+    };
+
+    let mut renderer = crate::renderer::OutputRenderer::new(
+        target_sr,
+        Some(consumer),
+        Some(boundary_consumer),
+        triggered_producer,
+    );
+    renderer.fade_gain = 0.0;
+
+    let source = crate::usb_dac::UsbAudioSource { renderer };
+    match crate::usb_dac::attach_direct_usb_device(fd, sample_rate, bit_depth, source) {
+        Ok(diag) => {
+            {
+                let mut state = PLAYER_STATE.lock().unwrap();
+                state.target_sample_rate = diag.sample_rate;
+                state.hardware_sample_rate = diag.sample_rate;
+                state.hardware_format =
+                    format!("Direct USB {} (Tier D Bit-Perfect)", diag.format_name);
+                state.eq_updated = true;
+                publish_dsp_config(&state);
+                set_ramp(&mut state, 1.0, FADE_MS);
+            }
+            Ok(diag.into())
+        }
+        Err(err) => {
+            #[cfg(target_os = "android")]
+            open_output_stream(None);
+            Err(format!("Failed to attach USB DAC: {err}"))
+        }
+    }
+}
+
+/// Detaches active USB DAC session and seamlessly restores standard audio output.
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_detach_usb_dac() -> Result<(), String> {
+    crate::usb_dac::detach_direct_usb_device()
+        .map_err(|e| format!("Failed to detach USB DAC: {e}"))?;
+
+    #[cfg(target_os = "android")]
+    open_output_stream(None);
+
+    Ok(())
+}
+
+/// Returns telemetry diagnostics for the active USB DAC stream.
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_get_usb_dac_diagnostics() -> EngineUsbDacDiagnostics {
+    crate::usb_dac::get_usb_dac_diagnostics().into()
+}
+
+/// Returns the current audio engine stream backend ("Standard" vs "DirectUsb").
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_get_stream_backend() -> String {
+    crate::usb_dac::get_active_stream_backend()
+        .as_str()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -2540,5 +2693,23 @@ mod tests {
 
         let vis = engine_get_visualizer_frame();
         assert_eq!(vis.spectrum.len(), crate::dsp::VISUALIZER_BANDS);
+    }
+
+    #[test]
+    fn test_engine_usb_dac_integration() {
+        assert_eq!(engine_get_stream_backend(), "Standard");
+
+        let diag = engine_get_usb_dac_diagnostics();
+        assert!(!diag.is_active);
+        assert_eq!(diag.sample_rate, 0);
+
+        // Detach when not attached succeeds without error
+        let detach_res = engine_detach_usb_dac();
+        assert!(detach_res.is_ok());
+
+        // Attach with invalid fd returns Err gracefully
+        let attach_res = engine_attach_usb_dac(-1, 48000, 24);
+        assert!(attach_res.is_err());
+        assert_eq!(engine_get_stream_backend(), "Standard");
     }
 }
