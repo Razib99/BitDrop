@@ -25,6 +25,7 @@ class AppSettings {
     this.gridDensity = GridDensity.comfortable,
     this.showTechnicalDetails = false,
     this.preferBitPerfect = true,
+    this.directUsbDriver = false,
     this.safetyAttenuationEnabled = false,
     this.safetyAttenuationDb = -12.0,
     this.gapless = true,
@@ -59,6 +60,7 @@ class AppSettings {
   final bool showTechnicalDetails;
 
   final bool preferBitPerfect;
+  final bool directUsbDriver;
   final bool safetyAttenuationEnabled;
   final double safetyAttenuationDb;
 
@@ -94,6 +96,7 @@ class AppSettings {
     GridDensity? gridDensity,
     bool? showTechnicalDetails,
     bool? preferBitPerfect,
+    bool? directUsbDriver,
     bool? safetyAttenuationEnabled,
     double? safetyAttenuationDb,
     bool? gapless,
@@ -125,6 +128,7 @@ class AppSettings {
         gridDensity: gridDensity ?? this.gridDensity,
         showTechnicalDetails: showTechnicalDetails ?? this.showTechnicalDetails,
         preferBitPerfect: preferBitPerfect ?? this.preferBitPerfect,
+        directUsbDriver: directUsbDriver ?? this.directUsbDriver,
         safetyAttenuationEnabled:
             safetyAttenuationEnabled ?? this.safetyAttenuationEnabled,
         safetyAttenuationDb: safetyAttenuationDb ?? this.safetyAttenuationDb,
@@ -162,6 +166,7 @@ class AppSettings {
         'gridDensity' => copyWith(gridDensity: value as GridDensity),
         'showTechnicalDetails' => copyWith(showTechnicalDetails: value as bool),
         'preferBitPerfect' => copyWith(preferBitPerfect: value as bool),
+        'directUsbDriver' => copyWith(directUsbDriver: value as bool),
         'safetyAttenuationEnabled' =>
           copyWith(safetyAttenuationEnabled: value as bool),
         'safetyAttenuationDb' => copyWith(safetyAttenuationDb: value as double),

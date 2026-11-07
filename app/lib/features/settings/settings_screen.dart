@@ -144,6 +144,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: (v) => _set('preferBitPerfect', v),
           ),
           SwitchSettingsTile(
+            title: 'Direct USB driver (Tier D)',
+            subtitle: 'Bypasses the Android audio mixer completely via user-space '
+                'USB Audio Class 2.0. Unlocks bit-perfect playback on Android 12+.',
+            value: s.directUsbDriver,
+            onChanged: (v) => _set('directUsbDriver', v),
+          ),
+          SwitchSettingsTile(
             title: 'Safety attenuation',
             subtitle:
                 '${Fmt.db(s.safetyAttenuationDb)} of digital attenuation for '

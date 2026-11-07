@@ -127,6 +127,7 @@ abstract final class PersistenceCodec {
       'gridDensity': s.gridDensity.name,
       'showTechnicalDetails': s.showTechnicalDetails,
       'preferBitPerfect': s.preferBitPerfect,
+      'directUsbDriver': s.directUsbDriver,
       'safetyAttenuationEnabled': s.safetyAttenuationEnabled,
       'safetyAttenuationDb': s.safetyAttenuationDb,
       'gapless': s.gapless,
@@ -192,6 +193,8 @@ abstract final class PersistenceCodec {
             if (val is bool) s = s.copyWith(showTechnicalDetails: val);
           case 'preferBitPerfect':
             if (val is bool) s = s.copyWith(preferBitPerfect: val);
+          case 'directUsbDriver':
+            if (val is bool) s = s.copyWith(directUsbDriver: val);
           case 'safetyAttenuationEnabled':
             if (val is bool) s = s.copyWith(safetyAttenuationEnabled: val);
           case 'safetyAttenuationDb':

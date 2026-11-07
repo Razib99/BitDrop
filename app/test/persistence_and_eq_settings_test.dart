@@ -86,6 +86,7 @@ void main() {
         gridDensity: GridDensity.compact,
         showTechnicalDetails: true,
         preferBitPerfect: true,
+        directUsbDriver: true,
         safetyAttenuationEnabled: true,
         safetyAttenuationDb: -6.0,
         gapless: true,
@@ -119,6 +120,8 @@ void main() {
       expect(restored.formatBadges, BadgeVisibility.hiResOnly);
       expect(restored.gridDensity, GridDensity.compact);
       expect(restored.showTechnicalDetails, isTrue);
+      expect(restored.preferBitPerfect, isTrue);
+      expect(restored.directUsbDriver, isTrue);
       expect(restored.safetyAttenuationEnabled, isTrue);
       expect(restored.safetyAttenuationDb, -6.0);
       expect(restored.crossfadeSeconds, 3);

@@ -214,7 +214,9 @@ class SignalPathDiagram extends StatelessWidget {
                 icon: Icons.output,
                 label: 'Output',
                 detail: switch (path.tier) {
-                  OutputTier.bitPerfect => 'Bit-perfect USB',
+                  OutputTier.bitPerfect => path.explanation.contains('Tier D')
+                      ? 'Direct USB (Tier D)'
+                      : 'Bit-perfect USB',
                   OutputTier.nativeRate => 'Native rate',
                   OutputTier.resampled =>
                     'Android mixer → ${Fmt.kHz(path.actual.sampleRate)}',
@@ -254,7 +256,10 @@ class SignalPathDiagram extends StatelessWidget {
                           ? 'Supports ${device.supportedRates.map(Fmt.kHzBare).join(', ')} kHz'
                           : '');
 
-                  if (!device.supportsBitPerfect) {
+                  if (path.explanation.contains('Tier D')) {
+                    const routing = 'Direct USB (Tier D) · Zero OS mixer interaction';
+                    return capStr.isNotEmpty ? '$capStr · $routing' : routing;
+                  } else if (!device.supportsBitPerfect) {
                     final routing = device.apiLevel != null
                         ? 'Routed via Android ${device.apiLevel} system mixer'
                         : 'Routed via system mixer';

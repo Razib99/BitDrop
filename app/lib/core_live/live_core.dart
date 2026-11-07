@@ -177,6 +177,9 @@ class LiveBitDropCore implements BitDropCore {
           unawaited(_audioHandler.pause());
         }
       }
+      if (_settings.value.directUsbDriver && newType == DeviceType.usb) {
+        unawaited(_autoAttachDirectUsbIfPossible());
+      }
       previousType = newType;
       _recomputeSignalPath();
     });
@@ -1623,6 +1626,9 @@ class LiveBitDropCore implements BitDropCore {
     } else if (cmd is SetSetting) {
       _settings.add(_settings.value.withKey(cmd.key, cmd.value));
       unawaited(_saveSettings());
+      if (cmd.key == 'directUsbDriver') {
+        unawaited(_handleDirectUsbDriverSetting(cmd.value as bool));
+      }
     } else if (cmd is SetSafetyAttenuation) {
       _settings.add(_settings.value.copyWith(
         safetyAttenuationEnabled: cmd.enabled,
@@ -2059,6 +2065,48 @@ class LiveBitDropCore implements BitDropCore {
       type == DeviceType.usb ||
       type == DeviceType.wiredAnalog ||
       type == DeviceType.bluetooth;
+
+  Future<void> _autoAttachDirectUsbIfPossible() async {
+    try {
+      final backend = _outputProbe.getStreamBackend();
+      if (backend == 'DirectUsb') return;
+      final usbDevices = await _outputProbe.listUsbAudioDevices();
+      if (usbDevices.isNotEmpty) {
+        final dev = usbDevices.first;
+        if (dev.hasPermission) {
+          await _outputProbe.attachDirectUsbDac(deviceId: dev.deviceId);
+          _recomputeSignalPath();
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _handleDirectUsbDriverSetting(bool enabled) async {
+    if (!enabled) {
+      await _outputProbe.detachDirectUsbDac();
+      _recomputeSignalPath();
+      return;
+    }
+    try {
+      final usbDevices = await _outputProbe.listUsbAudioDevices();
+      if (usbDevices.isNotEmpty) {
+        final targetDev = usbDevices.first;
+        if (!targetDev.hasPermission) {
+          final granted =
+              await _outputProbe.requestUsbPermission(targetDev.deviceId);
+          if (!granted) {
+            debugPrint(
+                '[usb] Permission denied for direct USB device ${targetDev.deviceId}');
+            return;
+          }
+        }
+        await _outputProbe.attachDirectUsbDac(deviceId: targetDev.deviceId);
+        _recomputeSignalPath();
+      }
+    } catch (e) {
+      debugPrint('[usb] Failed to engage direct USB DAC: $e');
+    }
+  }
 
   @override
   void dispose() {

@@ -123,14 +123,16 @@ class OutputScreen extends ConsumerWidget {
               'and a DAC that supports it.',
             ),
           ),
-          const ListTile(
-            leading: Icon(Icons.usb_off),
-            title: Text('Direct USB driver'),
-            subtitle: Text(
-              'Coming later. Would bypass the Android mixer entirely on '
-              'phones that cannot reach bit-perfect.',
+          SwitchListTile(
+            value: settings.directUsbDriver,
+            onChanged: (v) =>
+                sendCommand(ref, SetSetting(key: 'directUsbDriver', value: v)),
+            secondary: const Icon(Icons.usb),
+            title: const Text('Direct USB DAC driver (Tier D)'),
+            subtitle: const Text(
+              'Bypasses the Android audio mixer completely via user-space '
+              'USB Audio Class 2.0. Unlocks bit-perfect playback on Android 12+.',
             ),
-            enabled: false,
           ),
         ],
       ),
