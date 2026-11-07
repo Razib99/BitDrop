@@ -4,6 +4,7 @@
 
 pub mod controls;
 pub mod descriptors;
+pub mod streaming;
 pub mod usbfs;
 
 pub use controls::{
@@ -16,6 +17,11 @@ pub use descriptors::{
     AudioClassProtocol, AudioControlInterface, AudioFormatInfo, AudioStreamingInterface,
     DescriptorParseError, EndpointDirection, EndpointInfo, EndpointSyncType, EndpointUsageType,
     ParsedAudioDevice, StreamingAltSetting,
+};
+pub use streaming::{
+    AudioPacer, AudioSampleSource, CallbackAudioSource, IsoRingBuffer, PacerMode, PcmFormat,
+    UsbStreamConfig, UsbStreamHandle, UsbStreamingEngine, DEFAULT_IN_FLIGHT_URBS,
+    DEFAULT_PACKETS_PER_URB,
 };
 pub use usbfs::{
     IsoUrb, UsbDeviceHandle, UsbFsError, UsbdevfsCtrlTransfer, UsbdevfsDisconnectClaim,
