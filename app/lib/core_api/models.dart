@@ -491,6 +491,7 @@ class OutputDevice {
     this.apiLevel,
     this.supportsBitPerfect = false,
     this.tierExplanation,
+    this.systemSampleRate,
   });
 
   final String id;
@@ -514,6 +515,9 @@ class OutputDevice {
 
   /// Human-readable explanation of why this tier was assigned.
   final String? tierExplanation;
+
+  /// Hardware/system mixer sample rate reported by the OS (e.g. AudioFlinger property).
+  final int? systemSampleRate;
 
   String get typeLabel => switch (type) {
         DeviceType.usb => 'USB',

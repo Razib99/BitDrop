@@ -240,15 +240,31 @@ class SignalPathDiagram extends StatelessWidget {
                     ? 'No device'
                     : '${device.name}'
                         '${device.connectionLabel == null ? '' : ' · ${device.connectionLabel}'}',
-                secondary: device == null
-                    ? null
-                    : 'Supports ${device.supportedRates.map(Fmt.kHzBare).join(', ')} kHz · '
-                        '${device.bitDepths.join('/')}-bit · '
-                        'Hardware volume: ${switch (device.hardwareVolume) {
-                        HardwareVolume.yes => 'Yes',
-                        HardwareVolume.no => 'No',
-                        HardwareVolume.unknown => 'Unknown',
-                      }}',
+                secondary: () {
+                  if (device == null) return null;
+                  final maxDacSr = device.supportedRates.isNotEmpty
+                      ? Fmt.kHz(device.supportedRates.reduce((a, b) => a > b ? a : b))
+                      : null;
+                  final maxDacBits = device.bitDepths.isNotEmpty
+                      ? '${device.bitDepths.reduce((a, b) => a > b ? a : b)}-bit'
+                      : null;
+                  final capStr = (maxDacSr != null && maxDacBits != null)
+                      ? 'Hardware supports up to $maxDacSr / $maxDacBits'
+                      : (device.supportedRates.isNotEmpty
+                          ? 'Supports ${device.supportedRates.map(Fmt.kHzBare).join(', ')} kHz'
+                          : '');
+
+                  if (!device.supportsBitPerfect) {
+                    final routing = device.apiLevel != null
+                        ? 'Routed via Android ${device.apiLevel} system mixer'
+                        : 'Routed via system mixer';
+                    return capStr.isNotEmpty ? '$capStr · $routing' : routing;
+                  } else {
+                    return capStr.isNotEmpty
+                        ? '$capStr · Direct bit-perfect access'
+                        : 'Direct bit-perfect access';
+                  }
+                }(),
                 color: c.textSecondary,
                 isLast: true,
               ),
@@ -301,37 +317,70 @@ class _VerdictBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.c;
-    final rateStr = path.tier == OutputTier.resampled
-        ? '${Fmt.kHzBare(path.source.sampleRate)} → '
-            '${Fmt.kHz(path.actual.sampleRate)}'
-        : path.actual.shortLabel;
-    final actualKbps = path.actual.effectiveBitrateKbps;
-    final detail =
-        actualKbps > 0 ? '$rateStr · ${Fmt.kbps(actualKbps)}' : rateStr;
+    final isResampled = path.tier == OutputTier.resampled || path.source.sampleRate != path.actual.sampleRate;
+    final isBitPerfect = path.tier == OutputTier.bitPerfect;
+    final isDspNative = !isResampled && path.dspActive;
+    final isAndroidMixed = !isResampled && !path.dspActive && !isBitPerfect;
+
+    final Color bannerColor;
+    final IconData bannerIcon;
+    final String title;
+    final String detail;
+
+    if (isBitPerfect) {
+      // Case 1: Bit-Perfect Tier A
+      bannerColor = c.tierBitPerfect;
+      bannerIcon = Icons.diamond_outlined;
+      title = 'Bit-Perfect';
+      detail = '${Fmt.kHz(path.source.sampleRate)} / ${path.source.bitDepth}-bit';
+    } else if (isDspNative) {
+      // Case 2: Native Rate + 64-Bit DSP
+      bannerColor = c.dspActive;
+      bannerIcon = Icons.graphic_eq;
+      title = '64-Bit DSP';
+      detail = 'Native ${Fmt.kHz(path.source.sampleRate)}';
+    } else if (isAndroidMixed) {
+      // Case 3: Native Rate · Android Mixed
+      bannerColor = c.tierNativeRate;
+      bannerIcon = Icons.check_circle_outline;
+      title = 'Native Rate (${Fmt.kHz(path.source.sampleRate)})';
+      detail = 'Android Mixed';
+    } else if (isResampled) {
+      // Case 4: Resampled
+      bannerColor = c.tierResampled;
+      bannerIcon = Icons.change_history;
+      title = 'Resampled';
+      detail = '${Fmt.kHzBare(path.source.sampleRate)} → ${Fmt.kHz(path.actual.sampleRate)}';
+    } else {
+      bannerColor = c.tierUnknown;
+      bannerIcon = Icons.help_outline;
+      title = path.tier.label;
+      detail = path.actual.shortLabel;
+    }
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: Spacing.md),
       padding: const EdgeInsets.all(Spacing.sm),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: bannerColor.withOpacity(0.12),
         borderRadius: Radii.cardR,
-        border: Border.all(color: color.withOpacity(0.45)),
+        border: Border.all(color: bannerColor.withOpacity(0.45)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(TierChip.iconFor(path.tier), size: 18, color: color),
+              Icon(bannerIcon, size: 18, color: bannerColor),
               const SizedBox(width: Spacing.xs),
               Expanded(
                 child: Text(
-                  path.tier.label,
-                  style: context.t.titleSmall.copyWith(color: color),
+                  title,
+                  style: context.t.titleSmall.copyWith(color: bannerColor),
                 ),
               ),
-              Text(detail, style: context.t.monoReadout.copyWith(color: color)),
-              if (path.dspActive) ...[
+              Text(detail, style: context.t.monoReadout.copyWith(color: bannerColor)),
+              if (path.dspActive && !isDspNative) ...[
                 const SizedBox(width: Spacing.xs),
                 const DspBadge(dense: true),
               ],

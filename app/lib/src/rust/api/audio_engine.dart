@@ -116,6 +116,9 @@ List<CachedRangeMs> engineCachedRanges() =>
 EngineOutputState engineOutputState() =>
     RustLib.instance.api.crateApiAudioEngineEngineOutputState();
 
+void engineSetHardwareSampleRate({required int rate}) => RustLib.instance.api
+    .crateApiAudioEngineEngineSetHardwareSampleRate(rate: rate);
+
 EngineBufferState engineBufferState() =>
     RustLib.instance.api.crateApiAudioEngineEngineBufferState();
 

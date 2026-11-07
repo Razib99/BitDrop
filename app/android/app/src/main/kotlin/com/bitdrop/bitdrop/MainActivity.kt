@@ -198,6 +198,8 @@ class MainActivity : AudioServiceActivity() {
             }
         }
 
+        val systemSampleRate = am.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull() ?: 48000
+
         return mapOf(
             "available" to true,
             "name" to (active.productName?.toString()?.trim().orEmpty()),
@@ -210,6 +212,7 @@ class MainActivity : AudioServiceActivity() {
             "supportsBitPerfect" to supportsBitPerfect,
             "maxTier" to maxTier,
             "tierExplanation" to tierExplanation,
+            "systemSampleRate" to systemSampleRate,
         )
     }
 

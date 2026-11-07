@@ -105,6 +105,7 @@ class OutputDeviceProbe {
       final supportsBitPerfect = raw['supportsBitPerfect'] as bool? ?? false;
       final rawMaxTier = raw['maxTier'] as String?;
       final tierExplanation = raw['tierExplanation'] as String?;
+      final systemSampleRate = raw['systemSampleRate'] as int? ?? 48000;
 
       final OutputTier maxTier;
       if (rawMaxTier != null) {
@@ -140,6 +141,7 @@ class OutputDeviceProbe {
         apiLevel: apiLevel,
         supportsBitPerfect: supportsBitPerfect,
         tierExplanation: tierExplanation,
+        systemSampleRate: systemSampleRate,
       );
     } catch (e) {
       debugPrint('[output] could not read the device: $e');

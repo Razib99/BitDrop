@@ -160,6 +160,11 @@ class LiveBitDropCore implements BitDropCore {
     _outputProbe.start();
     DeviceType? previousType = _outputProbe.current?.type;
     _outputProbeSub = _outputProbe.stream.listen((device) {
+      if (device?.systemSampleRate != null && device!.systemSampleRate! > 0) {
+        try {
+          rust.engineSetHardwareSampleRate(rate: device.systemSampleRate!);
+        } catch (_) {}
+      }
       final newType = device?.type;
       final wasEarphone = _isEarphone(previousType);
       final isNowEarphone = _isEarphone(newType);
@@ -1668,10 +1673,22 @@ class LiveBitDropCore implements BitDropCore {
       channels: sourceChannels,
     );
 
-    // What actually leaves the engine: the stream's rate, not the file's.
-    final actualSampleRate = out.outputSampleRate == 0
-        ? out.sourceSampleRate
-        : out.outputSampleRate;
+    final dsp = out.dspActive;
+    final isExclusiveBitPerfect =
+        (device?.type == DeviceType.usb && device?.supportsBitPerfect == true) && !dsp;
+
+    // What actually leaves the hardware:
+    final hwRate = out.hardwareSampleRate != 0
+        ? out.hardwareSampleRate
+        : (device?.systemSampleRate ?? 0);
+
+    // Resampling only occurs when sample rates actually differ between source and output
+    final resampled = (!isExclusiveBitPerfect && hwRate != 0 && hwRate != source.sampleRate) ||
+        (out.outputSampleRate != 0 && out.outputSampleRate != source.sampleRate);
+
+    final actualSampleRate = resampled && hwRate != 0
+        ? hwRate
+        : (out.outputSampleRate == 0 ? source.sampleRate : out.outputSampleRate);
     final actualBitrate =
         (sourceBitDepth * actualSampleRate * sourceChannels) ~/ 1000;
     final actual = source.copyWith(
@@ -1679,35 +1696,13 @@ class LiveBitDropCore implements BitDropCore {
       bitrateKbps: actualBitrate,
     );
 
-    final resampled = actual.sampleRate != source.sampleRate ||
-        (out.hardwareSampleRate != 0 &&
-            out.hardwareSampleRate != source.sampleRate);
-    final dsp = out.dspActive;
-
-    // Order matters. A rate change is the most severe truth, so it outranks
-    // DSP; DSP in turn rules out bit-perfect. The device ceiling caps the
-    // rest, and on pre-Android 14 (API < 34) that ceiling is never bit-perfect.
-    final ceiling = device?.maxTier ?? OutputTier.unknown;
     final OutputTier tier;
     if (resampled) {
       tier = OutputTier.resampled;
-    } else if (dsp) {
-      tier = OutputTier.nativeRate;
-    } else if (ceiling == OutputTier.resampled) {
-      tier = OutputTier.resampled;
-    } else if (device?.type == DeviceType.usb) {
-      if (device?.supportsBitPerfect == true) {
-        tier = OutputTier.bitPerfect;
-      } else if (device?.apiLevel != null && device!.apiLevel! < 34) {
-        // Pre-Android 14 (e.g. S10+ on Android 12) AudioFlinger limitation
-        tier = OutputTier.resampled;
-      } else if (device?.maxTier == OutputTier.bitPerfect) {
-        tier = OutputTier.bitPerfect;
-      } else {
-        tier = ceiling;
-      }
+    } else if (isExclusiveBitPerfect) {
+      tier = OutputTier.bitPerfect;
     } else {
-      tier = ceiling;
+      tier = OutputTier.nativeRate;
     }
 
     if (device?.type == DeviceType.usb && _supported) {
@@ -1783,6 +1778,11 @@ class LiveBitDropCore implements BitDropCore {
           'The audio engine has exclusive access to your ${device?.name ?? "USB DAC"} at its native '
           '${source.sampleRate ~/ 1000} kHz / ${source.bitDepth}-bit format with zero resampling or DSP.';
     }
+    if (dsp && actual.sampleRate == source.sampleRate) {
+      return 'Audio is running at native ${source.sampleRate ~/ 1000} kHz. '
+          'The 64-bit floating-point equaliser or DSP is active, altering the audio samples. '
+          'Bypass the equaliser to restore bit-perfect output.';
+    }
     if (device?.type == DeviceType.phoneSpeaker) {
       if (actual.sampleRate != source.sampleRate) {
         return 'Phone speakers route through the Android mixer at '
@@ -1790,8 +1790,8 @@ class LiveBitDropCore implements BitDropCore {
             '${source.sampleRate ~/ 1000} kHz audio is resampled. Connect a USB DAC '
             'for bit-perfect playback.';
       } else {
-        return 'Phone speaker output is routed through the Android shared audio mixer. '
-            'Connect a USB DAC for direct exclusive bit-perfect playback.';
+        return 'Phone speaker output is routed through the Android shared audio mixer at native '
+            '${source.sampleRate ~/ 1000} kHz. Connect a USB DAC for direct exclusive bit-perfect playback.';
       }
     }
     if (device?.type == DeviceType.bluetooth) {
@@ -1809,11 +1809,10 @@ class LiveBitDropCore implements BitDropCore {
       return 'The equaliser or DSP is active, altering the audio samples. '
           'Bypass the equaliser to restore bit-perfect output.';
     }
-    if (device?.type == DeviceType.usb &&
-        device?.apiLevel != null &&
-        device!.apiLevel! < 34) {
-      return 'Your ${device.name} is running on Android ${device.apiLevel}. '
-          'Pre-Android 14 cannot bypass AudioFlinger Fast Mixer without root, so audio is resampled.';
+    if (device != null && !device.supportsBitPerfect) {
+      final apiText = device.apiLevel != null ? 'Android ${device.apiLevel}\'s' : 'the Android';
+      return 'Your ${device.name} is running at native ${source.sampleRate ~/ 1000} kHz, '
+          'routed through $apiText system mixer (AudioFlinger).';
     }
     if (tier == OutputTier.nativeRate) {
       return 'No resampling is happening: the stream runs at the file\'s native rate '

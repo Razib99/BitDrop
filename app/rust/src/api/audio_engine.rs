@@ -1426,7 +1426,9 @@ fn open_output_stream(sample_rate: Option<u32>) {
         {
             let mut state = PLAYER_STATE.lock().unwrap();
             state.target_sample_rate = rate;
-            state.hardware_sample_rate = rate;
+            if state.hardware_sample_rate == 0 {
+                state.hardware_sample_rate = rate;
+            }
             state.hardware_format = "PCM_FLOAT".to_string();
             state.eq_updated = true;
             publish_dsp_config(&state);
@@ -1765,6 +1767,12 @@ pub fn engine_output_state() -> EngineOutputState {
         hardware_sample_rate: state.hardware_sample_rate,
         hardware_format: state.hardware_format.clone(),
     }
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_set_hardware_sample_rate(rate: u32) {
+    let mut state = PLAYER_STATE.lock().unwrap();
+    state.hardware_sample_rate = rate;
 }
 
 #[flutter_rust_bridge::frb(sync)]
