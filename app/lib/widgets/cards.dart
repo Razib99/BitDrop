@@ -243,11 +243,13 @@ class SourceCard extends StatelessWidget {
     final c = context.c;
     final needsAction = account.status == SourceStatus.needsReconnect;
 
+    final isLocal = account.id == 'local' ||
+        account.provider.toLowerCase().contains('device');
     final (Color statusColor, IconData statusIcon, String statusText) =
         switch (account.status) {
       SourceStatus.upToDate => (
           c.success,
-          Icons.cloud_done_outlined,
+          isLocal ? Icons.check_circle_outline : Icons.cloud_done_outlined,
           'Up to date'
         ),
       SourceStatus.syncing => (c.accent, Icons.sync, 'Syncing'),
@@ -298,10 +300,13 @@ class SourceCard extends StatelessWidget {
                   border: Border.all(color: c.outline.withOpacity(0.4)),
                 ),
                 padding: const EdgeInsets.all(9),
-                child: account.id == 'drive' ||
-                        account.provider.toLowerCase().contains('drive')
-                    ? Image.asset('assets/google_drive.png', fit: BoxFit.contain)
-                    : Icon(Icons.cloud_queue, size: 22, color: c.accent),
+                child: isLocal
+                    ? Icon(Icons.phone_android, size: 22, color: c.accent)
+                    : account.id == 'drive' ||
+                            account.provider.toLowerCase().contains('drive')
+                        ? Image.asset('assets/google_drive.png',
+                            fit: BoxFit.contain)
+                        : Icon(Icons.cloud_queue, size: 22, color: c.accent),
               ),
               const SizedBox(width: Spacing.sm),
               Expanded(

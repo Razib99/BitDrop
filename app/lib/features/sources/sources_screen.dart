@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +9,7 @@ import '../../core_api/commands.dart';
 import '../../core_api/models.dart';
 import '../../l10n/l10n.dart';
 import '../../core_api/enums.dart';
+import '../../core_live/cloud_library.dart';
 import '../../core_live/live_core.dart';
 import '../../providers/core_providers.dart';
 import '../storage/google_drive_service.dart';
@@ -36,6 +38,8 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
   @override
   Widget build(BuildContext context) {
     final sources = ref.watch(sourcesProvider).valueOrNull ?? const [];
+    final hasDrive = sources.any((s) => s.id == 'drive');
+    final hasLocal = sources.any((s) => s.id == 'local');
     final scan = ref.watch(cloudScanStatusProvider).valueOrNull ?? SyncStatus.idle;
     final l = context.l10n;
     final c = context.c;
@@ -137,13 +141,22 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                               unawaited(library.scan());
                             }
                           }
-                        : () => sendCommand(ref, Rescan(sourceId: s.id)),
+                        : s.id == 'local'
+                            ? () {
+                                final library = ref.read(cloudLibraryProvider);
+                                unawaited(library.scanAllLocalFolders());
+                              }
+                            : () => sendCommand(ref, Rescan(sourceId: s.id)),
                     onCancelSync: s.id == 'drive'
                         ? () {
                             ref.read(cloudLibraryProvider).cancelScan();
                           }
                         : null,
-                    onEditFolders: () => _showFolderPicker(context),
+                    onEditFolders: s.id == 'drive'
+                        ? () => _showFolderPicker(context)
+                        : s.id == 'local'
+                            ? () => _showLocalFoldersSheet(context)
+                            : null,
                     onReconnect: s.status == SourceStatus.needsReconnect
                         ? () async {
                             if (s.id == 'drive') {
@@ -164,16 +177,28 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
               const SizedBox(height: Spacing.sm),
               const _CacheCard(),
             ],
-            if (sources.isEmpty) ...[
+            if (!hasDrive || !hasLocal) ...[
               const SectionHeader(title: 'Add a source'),
-              _ProviderTile(
-                icon: Icons.add_to_drive,
-                name: 'Google Drive',
-                detail: !GoogleDriveService.isPlatformSupported
-                    ? 'Needs the Android or iOS build'
-                    : 'Not connected',
-                available: GoogleDriveService.isPlatformSupported,
-              ),
+              if (!hasLocal)
+                _ProviderTile(
+                  icon: Icons.phone_android,
+                  name: 'This Device',
+                  detail: 'Index local folders from internal storage or SD card',
+                  available: true,
+                  onTap: () => _pickLocalFolder(context),
+                ),
+              if (!hasDrive)
+                _ProviderTile(
+                  icon: Icons.add_to_drive,
+                  name: 'Google Drive',
+                  detail: !GoogleDriveService.isPlatformSupported
+                      ? 'Needs the Android or iOS build'
+                      : 'Connect Google Drive vault',
+                  available: GoogleDriveService.isPlatformSupported,
+                  onTap: GoogleDriveService.isPlatformSupported
+                      ? () => _connectDrive(context)
+                      : null,
+                ),
             ],
             const _ComingLater(),
             const SizedBox(height: Spacing.md),
@@ -184,12 +209,72 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     );
   }
 
+  Future<void> _pickLocalFolder(BuildContext context) async {
+    try {
+      final selectedPath = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Select music folder',
+      );
+      if (selectedPath == null || selectedPath.isEmpty || !context.mounted) {
+        return;
+      }
+      final library = ref.read(cloudLibraryProvider);
+      final count = await library.addLocalFolder(selectedPath);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              count > 0
+                  ? 'Indexed $count track${count == 1 ? '' : 's'} from folder.'
+                  : 'Folder added (no audio tracks found).',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add folder: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _connectDrive(BuildContext context) async {
+    final drive = ref.read(driveServiceProvider);
+    final result = await drive.signIn();
+    if (result == DriveConnectResult.connected) {
+      if (context.mounted) await showDriveFolderPicker(context);
+      return;
+    }
+    final message = result.message;
+    if (message != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+  }
+
+  void _showLocalFoldersSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const LocalFoldersSheet(),
+    );
+  }
+
   Future<void> _confirmRemove(BuildContext context, SourceAccount s) async {
     final ok = await ConfirmDialog.show(
       context,
       title: 'Remove ${s.provider}?',
-      message: 'Your library index and any cached music for this account are '
-          'deleted from this device. Nothing in your Drive changes.',
+      message: s.id == 'local'
+          ? 'Removes this device\'s folders from the BitDrop library. '
+              'Your music files on disk will not be deleted.'
+          : 'Your library index and any cached music for this account are '
+              'deleted from this device. Nothing in your Drive changes.',
       confirmLabel: context.l10n.actionRemove,
       destructive: true,
     );
@@ -197,6 +282,8 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     if (s.id == 'drive') {
       await ref.read(driveServiceProvider).signOut();
       await ref.read(cloudLibraryProvider).clear();
+    } else if (s.id == 'local') {
+      await ref.read(cloudLibraryProvider).clearLocalFolders();
     } else {
       sendCommand(ref, RemoveSource(s.id));
     }
@@ -212,12 +299,14 @@ class _ProviderTile extends StatelessWidget {
     required this.name,
     required this.detail,
     required this.available,
+    this.onTap,
   });
 
   final IconData icon;
   final String name;
   final String detail;
   final bool available;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -225,6 +314,7 @@ class _ProviderTile extends StatelessWidget {
     return Opacity(
       opacity: available ? 1 : 0.55,
       child: ListTile(
+        onTap: available ? onTap : null,
         leading: name == 'Google Drive'
             ? Container(
                 width: 32,
@@ -240,7 +330,7 @@ class _ProviderTile extends StatelessWidget {
         title: Text(name),
         subtitle: Text(detail),
         trailing: available
-            ? const Icon(Icons.check_circle_outline)
+            ? const Icon(Icons.add_circle_outline)
             : Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
@@ -253,6 +343,194 @@ class _ProviderTile extends StatelessWidget {
               ),
         enabled: available,
       ),
+    );
+  }
+}
+
+/// Modal bottom sheet for viewing and managing chosen local music folders.
+class LocalFoldersSheet extends ConsumerStatefulWidget {
+  const LocalFoldersSheet({super.key});
+
+  @override
+  ConsumerState<LocalFoldersSheet> createState() => _LocalFoldersSheetState();
+}
+
+class _LocalFoldersSheetState extends ConsumerState<LocalFoldersSheet> {
+  bool _scanning = false;
+
+  Future<void> _addFolder() async {
+    try {
+      final selectedPath = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Select music folder',
+      );
+      if (selectedPath == null || selectedPath.isEmpty || !mounted) return;
+      setState(() => _scanning = true);
+      final count =
+          await ref.read(cloudLibraryProvider).addLocalFolder(selectedPath);
+      if (mounted) {
+        setState(() => _scanning = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              count > 0
+                  ? 'Indexed $count track${count == 1 ? '' : 's'} from folder.'
+                  : 'Folder added (no audio tracks found).',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _scanning = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add folder: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _rescanFolder(LocalFolder folder) async {
+    setState(() => _scanning = true);
+    try {
+      final count =
+          await ref.read(cloudLibraryProvider).scanLocalFolder(folder);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Rescanned ${folder.label}: $count tracks.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Rescan failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _scanning = false);
+    }
+  }
+
+  Future<void> _removeFolder(LocalFolder folder) async {
+    final ok = await ConfirmDialog.show(
+      context,
+      title: 'Remove ${folder.label}?',
+      message: 'This folder and its tracks will be removed from your BitDrop library. '
+          'Your files on disk will not be touched.',
+      confirmLabel: 'Remove',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    await ref.read(cloudLibraryProvider).removeLocalFolder(folder.path);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+    final library = ref.watch(cloudLibraryProvider);
+
+    return StreamBuilder<List<LocalFolder>>(
+      stream: library.localFolders,
+      initialData: library.currentLocalFolders,
+      builder: (context, snapshot) {
+        final folders = snapshot.data ?? const [];
+
+        return BottomSheetScaffold(
+          title: 'Configured local folders',
+          subtitle: 'Music indexed directly from this device',
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(context.l10n.actionDone),
+            ),
+          ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (folders.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(Spacing.lg),
+                  child: Center(
+                    child: Text(
+                      'No local music folders configured yet.',
+                      style: context.t.bodySmall
+                          .copyWith(color: c.textSecondary),
+                    ),
+                  ),
+                )
+              else
+                for (final f in folders)
+                  ListTile(
+                    leading: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: c.surface2,
+                        borderRadius: Radii.badgeR,
+                        border: Border.all(color: c.outline.withOpacity(0.4)),
+                      ),
+                      child: Icon(Icons.folder_outlined,
+                          size: 18, color: c.accent),
+                    ),
+                    title: Text(
+                      f.label,
+                      style: context.t.titleSmall
+                          .copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      '${f.path}\n${f.trackCount} tracks'
+                      '${f.lastScanned != null ? ' · ${Fmt.relativeTime(f.lastScanned!)}' : ''}',
+                      style: context.t.bodySmall
+                          .copyWith(color: c.textSecondary, fontSize: 11),
+                    ),
+                    isThreeLine: true,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Rescan folder',
+                          icon: _scanning
+                              ? SpinningSyncIcon(size: 16, color: c.accent)
+                              : Icon(Icons.refresh,
+                                  size: 18, color: c.textSecondary),
+                          onPressed:
+                              _scanning ? null : () => _rescanFolder(f),
+                        ),
+                        IconButton(
+                          tooltip: 'Remove folder',
+                          icon: Icon(Icons.delete_outline,
+                              size: 18, color: c.error),
+                          onPressed:
+                              _scanning ? null : () => _removeFolder(f),
+                        ),
+                      ],
+                    ),
+                  ),
+              const SizedBox(height: Spacing.sm),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: Spacing.md),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _scanning ? null : _addFolder,
+                    icon: const Icon(Icons.create_new_folder_outlined,
+                        size: 16),
+                    label: const Text('Add another folder'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: c.accent,
+                      side: BorderSide(color: c.accent.withOpacity(0.5)),
+                      shape: const RoundedRectangleBorder(
+                          borderRadius: Radii.chipR),
+                      minimumSize: const Size(0, 42),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: Spacing.md),
+            ],
+          ),
+        );
+      },
     );
   }
 }
