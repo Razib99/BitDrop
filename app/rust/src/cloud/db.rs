@@ -1,3 +1,4 @@
+use crate::cloud::local_scanner::LocalTrackInfo;
 use rusqlite::{params, Connection, OptionalExtension, Result, Row};
 use std::path::Path;
 
@@ -515,6 +516,145 @@ impl MetadataDb {
         }
 
         Ok(replaced_files)
+    }
+
+    /// Batched insertion of local tracks with fully extracted metadata.
+    ///
+    /// Inserts or updates tracks, setting `tags_read = 1`, and rebuilds the
+    /// albums summary table so UI grids immediately display the imported tracks.
+    pub fn batch_insert_local_tracks(&mut self, items: &[LocalTrackInfo]) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO tracks (
+                    file_id, name, folder_path, size_bytes, title, artist,
+                    album, album_artist, genre, year, track_number, disc_number,
+                    duration_ms, sample_rate, channels, bits_per_sample,
+                    artwork_path, artwork_checked, tags_read
+                 ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6,
+                    ?7, ?8, ?9, ?10, ?11, ?12,
+                    ?13, ?14, ?15, ?16,
+                    ?17, ?18, 1
+                 )
+                 ON CONFLICT(file_id) DO UPDATE SET
+                    name = excluded.name,
+                    folder_path = excluded.folder_path,
+                    size_bytes = excluded.size_bytes,
+                    title = excluded.title,
+                    artist = excluded.artist,
+                    album = excluded.album,
+                    album_artist = excluded.album_artist,
+                    genre = excluded.genre,
+                    year = excluded.year,
+                    track_number = excluded.track_number,
+                    disc_number = excluded.disc_number,
+                    duration_ms = excluded.duration_ms,
+                    sample_rate = excluded.sample_rate,
+                    channels = excluded.channels,
+                    bits_per_sample = excluded.bits_per_sample,
+                    artwork_path = COALESCE(excluded.artwork_path, tracks.artwork_path),
+                    artwork_checked = CASE WHEN excluded.artwork_path IS NOT NULL AND excluded.artwork_path != '' THEN 1 ELSE tracks.artwork_checked END,
+                    tags_read = 1",
+            )?;
+
+            for item in items {
+                let artwork_checked = if item
+                    .artwork_path
+                    .as_deref()
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false)
+                {
+                    1i64
+                } else {
+                    0i64
+                };
+                let sample_rate = if item.sample_rate > 0 {
+                    Some(item.sample_rate as i64)
+                } else {
+                    None
+                };
+                let channels = if item.channels > 0 {
+                    Some(item.channels as i64)
+                } else {
+                    None
+                };
+                let bits_per_sample = if item.bits_per_sample > 0 {
+                    Some(item.bits_per_sample as i64)
+                } else {
+                    None
+                };
+
+                stmt.execute(params![
+                    &item.path,
+                    &item.name,
+                    &item.folder_path,
+                    item.size_bytes as i64,
+                    &item.title,
+                    &item.artist,
+                    &item.album,
+                    &item.album_artist,
+                    &item.genre,
+                    item.year.map(|y| y as i64),
+                    item.track_number.map(|tn| tn as i64).unwrap_or(0),
+                    item.disc_number.map(|dn| dn as i64).unwrap_or(1),
+                    item.duration_ms as i64,
+                    sample_rate,
+                    channels,
+                    bits_per_sample,
+                    &item.artwork_path,
+                    artwork_checked,
+                ])?;
+            }
+        }
+        tx.commit()?;
+
+        self.rebuild_albums_summary()?;
+        Ok(())
+    }
+
+    /// Prunes local tracks belonging to `root_label` whose underlying files
+    /// no longer exist on the local filesystem.
+    ///
+    /// Returns the number of pruned tracks.
+    pub fn prune_missing_local_tracks(&mut self, root_label: &str) -> Result<usize> {
+        let like_pattern = format!("{} / %", root_label);
+        let mut missing_ids = Vec::new();
+
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT file_id FROM tracks WHERE folder_path = ?1 OR folder_path LIKE ?2",
+            )?;
+            let rows =
+                stmt.query_map(params![root_label, like_pattern], |r| r.get::<_, String>(0))?;
+
+            for id in rows.flatten() {
+                if !Path::new(&id).exists() {
+                    missing_ids.push(id);
+                }
+            }
+        }
+
+        if missing_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let count = missing_ids.len();
+        let tx = self.conn.transaction()?;
+        {
+            let mut del_stmt = tx.prepare_cached("DELETE FROM tracks WHERE file_id = ?1")?;
+            for id in &missing_ids {
+                del_stmt.execute(params![id])?;
+            }
+        }
+        tx.commit()?;
+
+        self.rebuild_albums_summary()?;
+        Ok(count)
     }
 
     /// Batched tag update within a single transaction, updating both `tracks`
@@ -2861,5 +3001,142 @@ mod tests {
 
         let root_recursive = db.get_tracks_in_folder("", true).unwrap();
         assert_eq!(root_recursive.len(), 6);
+    }
+
+    #[test]
+    fn test_batch_insert_local_tracks_and_prune() {
+        let temp_dir = std::env::temp_dir().join(format!("bitdrop_test_db_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let sub_dir = temp_dir.join("Hi-Res");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+
+        let track1_path = sub_dir.join("song1.flac");
+        let track2_path = temp_dir.join("song2.wav");
+        let fake_path = sub_dir.join("missing.flac");
+
+        std::fs::write(&track1_path, b"dummy audio data 1").unwrap();
+        std::fs::write(&track2_path, b"dummy audio data 2").unwrap();
+
+        let mut db = MetadataDb::new_in_memory().unwrap();
+
+        let tracks = vec![
+            LocalTrackInfo {
+                path: track1_path.to_string_lossy().to_string(),
+                name: "song1.flac".to_string(),
+                folder_path: "Internal Storage / Hi-Res".to_string(),
+                size_bytes: 18,
+                title: "Song 1".to_string(),
+                artist: "Artist 1".to_string(),
+                album: "Album A".to_string(),
+                album_artist: "Artist 1".to_string(),
+                genre: "Jazz".to_string(),
+                year: Some(2023),
+                track_number: Some(1),
+                disc_number: Some(1),
+                duration_ms: 120_000,
+                sample_rate: 96000,
+                channels: 2,
+                bits_per_sample: 24,
+                artwork_path: None,
+            },
+            LocalTrackInfo {
+                path: track2_path.to_string_lossy().to_string(),
+                name: "song2.wav".to_string(),
+                folder_path: "Internal Storage".to_string(),
+                size_bytes: 18,
+                title: "Song 2".to_string(),
+                artist: "Artist 2".to_string(),
+                album: "Album B".to_string(),
+                album_artist: "Artist 2".to_string(),
+                genre: "Classical".to_string(),
+                year: Some(2021),
+                track_number: Some(1),
+                disc_number: Some(1),
+                duration_ms: 180_000,
+                sample_rate: 192000,
+                channels: 2,
+                bits_per_sample: 24,
+                artwork_path: None,
+            },
+            LocalTrackInfo {
+                path: fake_path.to_string_lossy().to_string(),
+                name: "missing.flac".to_string(),
+                folder_path: "Internal Storage / Hi-Res".to_string(),
+                size_bytes: 100,
+                title: "Song 3".to_string(),
+                artist: "Artist 1".to_string(),
+                album: "Album A".to_string(),
+                album_artist: "Artist 1".to_string(),
+                genre: "Jazz".to_string(),
+                year: Some(2023),
+                track_number: Some(2),
+                disc_number: Some(1),
+                duration_ms: 150_000,
+                sample_rate: 96000,
+                channels: 2,
+                bits_per_sample: 24,
+                artwork_path: None,
+            },
+        ];
+
+        db.batch_insert_local_tracks(&tracks).unwrap();
+
+        // 1. Verify tracks are inserted with tags_read = 1
+        let albums = db.list_albums_summary().unwrap();
+        assert_eq!(albums.len(), 2);
+        let album_a = albums.iter().find(|a| a.album == "Album A").unwrap();
+        assert_eq!(album_a.track_count, 2);
+        assert_eq!(album_a.max_sample_rate, 96000);
+
+        // 2. Folder queries
+        let root_folders = db.get_folders(None).unwrap();
+        assert_eq!(root_folders.len(), 1);
+        assert_eq!(root_folders[0].name, "Internal Storage");
+        assert_eq!(root_folders[0].track_count, 3);
+        assert_eq!(root_folders[0].subfolder_count, 1);
+
+        let subfolders = db.get_folders(Some("Internal Storage")).unwrap();
+        assert_eq!(subfolders.len(), 1);
+        assert_eq!(subfolders[0].name, "Hi-Res");
+        assert_eq!(subfolders[0].track_count, 2);
+
+        // 3. Prune missing track (fake_path doesn't exist)
+        let pruned = db.prune_missing_local_tracks("Internal Storage").unwrap();
+        assert_eq!(pruned, 1);
+
+        // Verify fake_path track is removed
+        assert!(db
+            .get_track(&fake_path.to_string_lossy())
+            .unwrap()
+            .is_none());
+        assert!(db
+            .get_track(&track1_path.to_string_lossy())
+            .unwrap()
+            .is_some());
+
+        // Verify album A track count updated to 1
+        let albums_after = db.list_albums_summary().unwrap();
+        let album_a_after = albums_after.iter().find(|a| a.album == "Album A").unwrap();
+        assert_eq!(album_a_after.track_count, 1);
+
+        // 4. Delete track1 and prune again
+        std::fs::remove_file(&track1_path).unwrap();
+        let pruned2 = db.prune_missing_local_tracks("Internal Storage").unwrap();
+        assert_eq!(pruned2, 1);
+        assert!(db
+            .get_track(&track1_path.to_string_lossy())
+            .unwrap()
+            .is_none());
+        assert!(db
+            .get_track(&track2_path.to_string_lossy())
+            .unwrap()
+            .is_some());
+
+        // Now Album A is empty and pruned from albums_summary
+        let albums_final = db.list_albums_summary().unwrap();
+        assert_eq!(albums_final.len(), 1);
+        assert_eq!(albums_final[0].album, "Album B");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
