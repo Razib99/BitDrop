@@ -684,13 +684,15 @@ class ArtistTile extends StatelessWidget {
   }
 }
 
-/// Folder or file row in the Drive browser.
+/// Folder or file row in the Drive / Local browser.
 class FolderRow extends StatelessWidget {
   const FolderRow({
     super.key,
     required this.entry,
     this.onTap,
     this.onPlay,
+    this.onShuffle,
+    this.onAddToQueue,
     this.onPin,
     this.badgeVisibility = BadgeVisibility.always,
   });
@@ -698,8 +700,23 @@ class FolderRow extends StatelessWidget {
   final FolderEntry entry;
   final VoidCallback? onTap;
   final VoidCallback? onPlay;
+  final VoidCallback? onShuffle;
+  final VoidCallback? onAddToQueue;
   final VoidCallback? onPin;
   final BadgeVisibility badgeVisibility;
+
+  IconData _iconForEntry(FolderEntry entry) {
+    if (!entry.isDirectory) return Icons.audio_file_outlined;
+    final lower = entry.name.toLowerCase();
+    if (lower.contains('drive')) return Icons.cloud_outlined;
+    if (lower.contains('device') ||
+        lower.contains('internal') ||
+        lower.contains('phone')) {
+      return Icons.phone_android;
+    }
+    if (lower.contains('sd') || lower.contains('card')) return Icons.sd_storage;
+    return Icons.folder_outlined;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -723,9 +740,7 @@ class FolderRow extends StatelessWidget {
           child: Row(
             children: [
               Icon(
-                entry.isDirectory
-                    ? Icons.folder_outlined
-                    : Icons.audio_file_outlined,
+                _iconForEntry(entry),
                 color: dim ? c.textTertiary : c.textSecondary,
                 size: 22,
               ),
@@ -779,15 +794,71 @@ class FolderRow extends StatelessWidget {
                   color: c.textSecondary,
                   visualDensity: VisualDensity.compact,
                 ),
-              if (entry.isDirectory && onPin != null)
-                IconButton(
-                  onPressed: onPin,
-                  icon: const Icon(Icons.push_pin_outlined, size: 18),
-                  tooltip: context.l10n.pinFolder,
-                  color: c.textSecondary,
-                  visualDensity: VisualDensity.compact,
+              if (entry.isDirectory &&
+                  (onShuffle != null || onAddToQueue != null || onPin != null))
+                PopupMenuButton<String>(
+                  icon: Icon(Icons.more_vert, size: 20, color: c.textSecondary),
+                  tooltip: 'Folder options',
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  onSelected: (val) {
+                    if (val == 'play') onPlay?.call();
+                    if (val == 'shuffle') onShuffle?.call();
+                    if (val == 'queue') onAddToQueue?.call();
+                    if (val == 'pin') onPin?.call();
+                  },
+                  itemBuilder: (ctx) => [
+                    if (onPlay != null)
+                      const PopupMenuItem(
+                        value: 'play',
+                        child: Row(
+                          children: [
+                            Icon(Icons.play_arrow, size: 20),
+                            SizedBox(width: Spacing.xs),
+                            Text('Play all'),
+                          ],
+                        ),
+                      ),
+                    if (onShuffle != null)
+                      const PopupMenuItem(
+                        value: 'shuffle',
+                        child: Row(
+                          children: [
+                            Icon(Icons.shuffle, size: 20),
+                            SizedBox(width: Spacing.xs),
+                            Text('Shuffle all'),
+                          ],
+                        ),
+                      ),
+                    if (onAddToQueue != null)
+                      const PopupMenuItem(
+                        value: 'queue',
+                        child: Row(
+                          children: [
+                            Icon(Icons.queue_music, size: 20),
+                            SizedBox(width: Spacing.xs),
+                            Text('Add to queue'),
+                          ],
+                        ),
+                      ),
+                    if (onPin != null)
+                      const PopupMenuItem(
+                        value: 'pin',
+                        child: Row(
+                          children: [
+                            Icon(Icons.push_pin_outlined, size: 20),
+                            SizedBox(width: Spacing.xs),
+                            Text('Pin for offline'),
+                          ],
+                        ),
+                      ),
+                  ],
                 ),
-              if (entry.isDirectory && onPlay == null && onPin == null)
+              if (entry.isDirectory &&
+                  onPlay == null &&
+                  onPin == null &&
+                  onShuffle == null &&
+                  onAddToQueue == null)
                 Icon(Icons.chevron_right, color: c.textTertiary),
             ],
           ),

@@ -200,6 +200,7 @@ final artistProvider = FutureProvider.family<Artist?, String>((ref, id) {
 
 final folderProvider = FutureProvider.family<FolderListing, String?>((ref, id) {
   ref.watch(scenarioRevisionProvider);
+  ref.watch(libraryRevisionProvider);
   return ref.watch(coreProvider).folder(id);
 });
 
