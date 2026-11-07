@@ -612,7 +612,7 @@ class CloudLibrary {
     return 'cl-${key.hashCode.toUnsigned(32).toRadixString(16)}';
   }
 
-  static Codec _codecFor(String name) {
+  static Codec codecFor(String name) {
     final dot = name.lastIndexOf('.');
     final ext = dot < 0 ? '' : name.substring(dot + 1).toLowerCase();
     return switch (ext) {
@@ -627,6 +627,8 @@ class CloudLibrary {
       _ => Codec.flac,
     };
   }
+
+  static Codec _codecFor(String name) => codecFor(name);
 
   /// Converts an indexed SQLite track row from Rust into a model [Track].
   static Track trackFromRow(rust_db.CloudTrackRow r) {

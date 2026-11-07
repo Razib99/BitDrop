@@ -28,6 +28,20 @@ Map<String, dynamic> cloudTrackExtras({
       'ext': ext,
     };
 
+/// Marks a [MediaItem] as living in local filesystem storage.
+Map<String, dynamic> localTrackExtras({
+  required String path,
+  int sizeBytes = 0,
+  String ext = '',
+}) =>
+    {
+      'source': 'local',
+      'fileId': path,
+      'path': path,
+      'sizeBytes': sizeBytes,
+      'ext': ext,
+    };
+
 class BitDropAudioHandler extends BaseAudioHandler
     with SeekHandler, QueueHandler {
   static const _controlPrevious = MediaControl(
@@ -172,10 +186,9 @@ class BitDropAudioHandler extends BaseAudioHandler
       case rust.EngineEvent_TrackStarted(:final fileId):
         final items = queue.value;
         final idx = items.indexWhere((i) {
-          if (i.extras?['source'] == 'cloud') {
-            return i.extras?['fileId'] == fileId;
-          }
-          return i.id == fileId;
+          final itemFileId = i.extras?['fileId'] as String? ?? i.id;
+          final itemPath = i.extras?['path'] as String?;
+          return itemFileId == fileId || itemPath == fileId || i.id == fileId;
         });
         if (idx >= 0 && idx != _currentIndex) {
           _currentIndex = idx;
@@ -184,8 +197,12 @@ class BitDropAudioHandler extends BaseAudioHandler
         }
       case rust.EngineEvent_TrackEnded(:final fileId):
         final current = mediaItem.value;
-        final currentId = current?.extras?['fileId'] ?? current?.id;
-        if (!_stopped && fileId == currentId) {
+        final currentId = current?.extras?['fileId'] as String? ?? current?.id;
+        final currentPath = current?.extras?['path'] as String?;
+        if (!_stopped &&
+            (fileId == currentId ||
+                fileId == current?.id ||
+                (currentPath != null && fileId == currentPath))) {
           unawaited(skipToNext(auto: true));
         }
       case rust.EngineEvent_TokenRefreshRequested(:final requestId):
@@ -287,7 +304,8 @@ class BitDropAudioHandler extends BaseAudioHandler
           ext: extras['ext'] as String? ?? '',
         );
       } else {
-        _engine.stage(nextItem.id);
+        final localPath = nextItem.extras?['path'] as String? ?? nextItem.id;
+        _engine.stage(localPath);
       }
     } catch (e) {
       debugPrint('[stageNextTrack] error: $e');
@@ -479,18 +497,20 @@ class BitDropAudioHandler extends BaseAudioHandler
     final item = items[_currentIndex];
     mediaItem.add(item);
 
+    final isCloud = item.extras?['source'] == 'cloud';
     debugPrint('[play] opening ${item.id} '
         'source=${item.extras?['source'] ?? 'local'}');
 
-    if (item.extras?['source'] == 'cloud') {
+    if (isCloud) {
       await _playCloud(item, generation);
       if (generation == _playGeneration) unawaited(_stageNextTrack());
       return;
     }
 
-    // For a local track the id is the physical path on disk.
+    // For a local track the id (or extras['path']) is the physical path on disk.
+    final localPath = item.extras?['path'] as String? ?? item.id;
     try {
-      _engine.play(item.id);
+      _engine.play(localPath);
       unawaited(_stageNextTrack());
     } catch (e) {
       debugPrint('[play] enginePlay error: $e');

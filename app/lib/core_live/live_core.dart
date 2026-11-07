@@ -503,10 +503,90 @@ class LiveBitDropCore implements BitDropCore {
 
   // Delegated queries
 
+  static bool _isLocalTrackId(String id) {
+    if (id.startsWith('file://')) return true;
+    if (id.startsWith('/')) return true;
+    if (RegExp(r'^[a-zA-Z]:[/\\]').hasMatch(id)) return true;
+    return false;
+  }
+
+  static String _stripFileUri(String id) {
+    if (id.startsWith('file://')) {
+      try {
+        return Uri.parse(id).toFilePath();
+      } catch (_) {
+        return id.replaceFirst('file://', '');
+      }
+    }
+    return id;
+  }
+
+  static const _supportedAudioExtensions = {
+    'flac',
+    'wav',
+    'wave',
+    'mp3',
+    'm4a',
+    'alac',
+    'aac',
+    'ogg',
+    'opus',
+    'aiff',
+    'aif',
+    'dsf',
+    'dff',
+  };
+
   /// Resolves an id across every source: cloud first, then the local scan,
-  /// then the mock catalogue.
-  Track? _lookupTrack(String id) =>
-      _cloud?.trackById(id) ?? _realTracks[id] ?? MockCatalog.trackById(id);
+  /// then the mock catalogue, with fallback to on-disk local files.
+  Track? _lookupTrack(String id) {
+    final t =
+        _cloud?.trackById(id) ?? _realTracks[id] ?? MockCatalog.trackById(id);
+    if (t != null) return t;
+
+    if (_isLocalTrackId(id)) {
+      try {
+        final filePath = _stripFileUri(id);
+        final file = File(filePath);
+        if (file.existsSync()) {
+          final stat = file.statSync();
+          final name = filePath.split(RegExp(r'[/\\]')).last;
+          final dot = name.lastIndexOf('.');
+          final title = dot > 0 ? name.substring(0, dot) : name;
+          final parent = file.parent;
+          final parentName = parent.path.split(RegExp(r'[/\\]')).last;
+          final albumTitle = parentName.isNotEmpty ? parentName : 'Local Files';
+          final track = Track(
+            id: filePath,
+            title: title,
+            artist: 'Local Music',
+            albumTitle: albumTitle,
+            albumId: CloudLibrary.albumIdFor(albumTitle, 'Local Music'),
+            durationMs: 0,
+            format: AudioFormat(
+              codec: CloudLibrary.codecFor(filePath),
+              bitDepth: 16,
+              sampleRate: 44100,
+            ),
+            sizeBytes: stat.size,
+            availability: Availability.cached,
+            artwork: Artwork(
+              seed: albumTitle.hashCode,
+              dominantColor: 0xFF2A2A2A,
+              uri: filePath,
+            ),
+          );
+          _realTracks[filePath] = track;
+          _realTracks[id] = track;
+          return track;
+        }
+      } catch (e) {
+        debugPrint('[core] _lookupTrack fallback error for $id: $e');
+      }
+    }
+
+    return null;
+  }
 
   List<Album> get _cloudAlbums => _cloud?.currentAlbums ?? const [];
   List<Track> get _cloudTracks => _cloud?.currentTracks ?? const [];
@@ -1365,7 +1445,11 @@ class LiveBitDropCore implements BitDropCore {
       }
     }
     if (artPath == null || artPath.isEmpty) {
-      return null;
+      if (_isLocalTrackId(t.id)) {
+        artPath = _stripFileUri(t.id);
+      } else {
+        return null;
+      }
     }
 
     if (artPath.startsWith('http://') || artPath.startsWith('https://')) {
@@ -1419,8 +1503,27 @@ class LiveBitDropCore implements BitDropCore {
   List<audio_svc.MediaItem> _resolveMediaItems(List<String> trackIds) {
     final tracks = trackIds.map(_lookupTrack).whereType<Track>().toList();
     return tracks.map((t) {
-      final isCloud = _cloud?.trackById(t.id) != null ||
-          (_cloud != null && !t.id.startsWith('/'));
+      final isLocal = _isLocalTrackId(t.id);
+      final isCloud = !isLocal &&
+          (_cloud?.trackById(t.id) != null ||
+              (_cloud != null &&
+                  !t.id.startsWith('mock-') &&
+                  !_isLocalTrackId(t.id)));
+      final extras = isLocal
+          ? localTrackExtras(
+              path: _stripFileUri(t.id),
+              sizeBytes: t.sizeBytes,
+              ext: t.format.codec.label.toLowerCase(),
+            )
+          : isCloud
+              ? cloudTrackExtras(
+                  fileId: t.id,
+                  url:
+                      'https://www.googleapis.com/drive/v3/files/${t.id}?alt=media',
+                  sizeBytes: t.sizeBytes,
+                  ext: t.format.codec.label.toLowerCase(),
+                )
+              : null;
       return audio_svc.MediaItem(
         id: t.id,
         title: t.title,
@@ -1428,15 +1531,7 @@ class LiveBitDropCore implements BitDropCore {
         artist: t.artist,
         duration: Duration(milliseconds: t.durationMs),
         artUri: _resolveArtUri(t),
-        extras: isCloud
-            ? cloudTrackExtras(
-                fileId: t.id,
-                url:
-                    'https://www.googleapis.com/drive/v3/files/${t.id}?alt=media',
-                sizeBytes: t.sizeBytes,
-                ext: t.format.codec.label.toLowerCase(),
-              )
-            : null,
+        extras: extras,
       );
     }).toList();
   }
@@ -1457,8 +1552,33 @@ class LiveBitDropCore implements BitDropCore {
           cmd.contextId != 'root' &&
           cmd.contextId != 'queue') {
         try {
+          String folderQuery = cmd.contextId;
+          // If contextId is an absolute directory path, see if it maps to any known LocalFolder.
+          if (_isLocalTrackId(folderQuery) && _cloud != null) {
+            for (final folder in _cloud.currentLocalFolders) {
+              final cleanFolderPath = folder.path
+                  .replaceAll(r'\', '/')
+                  .replaceAll(RegExp(r'/+$'), '');
+              final cleanQuery = folderQuery
+                  .replaceAll(r'\', '/')
+                  .replaceAll(RegExp(r'/+$'), '');
+              if (cleanQuery == cleanFolderPath) {
+                folderQuery = folder.label;
+                break;
+              } else if (cleanQuery.startsWith('$cleanFolderPath/')) {
+                final rel = cleanQuery
+                    .substring(cleanFolderPath.length + 1)
+                    .split('/')
+                    .where((s) => s.isNotEmpty)
+                    .join(' / ');
+                folderQuery = '${folder.label} / $rel';
+                break;
+              }
+            }
+          }
+
           final rows = await rust_cache.cloudLibraryGetTracksInFolder(
-            folderPath: cmd.contextId,
+            folderPath: folderQuery,
             recursive: true,
           );
           final resolved = rows.map((r) {
@@ -1470,6 +1590,36 @@ class LiveBitDropCore implements BitDropCore {
         } catch (e) {
           debugPrint(
               '[play] could not resolve folder tracks for ${cmd.contextId}: $e');
+        }
+
+        // If still empty and contextId is an existing local directory, traverse disk directly:
+        if (trackIds.isEmpty && _isLocalTrackId(cmd.contextId)) {
+          final cleanPath = _stripFileUri(cmd.contextId);
+          final dir = Directory(cleanPath);
+          if (dir.existsSync()) {
+            final localTracks = <Track>[];
+            try {
+              final entities =
+                  dir.listSync(recursive: true, followLinks: false);
+              for (final entity in entities) {
+                if (entity is File) {
+                  final dot = entity.path.lastIndexOf('.');
+                  final ext = dot >= 0
+                      ? entity.path.substring(dot + 1).toLowerCase()
+                      : '';
+                  if (_supportedAudioExtensions.contains(ext)) {
+                    final t = _lookupTrack(entity.path);
+                    if (t != null) {
+                      localTracks.add(_enrichTrack(t));
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              debugPrint('[play] disk directory scan fallback error: $e');
+            }
+            trackIds = localTracks.map((t) => t.id).toList();
+          }
         }
       }
 
