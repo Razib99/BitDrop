@@ -462,21 +462,26 @@ class CloudFolderListing {
           entries == other.entries;
 }
 
-/// Genre summary with track count and artwork for library UI.
+/// Genre summary with track count, album count, and artwork for library UI.
 class CloudGenre {
   final String genre;
   final int trackCount;
+  final int albumCount;
   final String artworkPath;
 
   const CloudGenre({
     required this.genre,
     required this.trackCount,
+    required this.albumCount,
     required this.artworkPath,
   });
 
   @override
   int get hashCode =>
-      genre.hashCode ^ trackCount.hashCode ^ artworkPath.hashCode;
+      genre.hashCode ^
+      trackCount.hashCode ^
+      albumCount.hashCode ^
+      artworkPath.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -485,6 +490,7 @@ class CloudGenre {
           runtimeType == other.runtimeType &&
           genre == other.genre &&
           trackCount == other.trackCount &&
+          albumCount == other.albumCount &&
           artworkPath == other.artworkPath;
 }
 

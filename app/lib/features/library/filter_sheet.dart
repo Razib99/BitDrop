@@ -41,10 +41,11 @@ class _ViewSheet extends ConsumerWidget {
     final filters = ref.watch(libraryFiltersProvider);
     final notifier = ref.read(libraryFiltersProvider.notifier);
 
-    final showsLayout = tab == LibraryTab.albums;
+    final showsLayout = tab == LibraryTab.albums || tab == LibraryTab.genres;
     final showsSort = tab == LibraryTab.albums ||
         tab == LibraryTab.tracks ||
-        tab == LibraryTab.favorites;
+        tab == LibraryTab.favorites ||
+        tab == LibraryTab.genres;
 
     return BottomSheetScaffold(
       title: 'View',
@@ -93,32 +94,51 @@ class _ViewSheet extends ConsumerWidget {
                 spacing: Spacing.xs,
                 runSpacing: Spacing.xs,
                 children: [
-                  for (final s in AlbumSort.values)
+                  if (tab == LibraryTab.genres) ...[
                     BitChip(
-                      label: switch (s) {
-                        AlbumSort.title => 'Title',
-                        AlbumSort.artist => 'Artist',
-                        AlbumSort.year => 'Year',
-                        AlbumSort.recentlyAdded => 'Recently added',
-                        AlbumSort.sampleRate => 'Sample rate',
-                        AlbumSort.bitDepth => 'Bit depth',
-                        AlbumSort.size => 'Size',
-                        AlbumSort.duration => 'Duration',
-                      },
-                      selected: sort == s,
-                      onTap: () =>
-                          ref.read(albumSortProvider.notifier).state = s,
+                      label: 'Track count',
+                      selected:
+                          ref.watch(genreSortProvider) == GenreSort.trackCount,
+                      onTap: () => ref
+                          .read(genreSortProvider.notifier)
+                          .state = GenreSort.trackCount,
                     ),
+                    BitChip(
+                      label: 'Name',
+                      selected: ref.watch(genreSortProvider) == GenreSort.name,
+                      onTap: () => ref
+                          .read(genreSortProvider.notifier)
+                          .state = GenreSort.name,
+                    ),
+                  ] else ...[
+                    for (final s in AlbumSort.values)
+                      BitChip(
+                        label: switch (s) {
+                          AlbumSort.title => 'Title',
+                          AlbumSort.artist => 'Artist',
+                          AlbumSort.year => 'Year',
+                          AlbumSort.recentlyAdded => 'Recently added',
+                          AlbumSort.sampleRate => 'Sample rate',
+                          AlbumSort.bitDepth => 'Bit depth',
+                          AlbumSort.size => 'Size',
+                          AlbumSort.duration => 'Duration',
+                        },
+                        selected: sort == s,
+                        onTap: () =>
+                            ref.read(albumSortProvider.notifier).state = s,
+                      ),
+                  ],
                 ],
               ),
             ),
-            SwitchListTile(
-              value: desc,
-              onChanged: (v) =>
-                  ref.read(albumSortDescProvider.notifier).state = v,
-              title: const Text('Descending'),
-              dense: true,
-            ),
+            if (tab != LibraryTab.genres)
+              SwitchListTile(
+                value: desc,
+                onChanged: (v) =>
+                    ref.read(albumSortDescProvider.notifier).state = v,
+                title: const Text('Descending'),
+                dense: true,
+              ),
           ],
           const _FilterControls(),
         ],

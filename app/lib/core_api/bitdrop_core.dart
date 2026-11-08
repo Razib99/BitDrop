@@ -62,6 +62,7 @@ abstract interface class BitDropCore {
   Future<FolderListing> folder(String? folderId);
   Future<List<Playlist>> playlists();
   Future<List<String>> genres();
+  Future<List<Genre>> genreDetails();
   Future<SearchResults> search(String text, SearchFilters f);
   Future<List<AutoEqProfile>> searchAutoEq(String model);
   Future<List<String>> recentSearches();

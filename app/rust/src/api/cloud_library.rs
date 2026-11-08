@@ -86,11 +86,12 @@ impl From<AlbumSummaryRow> for AlbumSummary {
     }
 }
 
-/// Genre summary with track count and artwork for library UI.
+/// Genre summary with track count, album count, and artwork for library UI.
 #[derive(Debug, Clone)]
 pub struct CloudGenre {
     pub genre: String,
     pub track_count: u32,
+    pub album_count: u32,
     pub artwork_path: String,
 }
 
@@ -396,7 +397,21 @@ pub fn cloud_library_read_tags(
                 Some(symphonia::core::meta::StandardTagKey::AlbumArtist) => {
                     album_artist = tag.value.to_string()
                 }
-                Some(symphonia::core::meta::StandardTagKey::Genre) => genre = tag.value.to_string(),
+                Some(symphonia::core::meta::StandardTagKey::Genre) => {
+                    let val = tag.value.to_string();
+                    let parsed = crate::cloud::tag_parser::parse_multi_value_tag(&val);
+                    for p in parsed {
+                        if !genre
+                            .split(';')
+                            .any(|existing| existing.trim().eq_ignore_ascii_case(&p))
+                        {
+                            if !genre.is_empty() {
+                                genre.push_str("; ");
+                            }
+                            genre.push_str(&p);
+                        }
+                    }
+                }
                 Some(symphonia::core::meta::StandardTagKey::Date) => {
                     year = tag.value.to_string().parse().ok()
                 }
@@ -1131,7 +1146,19 @@ pub fn cloud_library_scan_tags_batch(
                                         album_artist = tag.value.to_string()
                                     }
                                     Some(symphonia::core::meta::StandardTagKey::Genre) => {
-                                        genre = tag.value.to_string()
+                                        let val = tag.value.to_string();
+                                        let parsed =
+                                            crate::cloud::tag_parser::parse_multi_value_tag(&val);
+                                        for p in parsed {
+                                            if !genre.split(';').any(|existing| {
+                                                existing.trim().eq_ignore_ascii_case(&p)
+                                            }) {
+                                                if !genre.is_empty() {
+                                                    genre.push_str("; ");
+                                                }
+                                                genre.push_str(&p);
+                                            }
+                                        }
                                     }
                                     Some(symphonia::core::meta::StandardTagKey::Date) => {
                                         year = tag.value.to_string().parse().unwrap_or(0)
@@ -2000,6 +2027,7 @@ pub fn cloud_library_get_genres() -> Result<Vec<CloudGenre>, String> {
             .map(|g| CloudGenre {
                 genre: g.genre,
                 track_count: g.track_count,
+                album_count: g.album_count,
                 artwork_path: g.artwork_path,
             })
             .collect())

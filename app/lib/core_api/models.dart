@@ -424,6 +424,35 @@ class Artist {
 }
 
 @immutable
+class Genre {
+  const Genre({
+    required this.name,
+    required this.trackCount,
+    required this.albumCount,
+    this.artworkPaths = const [],
+    this.primaryArtwork,
+  });
+
+  final String name;
+  final int trackCount;
+  final int albumCount;
+  final List<String> artworkPaths;
+  final String? primaryArtwork;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Genre &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          trackCount == other.trackCount &&
+          albumCount == other.albumCount;
+
+  @override
+  int get hashCode => name.hashCode ^ trackCount.hashCode ^ albumCount.hashCode;
+}
+
+@immutable
 class FolderEntry {
   const FolderEntry({
     required this.id,

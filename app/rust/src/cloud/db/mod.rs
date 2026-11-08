@@ -54,6 +54,7 @@ pub struct AlbumSummaryRow {
 pub struct GenreSummary {
     pub genre: String,
     pub track_count: u32,
+    pub album_count: u32,
     pub artwork_path: String,
 }
 
@@ -284,6 +285,42 @@ impl MetadataDb {
             [],
         )?;
 
+        // Normalized genres lookup and multi-genre junction table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS genres (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                name            TEXT NOT NULL UNIQUE,
+                normalized_name TEXT NOT NULL UNIQUE,
+                track_count     INTEGER NOT NULL DEFAULT 0,
+                album_count     INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS track_genres (
+                track_id INTEGER NOT NULL,
+                genre_id INTEGER NOT NULL,
+                PRIMARY KEY (track_id, genre_id),
+                FOREIGN KEY (track_id) REFERENCES tracks(rowid) ON DELETE CASCADE,
+                FOREIGN KEY (genre_id) REFERENCES genres(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_track_genres_genre_id ON track_genres(genre_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_track_genres_track_id ON track_genres(track_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_genres_normalized_name ON genres(normalized_name)",
+            [],
+        )?;
+
         // 3. Materialized albums summary table (renders 10,000-album grid in <1ms without GROUP BY)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS albums_summary (
@@ -448,6 +485,17 @@ impl MetadataDb {
         let autoeq = AutoEqRepository::new(conn);
         autoeq.seed_autoeq_profiles()?;
 
+        let genre_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM genres", [], |r| r.get(0))
+            .unwrap_or(0);
+        let track_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))
+            .unwrap_or(0);
+        if genre_count == 0 && track_count > 0 {
+            let repo = LibraryRepository::new(conn);
+            let _ = repo.rebuild_genres_index();
+        }
+
         Ok(())
     }
 
@@ -578,6 +626,10 @@ impl MetadataDb {
 
     pub fn rebuild_albums_summary(&mut self) -> Result<()> {
         self.library().rebuild_albums_summary()
+    }
+
+    pub fn rebuild_genres_index(&self) -> Result<()> {
+        self.library().rebuild_genres_index()
     }
 
     pub fn record_cached_chunk(&self, chunk: &CachedChunkRecord) -> Result<()> {

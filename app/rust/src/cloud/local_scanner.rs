@@ -343,7 +343,19 @@ pub fn extract_local_metadata(
                     album_artist = tag.value.to_string().trim().to_string();
                 }
                 Some(symphonia::core::meta::StandardTagKey::Genre) => {
-                    genre = tag.value.to_string().trim().to_string();
+                    let val = tag.value.to_string();
+                    let parsed = crate::cloud::tag_parser::parse_multi_value_tag(&val);
+                    for p in parsed {
+                        if !genre
+                            .split(';')
+                            .any(|existing| existing.trim().eq_ignore_ascii_case(&p))
+                        {
+                            if !genre.is_empty() {
+                                genre.push_str("; ");
+                            }
+                            genre.push_str(&p);
+                        }
+                    }
                 }
                 Some(symphonia::core::meta::StandardTagKey::Date) => {
                     year = parse_year_tag(&tag.value.to_string());

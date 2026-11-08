@@ -216,6 +216,16 @@ final genresProvider = FutureProvider<List<String>>((ref) {
   return ref.watch(coreProvider).genres();
 });
 
+enum GenreSort { trackCount, name }
+
+final genreSortProvider = StateProvider<GenreSort>((ref) => GenreSort.trackCount);
+
+final genreDetailsProvider = FutureProvider<List<Genre>>((ref) {
+  ref.watch(scenarioRevisionProvider);
+  ref.watch(libraryRevisionProvider);
+  return ref.watch(coreProvider).genreDetails();
+});
+
 final autoEqSearchProvider =
     FutureProvider.family<List<AutoEqProfile>, String>((ref, model) {
   return ref.watch(coreProvider).searchAutoEq(model);

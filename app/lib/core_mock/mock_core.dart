@@ -1108,6 +1108,34 @@ class MockBitDropCore implements BitDropCore {
   }
 
   @override
+  Future<List<Genre>> genreDetails() async {
+    await _latency();
+    return MockCatalog.genreList.map((g) {
+      final matchingTracks = MockCatalog.tracks
+          .where((t) => t.genre != null && t.genre!.contains(g))
+          .toList();
+      final trackCount = matchingTracks.isNotEmpty ? matchingTracks.length : 8;
+      final albumCount = matchingTracks.isNotEmpty
+          ? matchingTracks.map((t) => t.albumId).toSet().length
+          : 2;
+      final arts = matchingTracks
+          .map((t) => t.artwork.uri)
+          .whereType<String>()
+          .where((u) => u.isNotEmpty && !u.contains('unknown_artist__unknown_album'))
+          .toSet()
+          .take(4)
+          .toList();
+      return Genre(
+        name: g,
+        trackCount: trackCount,
+        albumCount: albumCount > 0 ? albumCount : 1,
+        artworkPaths: arts,
+        primaryArtwork: arts.isNotEmpty ? arts.first : null,
+      );
+    }).toList();
+  }
+
+  @override
   Future<SearchResults> search(String text, SearchFilters f) async {
     await _latency(ms: 60);
     final q = text.trim().toLowerCase();

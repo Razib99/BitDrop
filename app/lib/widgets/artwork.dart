@@ -277,3 +277,129 @@ class _ArtworkPainter extends CustomPainter {
   bool shouldRepaint(_ArtworkPainter old) =>
       old.seed != seed || old.dominant != dominant;
 }
+
+/// A 2x2 album-art mosaic card per genre with graceful fallback to single artwork
+/// or procedural themed gradient when fewer than 4 artworks are available.
+class GenreMosaicArtwork extends StatelessWidget {
+  const GenreMosaicArtwork({
+    super.key,
+    required this.genre,
+    required this.size,
+    this.borderRadius,
+  });
+
+  final Genre genre;
+  final double size;
+  final BorderRadius? borderRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius =
+        borderRadius ?? (size >= 200 ? Radii.heroArtR : Radii.gridArtR);
+    final arts = genre.artworkPaths.where((p) => p.trim().isNotEmpty).toList();
+
+    Widget content;
+    if (arts.length >= 4) {
+      final half = size / 2;
+      content = Column(
+        children: [
+          Row(
+            children: [
+              _buildTile(arts[0], half, genre.name),
+              _buildTile(arts[1], half, genre.name),
+            ],
+          ),
+          Row(
+            children: [
+              _buildTile(arts[2], half, genre.name),
+              _buildTile(arts[3], half, genre.name),
+            ],
+          ),
+        ],
+      );
+    } else if (arts.isNotEmpty) {
+      content = _buildTile(arts.first, size, genre.name);
+    } else {
+      content = _buildFallback(context);
+    }
+
+    return ClipRRect(
+      borderRadius: radius,
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: content,
+      ),
+    );
+  }
+
+  Widget _buildTile(String path, double tileSize, String label) {
+    return SizedBox(
+      width: tileSize,
+      height: tileSize,
+      child: AlbumArtwork(
+        artwork: Artwork(
+          uri: path,
+          seed: path.hashCode.abs(),
+          dominantColor: 0xFF2196F3,
+        ),
+        size: tileSize,
+        title: label,
+        borderRadius: BorderRadius.zero,
+      ),
+    );
+  }
+
+  Widget _buildFallback(BuildContext context) {
+    final seed = genre.name.hashCode.abs();
+    final rand = math.Random(seed);
+    final c1 = HSLColor.fromAHSL(
+      1.0,
+      (rand.nextDouble() * 360),
+      0.65,
+      0.45,
+    ).toColor();
+    final c2 = HSLColor.fromAHSL(
+      1.0,
+      ((c1.computeLuminance() * 360) + 60) % 360,
+      0.75,
+      0.25,
+    ).toColor();
+
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [c1, c2],
+        ),
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Opacity(
+            opacity: 0.25,
+            child: Icon(
+              Icons.music_note_rounded,
+              size: size * 0.45,
+              color: Colors.white,
+            ),
+          ),
+          Center(
+            child: Text(
+              genre.name.isNotEmpty ? genre.name[0].toUpperCase() : '?',
+              style: TextStyle(
+                fontSize: size * 0.35,
+                fontWeight: FontWeight.bold,
+                color: Colors.white.withOpacity(0.9),
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

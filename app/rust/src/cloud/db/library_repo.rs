@@ -374,6 +374,7 @@ impl<'a> LibraryRepository<'a> {
             );
         }
         tx.commit()?;
+        self.rebuild_genres_index()?;
         Ok(())
     }
 
@@ -514,24 +515,39 @@ impl<'a> LibraryRepository<'a> {
         }
     }
 
-    /// Aggregates distinct genres across all indexed tracks, grouping empty/null genres
-    /// into "Unknown Genre" and returning track counts and sample artwork.
+    /// Aggregates distinct genres across normalized `genres` and `track_genres` tables,
+    /// returning track counts, album counts, and up to 4 mosaic artwork paths per genre.
     pub fn get_genres(&self) -> Result<Vec<GenreSummary>> {
         let mut stmt = self.conn.prepare(
             "SELECT
-                COALESCE(NULLIF(TRIM(genre), ''), 'Unknown Genre') AS display_genre,
-                COUNT(*) AS track_count,
-                COALESCE(MAX(CASE WHEN artwork_path IS NOT NULL AND artwork_path != '' AND artwork_path NOT LIKE '%unknown_artist__unknown_album%' THEN artwork_path ELSE '' END), '') AS artwork_path
-             FROM tracks
-             GROUP BY display_genre
-             ORDER BY CASE WHEN display_genre = 'Unknown Genre' THEN 1 ELSE 0 END, display_genre COLLATE NOCASE ASC",
+                g.name,
+                g.track_count,
+                g.album_count,
+                COALESCE((
+                    SELECT GROUP_CONCAT(artwork, ';')
+                    FROM (
+                        SELECT DISTINCT t.artwork_path AS artwork
+                        FROM track_genres tg
+                        JOIN tracks t ON tg.track_id = t.rowid
+                        WHERE tg.genre_id = g.id
+                          AND t.artwork_path IS NOT NULL
+                          AND t.artwork_path != ''
+                          AND t.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+                        ORDER BY t.rowid ASC
+                        LIMIT 4
+                    )
+                ), '') AS mosaic_artworks
+             FROM genres g
+             WHERE g.track_count > 0
+             ORDER BY CASE WHEN g.name = 'Unknown Genre' THEN 1 ELSE 0 END, g.name COLLATE NOCASE ASC",
         )?;
 
         let rows = stmt.query_map([], |row| {
             Ok(GenreSummary {
                 genre: row.get(0)?,
                 track_count: row.get(1)?,
-                artwork_path: row.get(2)?,
+                album_count: row.get(2)?,
+                artwork_path: row.get(3)?,
             })
         })?;
 
@@ -545,32 +561,37 @@ impl<'a> LibraryRepository<'a> {
             || trimmed.eq_ignore_ascii_case("Unknown Genre")
             || trimmed.eq_ignore_ascii_case("unknown");
 
+        let norm = trimmed.to_lowercase();
         let mut stmt = if is_unknown {
             self.conn.prepare(
-                "SELECT file_id, name, folder_path, title, artist, album,
-                        album_artist, genre, year, track_number, disc_number,
-                        duration_ms, sample_rate, channels, bits_per_sample,
-                        size_bytes, tags_read, artwork_path
-                 FROM tracks
-                 WHERE genre IS NULL OR TRIM(genre) = ''
-                 ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+                "SELECT DISTINCT t.file_id, t.name, t.folder_path, t.title, t.artist, t.album,
+                        t.album_artist, t.genre, t.year, t.track_number, t.disc_number,
+                        t.duration_ms, t.sample_rate, t.channels, t.bits_per_sample,
+                        t.size_bytes, t.tags_read, t.artwork_path
+                 FROM tracks t
+                 LEFT JOIN track_genres tg ON t.rowid = tg.track_id
+                 LEFT JOIN genres g ON tg.genre_id = g.id
+                 WHERE g.normalized_name = 'unknown genre' OR t.genre IS NULL OR TRIM(t.genre) = ''
+                 ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number, t.title COLLATE NOCASE",
             )?
         } else {
             self.conn.prepare(
-                "SELECT file_id, name, folder_path, title, artist, album,
-                        album_artist, genre, year, track_number, disc_number,
-                        duration_ms, sample_rate, channels, bits_per_sample,
-                        size_bytes, tags_read, artwork_path
-                 FROM tracks
-                 WHERE LOWER(TRIM(genre)) = LOWER(TRIM(?1))
-                 ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+                "SELECT DISTINCT t.file_id, t.name, t.folder_path, t.title, t.artist, t.album,
+                        t.album_artist, t.genre, t.year, t.track_number, t.disc_number,
+                        t.duration_ms, t.sample_rate, t.channels, t.bits_per_sample,
+                        t.size_bytes, t.tags_read, t.artwork_path
+                 FROM tracks t
+                 JOIN track_genres tg ON t.rowid = tg.track_id
+                 JOIN genres g ON tg.genre_id = g.id
+                 WHERE g.normalized_name = ?1
+                 ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number, t.title COLLATE NOCASE",
             )?
         };
 
         let rows = if is_unknown {
             stmt.query_map([], Self::row_to_cloud_track)?
         } else {
-            stmt.query_map(params![trimmed], Self::row_to_cloud_track)?
+            stmt.query_map(params![norm], Self::row_to_cloud_track)?
         };
 
         rows.collect()
@@ -881,11 +902,274 @@ impl<'a> LibraryRepository<'a> {
             [],
         )?;
         tx.commit()?;
+        self.rebuild_genres_index()?;
         Ok(())
     }
+
+    /// Rebuilds normalized `genres` and `track_genres` junction tables from scratch based on current `tracks`.
+    pub fn rebuild_genres_index(&self) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM track_genres", [])?;
+        tx.execute("DELETE FROM genres", [])?;
+
+        struct TrackGenreRow {
+            rowid: i64,
+            genre: String,
+        }
+
+        let mut query_stmt = tx.prepare("SELECT rowid, genre FROM tracks")?;
+        let rows = query_stmt.query_map([], |row| {
+            Ok(TrackGenreRow {
+                rowid: row.get(0)?,
+                genre: row.get(1)?,
+            })
+        })?;
+
+        let entries: Vec<TrackGenreRow> = rows.filter_map(|r| r.ok()).collect();
+        drop(query_stmt);
+
+        let mut insert_genre = tx.prepare_cached(
+            "INSERT INTO genres (name, normalized_name, track_count, album_count)
+             VALUES (?1, ?2, 0, 0)
+             ON CONFLICT(normalized_name) DO NOTHING",
+        )?;
+
+        let mut get_genre_id =
+            tx.prepare_cached("SELECT id FROM genres WHERE normalized_name = ?1")?;
+
+        let mut insert_track_genre = tx.prepare_cached(
+            "INSERT OR IGNORE INTO track_genres (track_id, genre_id) VALUES (?1, ?2)",
+        )?;
+
+        for entry in entries {
+            let parsed = crate::cloud::tag_parser::parse_multi_value_tag(&entry.genre);
+            let genres_to_link = if parsed.is_empty() {
+                vec!["Unknown Genre".to_string()]
+            } else {
+                parsed
+            };
+
+            for g in genres_to_link {
+                let norm = g.trim().to_lowercase();
+                if norm.is_empty() {
+                    continue;
+                }
+                insert_genre.execute(params![g.trim(), norm])?;
+                if let Ok(id) = get_genre_id.query_row(params![norm], |row| row.get::<_, i64>(0)) {
+                    insert_track_genre.execute(params![entry.rowid, id])?;
+                }
+            }
+        }
+        drop(insert_genre);
+        drop(get_genre_id);
+        drop(insert_track_genre);
+
+        // Update track_count and album_count for each genre
+        tx.execute(
+            "UPDATE genres SET
+                track_count = (
+                    SELECT COUNT(*) FROM track_genres WHERE track_genres.genre_id = genres.id
+                ),
+                album_count = (
+                    SELECT COUNT(DISTINCT CASE 
+                        WHEN t.album != '' AND t.album != 'Unknown Album'
+                        THEN LOWER(TRIM(CASE WHEN t.album_artist != '' THEN t.album_artist ELSE t.artist END)) || '::' || LOWER(TRIM(t.album))
+                        ELSE NULL 
+                    END)
+                    FROM track_genres tg
+                    JOIN tracks t ON tg.track_id = t.rowid
+                    WHERE tg.genre_id = genres.id
+                )",
+            [],
+        )?;
+
+        tx.execute("DELETE FROM genres WHERE track_count = 0", [])?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn clear_library_tables(&self) -> Result<()> {
         self.conn.execute("DELETE FROM tracks", [])?;
         self.conn.execute("DELETE FROM albums_summary", [])?;
+        self.conn.execute("DELETE FROM track_genres", [])?;
+        self.conn.execute("DELETE FROM genres", [])?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::cloud::db::MetadataDb;
+    use crate::cloud::local_scanner::LocalTrackInfo;
+
+    #[test]
+    fn test_normalized_genres_and_mosaic_aggregation() {
+        let mut db = MetadataDb::new_in_memory().expect("open in memory db");
+
+        let tracks = vec![
+            LocalTrackInfo {
+                path: "/music/t1.flac".into(),
+                name: "t1.flac".into(),
+                folder_path: "/music".into(),
+                size_bytes: 1000,
+                title: "Track 1".into(),
+                artist: "Artist 1".into(),
+                album: "Album A".into(),
+                album_artist: "Artist 1".into(),
+                genre: "Electronic; Ambient".into(),
+                year: Some(2024),
+                track_number: Some(1),
+                disc_number: Some(1),
+                duration_ms: 200_000,
+                sample_rate: 44100,
+                channels: 2,
+                bits_per_sample: 16,
+                artwork_path: Some("/music/art1.img".into()),
+            },
+            LocalTrackInfo {
+                path: "/music/t2.flac".into(),
+                name: "t2.flac".into(),
+                folder_path: "/music".into(),
+                size_bytes: 1000,
+                title: "Track 2".into(),
+                artist: "Artist 2".into(),
+                album: "Album B".into(),
+                album_artist: "Artist 2".into(),
+                genre: "Ambient / Drone".into(),
+                year: Some(2024),
+                track_number: Some(1),
+                disc_number: Some(1),
+                duration_ms: 210_000,
+                sample_rate: 44100,
+                channels: 2,
+                bits_per_sample: 16,
+                artwork_path: Some("/music/art2.img".into()),
+            },
+            LocalTrackInfo {
+                path: "/music/t3.flac".into(),
+                name: "t3.flac".into(),
+                folder_path: "/music".into(),
+                size_bytes: 1000,
+                title: "Track 3".into(),
+                artist: "Artist 3".into(),
+                album: "Album C".into(),
+                album_artist: "Artist 3".into(),
+                genre: "Electronic".into(),
+                year: Some(2024),
+                track_number: Some(1),
+                disc_number: Some(1),
+                duration_ms: 190_000,
+                sample_rate: 44100,
+                channels: 2,
+                bits_per_sample: 16,
+                artwork_path: Some("/music/art3.img".into()),
+            },
+            LocalTrackInfo {
+                path: "/music/t4.flac".into(),
+                name: "t4.flac".into(),
+                folder_path: "/music".into(),
+                size_bytes: 1000,
+                title: "Track 4".into(),
+                artist: "Artist 4".into(),
+                album: "Album D".into(),
+                album_artist: "Artist 4".into(),
+                genre: "Electronic".into(),
+                year: Some(2024),
+                track_number: Some(1),
+                disc_number: Some(1),
+                duration_ms: 220_000,
+                sample_rate: 44100,
+                channels: 2,
+                bits_per_sample: 16,
+                artwork_path: Some("/music/art4.img".into()),
+            },
+            LocalTrackInfo {
+                path: "/music/t5.flac".into(),
+                name: "t5.flac".into(),
+                folder_path: "/music".into(),
+                size_bytes: 1000,
+                title: "Track 5".into(),
+                artist: "Artist 5".into(),
+                album: "Album E".into(),
+                album_artist: "Artist 5".into(),
+                genre: "Electronic".into(),
+                year: Some(2024),
+                track_number: Some(1),
+                disc_number: Some(1),
+                duration_ms: 230_000,
+                sample_rate: 44100,
+                channels: 2,
+                bits_per_sample: 16,
+                artwork_path: Some("/music/art5.img".into()),
+            },
+            LocalTrackInfo {
+                path: "/music/t6.flac".into(),
+                name: "t6.flac".into(),
+                folder_path: "/music".into(),
+                size_bytes: 1000,
+                title: "Track 6".into(),
+                artist: "Artist 6".into(),
+                album: "Album F".into(),
+                album_artist: "Artist 6".into(),
+                genre: "".into(),
+                year: Some(2024),
+                track_number: Some(1),
+                disc_number: Some(1),
+                duration_ms: 240_000,
+                sample_rate: 44100,
+                channels: 2,
+                bits_per_sample: 16,
+                artwork_path: None,
+            },
+        ];
+
+        db.batch_insert_local_tracks(&tracks)
+            .expect("batch insert tracks");
+
+        let genres = db.get_genres().expect("get genres");
+
+        let electronic = genres.iter().find(|g| g.genre == "Electronic").unwrap();
+        assert_eq!(electronic.track_count, 4);
+        assert_eq!(electronic.album_count, 4);
+        let electronic_arts: Vec<&str> = electronic.artwork_path.split(';').collect();
+        assert_eq!(electronic_arts.len(), 4);
+        assert_eq!(
+            electronic_arts,
+            vec![
+                "/music/art1.img",
+                "/music/art3.img",
+                "/music/art4.img",
+                "/music/art5.img"
+            ]
+        );
+
+        let ambient = genres.iter().find(|g| g.genre == "Ambient").unwrap();
+        assert_eq!(ambient.track_count, 2);
+        assert_eq!(ambient.album_count, 2);
+        let ambient_arts: Vec<&str> = ambient.artwork_path.split(';').collect();
+        assert_eq!(ambient_arts, vec!["/music/art1.img", "/music/art2.img"]);
+
+        let drone = genres.iter().find(|g| g.genre == "Drone").unwrap();
+        assert_eq!(drone.track_count, 1);
+        assert_eq!(drone.album_count, 1);
+
+        let unknown = genres.iter().find(|g| g.genre == "Unknown Genre").unwrap();
+        assert_eq!(unknown.track_count, 1);
+
+        // Test querying tracks by genre
+        let ambient_tracks = db.get_tracks_by_genre("Ambient").expect("tracks by genre");
+        assert_eq!(ambient_tracks.len(), 2);
+
+        let electronic_tracks = db
+            .get_tracks_by_genre("Electronic")
+            .expect("tracks by genre");
+        assert_eq!(electronic_tracks.len(), 4);
+
+        let unknown_tracks = db
+            .get_tracks_by_genre("Unknown Genre")
+            .expect("tracks by genre");
+        assert_eq!(unknown_tracks.len(), 1);
+        assert_eq!(unknown_tracks[0].title, "Track 6");
     }
 }

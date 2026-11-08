@@ -469,32 +469,122 @@ class _AlphabetScrubber extends StatelessWidget {
 class _GenresTab extends ConsumerWidget {
   const _GenresTab();
 
+  Future<void> _playGenre(
+    BuildContext context,
+    WidgetRef ref,
+    Genre genre, {
+    required bool shuffle,
+  }) async {
+    try {
+      final paged = await ref.read(coreProvider).tracks(
+            TrackQuery(filters: LibraryFilters(genre: genre.name)),
+          );
+      if (paged.items.isNotEmpty) {
+        sendCommand(
+          ref,
+          PlayContext(
+            contextId: 'genre_${genre.name}',
+            trackIds: paged.items.map((x) => x.id).toList(),
+            startIndex: 0,
+            shuffle: shuffle,
+            contextLabel: 'Genre: ${genre.name}',
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[genre] could not play genre: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(genresProvider);
+    final async = ref.watch(genreDetailsProvider);
+    final grid = ref.watch(libraryGridViewProvider);
+    final sort = ref.watch(genreSortProvider);
+    final settings = ref.watch(settingsValueProvider);
+
     return async.when(
       skipLoadingOnReload: true,
       skipLoadingOnRefresh: true,
-      loading: () => const _ListSkeleton(),
-      error: (e, _) =>
-          _ErrorState(error: e, onRetry: () => ref.invalidate(genresProvider)),
-      data: (genres) => ListView.builder(
-        key: const PageStorageKey('library_genres_list'),
-        padding: const EdgeInsets.only(bottom: Spacing.xxl),
-        itemCount: genres.length,
-        itemBuilder: (context, i) => ListTile(
-          leading: const Icon(Icons.local_offer_outlined),
-          title: Text(genres[i]),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () {
-            // Filtering by genre and switching to Albums is the shortest path
-            // to "show me this genre".
-            ref.read(libraryFiltersProvider.notifier).state =
-                ref.read(libraryFiltersProvider).copyWith(genre: genres[i]);
-            ref.read(libraryTabProvider.notifier).state = LibraryTab.albums;
-          },
-        ),
+      loading: () => grid ? const _GridSkeleton() : const _ListSkeleton(),
+      error: (e, _) => _ErrorState(
+        error: e,
+        onRetry: () => ref.invalidate(genreDetailsProvider),
       ),
+      data: (genres) {
+        if (genres.isEmpty) return const _NoMatches();
+
+        final sorted = [...genres];
+        if (sort == GenreSort.trackCount) {
+          sorted.sort((a, b) {
+            final cmp = b.trackCount.compareTo(a.trackCount);
+            if (cmp != 0) return cmp;
+            return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          });
+        } else {
+          sorted.sort(
+              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        }
+
+        if (!grid) {
+          return ListView.builder(
+            key: const PageStorageKey('library_genres_list'),
+            padding: const EdgeInsets.only(bottom: Spacing.xxl),
+            itemCount: sorted.length,
+            itemBuilder: (context, i) {
+              final g = sorted[i];
+              return GenreRow(
+                genre: g,
+                onTap: () {
+                  ref.read(libraryFiltersProvider.notifier).state =
+                      ref.read(libraryFiltersProvider).copyWith(genre: g.name);
+                  ref.read(libraryTabProvider.notifier).state =
+                      LibraryTab.albums;
+                },
+                onPlayAll: () =>
+                    _playGenre(context, ref, g, shuffle: false),
+                onShuffle: () =>
+                    _playGenre(context, ref, g, shuffle: true),
+              );
+            },
+          );
+        }
+
+        final width = MediaQuery.sizeOf(context).width;
+        final columns = switch (width) {
+          < 400 => settings.gridDensity == GridDensity.compact ? 3 : 2,
+          < 840 => 3,
+          _ => 5,
+        };
+        final margin = Spacing.screenMargin(width);
+        final cardWidth =
+            (width - margin * 2 - Spacing.sm * (columns - 1)) / columns;
+
+        return GridView.builder(
+          key: const PageStorageKey('library_genres_grid'),
+          padding: EdgeInsets.fromLTRB(margin, Spacing.xs, margin, Spacing.xxl),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: Spacing.md,
+            crossAxisSpacing: Spacing.sm,
+            mainAxisExtent: GenreCard.heightFor(context, cardWidth),
+          ),
+          itemCount: sorted.length,
+          itemBuilder: (context, i) {
+            final g = sorted[i];
+            return GenreCard(
+              genre: g,
+              onTap: () {
+                ref.read(libraryFiltersProvider.notifier).state =
+                    ref.read(libraryFiltersProvider).copyWith(genre: g.name);
+                ref.read(libraryTabProvider.notifier).state = LibraryTab.albums;
+              },
+              onPlayAll: () => _playGenre(context, ref, g, shuffle: false),
+              onShuffle: () => _playGenre(context, ref, g, shuffle: true),
+            );
+          },
+        );
+      },
     );
   }
 }

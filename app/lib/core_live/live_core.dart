@@ -1121,28 +1121,10 @@ class LiveBitDropCore implements BitDropCore {
   }
 
   @override
-  Future<List<String>> genres() async {
-    try {
-      final list = await rust_cache.cloudLibraryGetGenres();
-      if (list.isNotEmpty) {
-        return list.map((g) => g.genre).toList();
-      }
-    } catch (e) {
-      debugPrint('[core] failed to get genres: $e');
-    }
-    final set = <String>{};
-    for (final t in _allCandidateTracks) {
-      if (t.genre != null && t.genre!.trim().isNotEmpty) {
-        set.add(t.genre!.trim());
-      }
-    }
-    if (set.isNotEmpty) {
-      final l = set.toList()
-        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-      return l;
-    }
-    return MockCatalog.genreList;
-  }
+  Future<List<String>> genres() => _libraryService.genres();
+
+  @override
+  Future<List<Genre>> genreDetails() => _libraryService.genreDetails();
 
   @override
   Future<SearchResults> search(String text, SearchFilters f) async {

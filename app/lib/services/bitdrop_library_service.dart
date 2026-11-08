@@ -764,25 +764,81 @@ class BitDropLibraryService {
     ];
   }
 
-  Future<List<String>> genres() async {
+  Future<List<Genre>> genreDetails() async {
     try {
       final list = await rust_cache.cloudLibraryGetGenres();
       if (list.isNotEmpty) {
-        return list.map((g) => g.genre).toList();
+        return list.map((g) {
+          final paths = g.artworkPath
+              .split(';')
+              .map((s) => s.trim())
+              .where((s) => s.isNotEmpty && !s.contains('unknown_artist__unknown_album'))
+              .toList();
+          return Genre(
+            name: g.genre,
+            trackCount: g.trackCount,
+            albumCount: g.albumCount > 0 ? g.albumCount : (g.trackCount > 0 ? 1 : 0),
+            artworkPaths: paths,
+            primaryArtwork: paths.isNotEmpty ? paths.first : null,
+          );
+        }).toList();
       }
     } catch (e) {
-      debugPrint('[library] failed to get genres: $e');
+      debugPrint('[library] failed to get genre details: $e');
     }
-    final set = <String>{};
+
+    final map = <String, List<Track>>{};
     for (final t in allCandidateTracks) {
       if (t.genre != null && t.genre!.trim().isNotEmpty) {
-        set.add(t.genre!.trim());
+        final parts = t.genre!
+            .split(RegExp(r'[;,/]'))
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty);
+        for (final p in parts) {
+          map.putIfAbsent(p, () => []).add(t);
+        }
       }
     }
-    if (set.isNotEmpty) {
-      final l = set.toList()
+
+    if (map.isNotEmpty) {
+      final out = <Genre>[];
+      final sortedKeys = map.keys.toList()
         ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-      return l;
+      for (final k in sortedKeys) {
+        final tracks = map[k]!;
+        final albums = tracks.map((t) => t.albumId).toSet().length;
+        final arts = tracks
+            .map((t) => t.artwork.uri)
+            .whereType<String>()
+            .where((u) => u.isNotEmpty && !u.contains('unknown_artist__unknown_album'))
+            .toSet()
+            .take(4)
+            .toList();
+        out.add(Genre(
+          name: k,
+          trackCount: tracks.length,
+          albumCount: albums > 0 ? albums : 1,
+          artworkPaths: arts,
+          primaryArtwork: arts.isNotEmpty ? arts.first : null,
+        ));
+      }
+      return out;
+    }
+
+    return MockCatalog.genreList.map((name) {
+      return Genre(
+        name: name,
+        trackCount: 12,
+        albumCount: 2,
+        artworkPaths: const [],
+      );
+    }).toList();
+  }
+
+  Future<List<String>> genres() async {
+    final details = await genreDetails();
+    if (details.isNotEmpty) {
+      return details.map((g) => g.name).toList();
     }
     return MockCatalog.genreList;
   }

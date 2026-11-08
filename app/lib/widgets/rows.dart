@@ -943,3 +943,187 @@ class PlaylistRow extends StatelessWidget {
     );
   }
 }
+
+class GenreCard extends StatelessWidget {
+  const GenreCard({
+    super.key,
+    required this.genre,
+    this.onTap,
+    this.onPlayAll,
+    this.onShuffle,
+  });
+
+  final Genre genre;
+  final VoidCallback? onTap;
+  final VoidCallback? onPlayAll;
+  final VoidCallback? onShuffle;
+
+  static double heightFor(BuildContext context, double width) {
+    final scale = MediaQuery.textScalerOf(context).scale(1);
+    final text = (54.0 * scale).ceilToDouble();
+    return width + Spacing.xs + text;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+
+    return Semantics(
+      label: '${genre.name}, ${genre.trackCount} tracks, ${genre.albumCount} albums',
+      button: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: Radii.cardR,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AspectRatio(
+              aspectRatio: 1,
+              child: LayoutBuilder(
+                builder: (context, box) => Stack(
+                  children: [
+                    Positioned.fill(
+                      child: GenreMosaicArtwork(
+                        genre: genre,
+                        size: box.maxWidth,
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 6,
+                      right: 6,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (onShuffle != null)
+                            Material(
+                              color: Colors.black.withOpacity(0.65),
+                              shape: const CircleBorder(),
+                              clipBehavior: Clip.antiAlias,
+                              child: InkWell(
+                                onTap: onShuffle,
+                                child: const Padding(
+                                  padding: EdgeInsets.all(6),
+                                  child: Icon(Icons.shuffle, size: 16, color: Colors.white),
+                                ),
+                              ),
+                            ),
+                          if (onShuffle != null && onPlayAll != null)
+                            const SizedBox(width: 4),
+                          if (onPlayAll != null)
+                            Material(
+                              color: c.accent,
+                              shape: const CircleBorder(),
+                              clipBehavior: Clip.antiAlias,
+                              child: InkWell(
+                                onTap: onPlayAll,
+                                child: const Padding(
+                                  padding: EdgeInsets.all(6),
+                                  child: Icon(Icons.play_arrow, size: 16, color: Colors.black),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: Spacing.xs),
+            Text(
+              genre.name,
+              style: context.t.body.copyWith(fontWeight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 1),
+            Text(
+              '${genre.trackCount} track${genre.trackCount == 1 ? '' : 's'} · ${genre.albumCount} album${genre.albumCount == 1 ? '' : 's'}',
+              style: context.t.bodySmall.copyWith(color: c.textSecondary),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class GenreRow extends StatelessWidget {
+  const GenreRow({
+    super.key,
+    required this.genre,
+    this.onTap,
+    this.onPlayAll,
+    this.onShuffle,
+  });
+
+  final Genre genre;
+  final VoidCallback? onTap;
+  final VoidCallback? onPlayAll;
+  final VoidCallback? onShuffle;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+
+    return Semantics(
+      label: '${genre.name}, ${genre.trackCount} tracks, ${genre.albumCount} albums',
+      button: true,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: Spacing.md,
+            vertical: Spacing.xs,
+          ),
+          child: Row(
+            children: [
+              GenreMosaicArtwork(
+                genre: genre,
+                size: 52,
+                borderRadius: Radii.gridArtR,
+              ),
+              const SizedBox(width: Spacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      genre.name,
+                      style: context.t.body.copyWith(fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${genre.trackCount} track${genre.trackCount == 1 ? '' : 's'} · ${genre.albumCount} album${genre.albumCount == 1 ? '' : 's'}',
+                      style: context.t.bodySmall.copyWith(color: c.textSecondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              if (onShuffle != null)
+                IconButton(
+                  tooltip: 'Shuffle ${genre.name}',
+                  icon: const Icon(Icons.shuffle, size: 20),
+                  onPressed: onShuffle,
+                ),
+              if (onPlayAll != null)
+                IconButton(
+                  tooltip: 'Play ${genre.name}',
+                  icon: const Icon(Icons.play_arrow, size: 22),
+                  onPressed: onPlayAll,
+                ),
+              Icon(Icons.chevron_right, color: c.textTertiary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

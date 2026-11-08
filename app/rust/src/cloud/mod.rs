@@ -5,3 +5,4 @@ pub mod local_scanner;
 pub mod media_source;
 pub mod models;
 pub mod range_fetcher;
+pub mod tag_parser;
