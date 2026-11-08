@@ -13,10 +13,10 @@
 use super::DsdError;
 use std::f64::consts::PI;
 
-/// Number of FIR filter taps (32 bytes of 8 bits each).
-pub const DECIMATOR_TAPS: usize = 256;
-/// Number of 8-bit byte segments in the FIR filter.
-pub const DECIMATOR_SEGMENTS: usize = DECIMATOR_TAPS / 8; // 32
+/// Number of FIR filter taps (16 bytes of 8 bits each).
+pub const DECIMATOR_TAPS: usize = 128;
+/// Number of 8-bit byte segments in the FIR filter (16 * 256 byte tables = 32 KB, fitting in L1 cache).
+pub const DECIMATOR_SEGMENTS: usize = DECIMATOR_TAPS / 8; // 16
 /// Standard target PCM sample rate for decimation.
 pub const DSD_PCM_TARGET_RATE: u32 = 176_400;
 
@@ -366,5 +366,92 @@ mod tests {
         assert_eq!(pcm_l.len(), 32);
         assert_eq!(pcm_r.len(), 32);
         assert!(pcm_l[10].abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_dsd_decimator_ultrasonic_noise_attenuation_and_passband_flatness() {
+        let mut decimator =
+            DsdDecimator::new(2_822_400, 176_400).expect("Failed to create decimator");
+
+        let fs = 2_822_400.0f64;
+        let num_samples = (fs * 0.05) as usize; // 50 ms
+
+        // 1. Synthesize 1 kHz sine at 50% modulation (-6 dB)
+        let mut integrator_1k = 0.0f64;
+        let mut dsd_bits_1k = Vec::with_capacity(num_samples);
+        for t in 0..num_samples {
+            let x = 0.5 * (2.0 * PI * 1_000.0 * t as f64 / fs).sin();
+            integrator_1k += x;
+            let bit = if integrator_1k >= 0.0 { 1 } else { 0 };
+            let feedback = if bit == 1 { 1.0 } else { -1.0 };
+            integrator_1k -= feedback;
+            dsd_bits_1k.push(bit);
+        }
+        let mut bytes_1k = Vec::with_capacity(dsd_bits_1k.len() / 8);
+        for chunk in dsd_bits_1k.chunks(8) {
+            let mut b = 0u8;
+            for &bit in chunk {
+                b = (b << 1) | bit;
+            }
+            bytes_1k.push(b);
+        }
+
+        let mut pcm_1k_l = Vec::new();
+        let mut pcm_1k_r = Vec::new();
+        decimator.process_stereo(&bytes_1k, &bytes_1k, &mut pcm_1k_l, &mut pcm_1k_r);
+
+        // Peak after warm-up: input 0.5 * 2.0 = 1.0 (0 dBFS). Verify within +/- 0.05 dB.
+        let peak_1k = pcm_1k_l[50..]
+            .iter()
+            .fold(0.0f64, |acc, &s| acc.max(s.abs()));
+        let error_db_1k = 20.0 * (peak_1k / 1.0).log10().abs();
+        assert!(
+            error_db_1k < 0.05,
+            "1 kHz passband tone error must be < 0.05 dB, got: {error_db_1k:.4} dB (peak: {peak_1k})"
+        );
+
+        // 2. Synthesize ultrasonic tone above 90 kHz (120 kHz)
+        decimator.reset();
+        let mut integrator_hf = 0.0f64;
+        let mut dsd_bits_hf = Vec::with_capacity(num_samples);
+        for t in 0..num_samples {
+            let x = 0.5 * (2.0 * PI * 120_000.0 * t as f64 / fs).sin();
+            integrator_hf += x;
+            let bit = if integrator_hf >= 0.0 { 1 } else { 0 };
+            let feedback = if bit == 1 { 1.0 } else { -1.0 };
+            integrator_hf -= feedback;
+            dsd_bits_hf.push(bit);
+        }
+        let mut bytes_hf = Vec::with_capacity(dsd_bits_hf.len() / 8);
+        for chunk in dsd_bits_hf.chunks(8) {
+            let mut b = 0u8;
+            for &bit in chunk {
+                b = (b << 1) | bit;
+            }
+            bytes_hf.push(b);
+        }
+
+        let mut pcm_hf_l = Vec::new();
+        let mut pcm_hf_r = Vec::new();
+        decimator.process_stereo(&bytes_hf, &bytes_hf, &mut pcm_hf_l, &mut pcm_hf_r);
+
+        // Measure discrete Fourier magnitude of the folded 120 kHz tone (at 56.4 kHz in 176.4 kHz output)
+        let fs_pcm = 176_400.0f64;
+        let f_alias = (120_000.0f64 - fs_pcm).abs(); // 56.4 kHz
+        let steady_state = &pcm_hf_l[50..];
+        let n_pts = steady_state.len() as f64;
+        let mut re = 0.0f64;
+        let mut im = 0.0f64;
+        for (i, &p) in steady_state.iter().enumerate() {
+            let phase = 2.0 * PI * f_alias * (i as f64) / fs_pcm;
+            re += p * phase.cos();
+            im -= p * phase.sin();
+        }
+        let alias_mag = 2.0 * (re * re + im * im).sqrt() / n_pts;
+        let attenuation_db = -20.0 * alias_mag.max(1e-15).log10();
+        assert!(
+            attenuation_db > 90.0,
+            "Ultrasonic tone above 90 kHz must be attenuated by >90 dB, got: {attenuation_db:.2} dB (alias mag: {alias_mag:.2e})"
+        );
     }
 }

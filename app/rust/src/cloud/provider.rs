@@ -932,10 +932,14 @@ pub struct OneDriveProvider {
     refresh_token: RwLock<Option<String>>,
     base_url: String,
     client: reqwest::Client,
+    /// In-memory cache of pre-signed CDN download URLs with 45-minute TTL to avoid 302 roundtrips.
+    url_cache: RwLock<HashMap<String, (String, std::time::Instant)>>,
 }
 
 impl OneDriveProvider {
     pub const DEFAULT_BASE_URL: &'static str = "https://graph.microsoft.com/v1.0";
+    /// 45-minute time-to-live for cached pre-signed Azure CDN URLs.
+    pub const URL_CACHE_TTL: Duration = Duration::from_secs(45 * 60);
 
     pub fn new(
         client_id: impl Into<String>,
@@ -948,6 +952,7 @@ impl OneDriveProvider {
             refresh_token: RwLock::new(refresh_token),
             base_url: Self::DEFAULT_BASE_URL.to_string(),
             client: build_reqwest_client(),
+            url_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -962,6 +967,30 @@ impl OneDriveProvider {
 
     pub fn access_token(&self) -> Option<String> {
         self.access_token.read().clone()
+    }
+
+    /// Seeds or updates the pre-signed download URL for a file with the 45-minute TTL.
+    pub fn seed_download_url(&self, file_id: &str, download_url: &str) {
+        self.url_cache.write().insert(
+            file_id.to_string(),
+            (download_url.to_string(), std::time::Instant::now()),
+        );
+    }
+
+    /// Retrieves an unexpired cached download URL if present.
+    pub fn cached_url(&self, file_id: &str) -> Option<String> {
+        let cache = self.url_cache.read();
+        if let Some((url, timestamp)) = cache.get(file_id) {
+            if timestamp.elapsed() < Self::URL_CACHE_TTL {
+                return Some(url.clone());
+            }
+        }
+        None
+    }
+
+    /// Invalidates a cached download URL.
+    pub fn clear_cached_url(&self, file_id: &str) {
+        self.url_cache.write().remove(file_id);
     }
 }
 
@@ -1075,7 +1104,13 @@ impl CloudStorageProvider for OneDriveProvider {
                 .await
                 .map_err(|e| CloudError::malformed(e.to_string()))?;
 
-            parse_onedrive_delta(&json)
+            let page = parse_onedrive_delta(&json)?;
+            for item in &page.items {
+                if let Some(ref dl_url) = item.download_url {
+                    self.seed_download_url(&item.id, dl_url);
+                }
+            }
+            Ok(page)
         })
     }
 
@@ -1086,12 +1121,36 @@ impl CloudStorageProvider for OneDriveProvider {
         end_inclusive: u64,
     ) -> Result<Vec<u8>, CloudError> {
         let range_val = build_range_header(start, end_inclusive)?;
+        let cached_direct = self.cached_url(file_id);
         let token = self.access_token.read().clone();
-        let url = format!("{}/me/drive/items/{}/content", self.base_url, file_id);
+        let fallback_url = format!("{}/me/drive/items/{}/content", self.base_url, file_id);
         let client = self.client.clone();
+        let file_id_str = file_id.to_string();
 
         run_async(async move {
-            let mut req = client.get(&url).header(reqwest::header::RANGE, range_val);
+            // 1. If cached pre-signed CDN URL is available, attempt direct range fetch (1 RTT)
+            if let Some(ref cdn_url) = cached_direct {
+                if let Ok(res) = client
+                    .get(cdn_url)
+                    .header(reqwest::header::RANGE, &range_val)
+                    .send()
+                    .await
+                {
+                    let status = res.status();
+                    if status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT {
+                        if let Ok(bytes) = res.bytes().await {
+                            return Ok(bytes.to_vec());
+                        }
+                    }
+                }
+                // If direct CDN request was rejected (e.g. revoked/expired), fall through to /content
+                self.clear_cached_url(&file_id_str);
+            }
+
+            // 2. Fallback to /content endpoint (follows 302 redirect and caches the target)
+            let mut req = client
+                .get(&fallback_url)
+                .header(reqwest::header::RANGE, &range_val);
             if let Some(tok) = token {
                 req = req.bearer_auth(tok);
             }
@@ -1108,10 +1167,18 @@ impl CloudStorageProvider for OneDriveProvider {
                 return Err(CloudError::unauthorized(format!("HTTP {status}")));
             }
             if status == reqwest::StatusCode::NOT_FOUND {
-                return Err(CloudError::not_found(format!("File {file_id} not found")));
+                return Err(CloudError::not_found(format!(
+                    "File {file_id_str} not found"
+                )));
             }
             if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
                 return Err(CloudError::other(format!("OneDrive GET returned {status}")));
+            }
+
+            // Cache the final 302 redirect target URL from Azure CDN
+            let final_url = res.url().to_string();
+            if final_url != fallback_url {
+                self.seed_download_url(&file_id_str, &final_url);
             }
 
             let bytes = res
@@ -1488,6 +1555,50 @@ impl ProviderRegistry {
     pub fn has_provider(&self, provider_id: &str) -> bool {
         self.providers.read().contains_key(provider_id)
     }
+
+    /// Constructs a namespaced file identifier combining provider ID and file ID: `"{provider_id}:{raw_id}"`.
+    pub fn namespace_id(provider_id: &str, raw_id: &str) -> String {
+        format!("{provider_id}:{raw_id}")
+    }
+
+    /// Splits a namespaced identifier into `(provider_id, raw_file_id)`.
+    pub fn split_namespaced_id(file_id: &str) -> Option<(&str, &str)> {
+        file_id.split_once(':')
+    }
+
+    /// Deterministically routes byte-range fetching based on the namespaced ID prefix.
+    ///
+    /// If namespaced (e.g. `"webdav:/Music/01.flac"` or `"onedrive:item123"`), dispatches
+    /// directly to the matching provider, preventing SQLite primary-key collisions when multiple
+    /// storage backends share identical relative file paths.
+    pub fn fetch_byte_range(
+        &self,
+        namespaced_file_id: &str,
+        start: u64,
+        end_inclusive: u64,
+    ) -> Result<Vec<u8>, CloudError> {
+        if let Some((provider_id, raw_id)) = Self::split_namespaced_id(namespaced_file_id) {
+            let provider = self.get(provider_id).ok_or_else(|| {
+                CloudError::not_found(format!("Provider '{provider_id}' is not registered"))
+            })?;
+            provider.fetch_byte_range(raw_id, start, end_inclusive)
+        } else {
+            let providers = self.providers.read();
+            if let Some(p) = providers.get("google_drive") {
+                p.fetch_byte_range(namespaced_file_id, start, end_inclusive)
+            } else if providers.len() == 1 {
+                providers.values().next().unwrap().fetch_byte_range(
+                    namespaced_file_id,
+                    start,
+                    end_inclusive,
+                )
+            } else {
+                Err(CloudError::not_found(format!(
+                    "Un-namespaced file_id '{namespaced_file_id}' cannot be routed across multiple providers"
+                )))
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1783,6 +1894,62 @@ mod tests {
         assert_eq!(
             registry.registered_ids(),
             vec!["dropbox", "google_drive", "webdav"]
+        );
+    }
+
+    #[test]
+    fn test_onedrive_url_cache_and_seeding() {
+        let provider = OneDriveProvider::new("client-123", Some("tok".into()), None);
+        assert_eq!(provider.cached_url("file_456"), None);
+
+        provider.seed_download_url(
+            "file_456",
+            "https://azure-cdn.blob.core.windows.net/audio/stream.flac?sig=abc123xyz",
+        );
+        assert_eq!(
+            provider.cached_url("file_456").as_deref(),
+            Some("https://azure-cdn.blob.core.windows.net/audio/stream.flac?sig=abc123xyz")
+        );
+
+        provider.clear_cached_url("file_456");
+        assert_eq!(provider.cached_url("file_456"), None);
+    }
+
+    #[test]
+    fn test_multicloud_file_id_namespacing_and_routing() {
+        assert_eq!(
+            ProviderRegistry::namespace_id("webdav", "/Music/Track.flac"),
+            "webdav:/Music/Track.flac"
+        );
+        assert_eq!(
+            ProviderRegistry::namespace_id("dropbox", "/Music/Track.flac"),
+            "dropbox:/Music/Track.flac"
+        );
+        assert_eq!(
+            ProviderRegistry::namespace_id("onedrive", "item-01ABCDEF"),
+            "onedrive:item-01ABCDEF"
+        );
+        assert_eq!(
+            ProviderRegistry::namespace_id("google_drive", "1a2b3c4d"),
+            "google_drive:1a2b3c4d"
+        );
+
+        // Disjoint primary keys even when sharing the identical relative path
+        let webdav_id = ProviderRegistry::namespace_id("webdav", "/Lossless/01.wav");
+        let dropbox_id = ProviderRegistry::namespace_id("dropbox", "/Lossless/01.wav");
+        assert_ne!(webdav_id, dropbox_id);
+
+        assert_eq!(
+            ProviderRegistry::split_namespaced_id(&webdav_id),
+            Some(("webdav", "/Lossless/01.wav"))
+        );
+        assert_eq!(
+            ProviderRegistry::split_namespaced_id(&dropbox_id),
+            Some(("dropbox", "/Lossless/01.wav"))
+        );
+        assert_eq!(
+            ProviderRegistry::split_namespaced_id("raw_file_without_colon"),
+            None
         );
     }
 }

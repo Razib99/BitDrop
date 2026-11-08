@@ -498,6 +498,39 @@ impl<const N: usize> IsoRingBuffer<N> {
             }
         }
     }
+
+    /// Reaps all remaining discarded URBs via non-blocking USBDEVFS_REAPURBNDELAY until -EAGAIN,
+    /// -ENODEV, or in_flight_count reaches 0. Ensures kernel xHCI controller never touches freed user-space memory.
+    pub fn drain_reap_ndelay(&mut self, handle: &UsbDeviceHandle) {
+        let mut consecutive_eagain = 0;
+        while self.in_flight_count > 0 && consecutive_eagain < 5 {
+            match handle.reap_urb_ndelay() {
+                Ok(ptr) => {
+                    if self.find_urb_index(ptr).is_some() {
+                        self.mark_reaped();
+                    }
+                    consecutive_eagain = 0;
+                }
+                Err(UsbFsError::IoctlFailed { errno, .. })
+                    if errno == libc::EAGAIN || errno == libc::EWOULDBLOCK =>
+                {
+                    consecutive_eagain += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(UsbFsError::DeviceDisconnected) => {
+                    self.in_flight_count = 0;
+                    break;
+                }
+                Err(UsbFsError::IoctlFailed { errno, .. })
+                    if errno == libc::ENODEV || errno == libc::ESHUTDOWN =>
+                {
+                    self.in_flight_count = 0;
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
+    }
 }
 
 /// Abstract audio rendering provider supplying interleaved `f32` samples.
@@ -659,7 +692,7 @@ impl UsbStreamingEngine {
                             crate::usb_dac::backend::set_hot_disconnected(true);
                             thread_running.store(false, Ordering::Release);
                             ring.discard_all(&handle);
-                            ring.drain_reap(&handle, 50);
+                            ring.drain_reap_ndelay(&handle);
                             return Err(err);
                         }
                     };
@@ -700,14 +733,14 @@ impl UsbStreamingEngine {
                         crate::usb_dac::backend::set_hot_disconnected(true);
                         thread_running.store(false, Ordering::Release);
                         ring.discard_all(&handle);
-                        ring.drain_reap(&handle, 50);
+                        ring.drain_reap_ndelay(&handle);
                         return Err(err);
                     }
                 }
 
-                // 3. Clean teardown: discard and drain all in-flight URBs
+                // 3. Clean teardown: discard and drain all in-flight URBs via USBDEVFS_REAPURBNDELAY
                 ring.discard_all(&handle);
-                ring.drain_reap(&handle, 50);
+                ring.drain_reap_ndelay(&handle);
                 Ok(())
             })
             .map_err(UsbFsError::Io)?;

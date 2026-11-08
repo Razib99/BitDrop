@@ -504,6 +504,23 @@ impl UsbDeviceHandle {
             }
         }
     }
+
+    /// Non-blocking reap: executes USBDEVFS_REAPURBNDELAY immediately without poll waiting.
+    /// Returns Ok(ptr) if an URB was reaped, or Err(err) if no URB is pending (-EAGAIN) or on detach.
+    pub fn reap_urb_ndelay(&self) -> Result<*mut UsbdevfsUrb, UsbFsError> {
+        let mut urb_ptr: *mut UsbdevfsUrb = std::ptr::null_mut();
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd,
+                USBDEVFS_REAPURBNDELAY as IoctlReq,
+                &mut urb_ptr as *mut *mut UsbdevfsUrb,
+            )
+        };
+        if ret < 0 {
+            return Err(UsbFsError::from_errno("USBDEVFS_REAPURBNDELAY"));
+        }
+        Ok(urb_ptr)
+    }
 }
 
 impl Drop for UsbDeviceHandle {
@@ -637,6 +654,16 @@ mod tests {
         unsafe {
             libc::close(fds[1]);
         }
+    }
+
+    #[test]
+    fn test_reap_urb_ndelay_on_empty_fd() {
+        let handle = UsbDeviceHandle::from_raw_fd_borrowed(-1);
+        let res = handle.reap_urb_ndelay();
+        assert!(
+            res.is_err(),
+            "reap_urb_ndelay on invalid fd should return Err"
+        );
     }
 
     impl UsbFsError {

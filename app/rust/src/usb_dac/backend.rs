@@ -308,6 +308,9 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
 pub fn detach_direct_usb_device() -> Result<(), UsbFsError> {
     if let Some(mut session) = ACTIVE_USB_SESSION.lock().take() {
         let _ = session.stream_handle.stop();
+        // Drain any remaining in-flight URBs via USBDEVFS_REAPURBNDELAY before releasing interfaces,
+        // ensuring the kernel xHCI controller never touches user-space memory after teardown.
+        while session.handle.reap_urb_ndelay().is_ok() {}
         let _ = session.handle.set_interface_alt(session.streaming_iface, 0);
         let _ = session.handle.release_interface(session.streaming_iface);
         if let Some(ctrl_num) = session.control_iface {
