@@ -1,8 +1,9 @@
 use crate::cloud::db::{
-    AlbumSummaryRow, CloudTrackRow, FolderSummary, GenreSummary, ReplacedFile, TrackPlaceholder,
-    TrackTagUpdate,
+    AlbumSummaryRow, CloudTrackRow, FolderSummary, GenreSummary, ListeningRecap, RecapArtistItem,
+    RecapTrackItem, ReplacedFile, TrackPlaceholder, TrackTagUpdate,
 };
 use crate::cloud::local_scanner::LocalTrackInfo;
+use crate::cloud::lyrics::{LyricLine, TrackLyrics};
 use rusqlite::{params, Connection, OptionalExtension, Result, Row};
 use std::path::Path;
 
@@ -989,6 +990,220 @@ impl<'a> LibraryRepository<'a> {
         Ok(())
     }
 
+    /// Retrieves cached lyrics for `file_id` if present in the SQLite database.
+    pub fn get_lyrics(&self, file_id: &str) -> Result<Option<TrackLyrics>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT synced, plain_text, synced_json FROM track_lyrics WHERE file_id = ?1",
+        )?;
+        let mut rows = stmt.query(params![file_id])?;
+        if let Some(row) = rows.next()? {
+            let synced: i64 = row.get(0)?;
+            let plain_text: String = row.get(1)?;
+            let synced_json: String = row.get(2)?;
+            let lines: Vec<LyricLine> = serde_json::from_str(&synced_json).unwrap_or_default();
+            Ok(Some(TrackLyrics {
+                synced: synced != 0,
+                lines,
+                plain_lyrics: plain_text,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Persists lyrics for `file_id` into the `track_lyrics` cache.
+    pub fn save_lyrics(&self, file_id: &str, lyrics: &TrackLyrics) -> Result<()> {
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let synced_json = serde_json::to_string(&lyrics.lines).unwrap_or_else(|_| "[]".to_string());
+        self.conn.execute(
+            "INSERT INTO track_lyrics (file_id, synced, plain_text, synced_json, fetched_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(file_id) DO UPDATE SET
+                synced = excluded.synced,
+                plain_text = excluded.plain_text,
+                synced_json = excluded.synced_json,
+                fetched_at = excluded.fetched_at",
+            params![
+                file_id,
+                if lyrics.synced { 1 } else { 0 },
+                lyrics.plain_lyrics,
+                synced_json,
+                now_ts
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Records a qualified playback entry into the `playback_history` table.
+    pub fn record_playback(
+        &self,
+        file_id: &str,
+        listened_ms: u32,
+        sample_rate: Option<u32>,
+        bit_depth: Option<u32>,
+    ) -> Result<()> {
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let (sr, bd) = if sample_rate.is_some() && bit_depth.is_some() {
+            (sample_rate, bit_depth)
+        } else {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT sample_rate, bits_per_sample FROM tracks WHERE file_id = ?1",
+            )?;
+            let mut rows = stmt.query(params![file_id])?;
+            if let Some(r) = rows.next()? {
+                let db_sr: Option<u32> = r.get(0)?;
+                let db_bd: Option<u32> = r.get(1)?;
+                (sample_rate.or(db_sr), bit_depth.or(db_bd))
+            } else {
+                (sample_rate, bit_depth)
+            }
+        };
+
+        self.conn.execute(
+            "INSERT INTO playback_history (file_id, played_at_ts, listened_ms, sample_rate, bit_depth)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![file_id, now_ts, listened_ms, sr, bd],
+        )?;
+        Ok(())
+    }
+
+    /// Aggregates and computes the Audiophile Listening Recap across listening history.
+    pub fn get_listening_recap(&self) -> Result<ListeningRecap> {
+        let (total_listened_ms, total_plays): (i64, i64) = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(SUM(listened_ms), 0), COUNT(*) FROM playback_history",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or((0, 0));
+
+        let total_minutes_listened = (total_listened_ms.max(0) as u64) / 60_000;
+
+        let mut top_tracks = Vec::new();
+        {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT p.file_id, 
+                        COALESCE(NULLIF(t.title, ''), p.file_id) as track_title,
+                        COALESCE(NULLIF(t.artist, ''), 'Unknown Artist') as track_artist,
+                        COUNT(*) as plays,
+                        COALESCE(SUM(p.listened_ms), 0) / 60000 as mins
+                 FROM playback_history p
+                 LEFT JOIN tracks t ON p.file_id = t.file_id
+                 GROUP BY p.file_id
+                 ORDER BY plays DESC, mins DESC
+                 LIMIT 5",
+            )?;
+            let mut rows = stmt.query([])?;
+            while let Some(r) = rows.next()? {
+                let fid: String = r.get(0)?;
+                let title: String = r.get(1)?;
+                let artist: String = r.get(2)?;
+                let plays: u32 = r.get(3)?;
+                let mins: u32 = r.get(4)?;
+                top_tracks.push(RecapTrackItem {
+                    file_id: fid,
+                    title,
+                    artist,
+                    play_count: plays,
+                    total_minutes: mins,
+                });
+            }
+        }
+
+        let mut top_artists = Vec::new();
+        {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT COALESCE(NULLIF(t.artist, ''), 'Unknown Artist') as artist_name,
+                        COUNT(*) as plays,
+                        COALESCE(SUM(p.listened_ms), 0) / 60000 as mins
+                 FROM playback_history p
+                 LEFT JOIN tracks t ON p.file_id = t.file_id
+                 WHERE t.artist IS NOT NULL AND t.artist != '' AND t.artist != 'Unknown Artist'
+                 GROUP BY artist_name
+                 ORDER BY plays DESC, mins DESC
+                 LIMIT 5",
+            )?;
+            let mut rows = stmt.query([])?;
+            while let Some(r) = rows.next()? {
+                let artist_name: String = r.get(0)?;
+                let plays: u32 = r.get(1)?;
+                let mins: u32 = r.get(2)?;
+                top_artists.push(RecapArtistItem {
+                    artist: artist_name,
+                    play_count: plays,
+                    total_minutes: mins,
+                });
+            }
+        }
+
+        let top_genre: Option<String> = {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT t.genre, COUNT(*) as plays
+                 FROM playback_history p
+                 JOIN tracks t ON p.file_id = t.file_id
+                 WHERE t.genre IS NOT NULL AND t.genre != '' AND t.genre != 'Unknown Genre'
+                 GROUP BY t.genre
+                 ORDER BY plays DESC
+                 LIMIT 1",
+            )?;
+            let mut rows = stmt.query([])?;
+            if let Some(r) = rows.next()? {
+                let g: String = r.get(0)?;
+                let primary = g.split(';').next().unwrap_or(&g).trim().to_string();
+                if primary.is_empty() {
+                    None
+                } else {
+                    Some(primary)
+                }
+            } else {
+                None
+            }
+        };
+
+        let (lossless_count, hires_count): (i64, i64) = if total_plays > 0 {
+            self.conn
+                .query_row(
+                    "SELECT 
+                        COUNT(CASE WHEN (p.sample_rate >= 44100 AND p.bit_depth >= 16) OR (t.sample_rate >= 44100 AND t.bits_per_sample >= 16) THEN 1 END),
+                        COUNT(CASE WHEN p.sample_rate > 48000 OR p.bit_depth > 16 OR t.sample_rate > 48000 OR t.bits_per_sample > 16 THEN 1 END)
+                     FROM playback_history p
+                     LEFT JOIN tracks t ON p.file_id = t.file_id",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap_or((0, 0))
+        } else {
+            (0, 0)
+        };
+
+        let (lossless_percentage, hi_res_percentage) = if total_plays > 0 {
+            (
+                (lossless_count as f64 * 100.0) / (total_plays as f64),
+                (hires_count as f64 * 100.0) / (total_plays as f64),
+            )
+        } else {
+            (0.0, 0.0)
+        };
+
+        Ok(ListeningRecap {
+            total_minutes_listened,
+            total_plays: total_plays as u64,
+            top_tracks,
+            top_artists,
+            top_genre,
+            lossless_percentage,
+            hi_res_percentage,
+        })
+    }
+
     pub fn clear_library_tables(&self) -> Result<()> {
         self.conn.execute("DELETE FROM tracks", [])?;
         self.conn.execute("DELETE FROM albums_summary", [])?;
@@ -1171,5 +1386,143 @@ mod tests {
             .expect("tracks by genre");
         assert_eq!(unknown_tracks.len(), 1);
         assert_eq!(unknown_tracks[0].title, "Track 6");
+    }
+
+    #[test]
+    fn test_track_lyrics_db_caching() {
+        use crate::cloud::lyrics::{LyricLine, TrackLyrics};
+        let db = MetadataDb::new_in_memory().expect("open db");
+
+        assert!(db.get_lyrics("track-1").unwrap().is_none());
+
+        let lyrics = TrackLyrics {
+            synced: true,
+            lines: vec![
+                LyricLine {
+                    timestamp_ms: 12_500,
+                    text: "First line of lyric".into(),
+                },
+                LyricLine {
+                    timestamp_ms: 18_000,
+                    text: "Second line of lyric".into(),
+                },
+            ],
+            plain_lyrics: "First line of lyric\nSecond line of lyric".into(),
+        };
+
+        db.save_lyrics("track-1", &lyrics).unwrap();
+
+        let cached = db.get_lyrics("track-1").unwrap().expect("cached lyrics");
+        assert!(cached.synced);
+        assert_eq!(cached.lines.len(), 2);
+        assert_eq!(cached.lines[0].timestamp_ms, 12_500);
+        assert_eq!(cached.lines[0].text, "First line of lyric");
+        assert_eq!(cached.lines[1].timestamp_ms, 18_000);
+        assert_eq!(cached.plain_lyrics, lyrics.plain_lyrics);
+    }
+
+    #[test]
+    fn test_playback_history_and_recap_metrics() {
+        let mut db = MetadataDb::new_in_memory().expect("open db");
+
+        // Insert tracks
+        let tracks = vec![
+            LocalTrackInfo {
+                path: "/music/t1.flac".into(),
+                name: "t1.flac".into(),
+                folder_path: "/music".into(),
+                size_bytes: 1000,
+                title: "Paranoid Android".into(),
+                artist: "Radiohead".into(),
+                album: "OK Computer".into(),
+                album_artist: "Radiohead".into(),
+                genre: "Alternative Rock".into(),
+                year: Some(1997),
+                track_number: Some(2),
+                disc_number: Some(1),
+                duration_ms: 383_000,
+                sample_rate: 96_000,
+                channels: 2,
+                bits_per_sample: 24,
+                artwork_path: None,
+            },
+            LocalTrackInfo {
+                path: "/music/t2.flac".into(),
+                name: "t2.flac".into(),
+                folder_path: "/music".into(),
+                size_bytes: 1000,
+                title: "Karma Police".into(),
+                artist: "Radiohead".into(),
+                album: "OK Computer".into(),
+                album_artist: "Radiohead".into(),
+                genre: "Alternative Rock".into(),
+                year: Some(1997),
+                track_number: Some(6),
+                disc_number: Some(1),
+                duration_ms: 261_000,
+                sample_rate: 44_100,
+                channels: 2,
+                bits_per_sample: 16,
+                artwork_path: None,
+            },
+            LocalTrackInfo {
+                path: "/music/t3.mp3".into(),
+                name: "t3.mp3".into(),
+                folder_path: "/music".into(),
+                size_bytes: 500,
+                title: "Time".into(),
+                artist: "Pink Floyd".into(),
+                album: "The Dark Side of the Moon".into(),
+                album_artist: "Pink Floyd".into(),
+                genre: "Progressive Rock".into(),
+                year: Some(1973),
+                track_number: Some(4),
+                disc_number: Some(1),
+                duration_ms: 425_000,
+                sample_rate: 44_100,
+                channels: 2,
+                bits_per_sample: 16,
+                artwork_path: None,
+            },
+        ];
+        db.batch_insert_local_tracks(&tracks).unwrap();
+
+        // Record playback
+        // Track 1 (Hi-Res: 96k/24) played twice, 300s each = 600s = 10 mins
+        db.record_playback("/music/t1.flac", 300_000, Some(96_000), Some(24))
+            .unwrap();
+        db.record_playback("/music/t1.flac", 300_000, Some(96_000), Some(24))
+            .unwrap();
+        // Track 2 (Lossless CD: 44.1k/16) played once, 200s = 3.3 mins
+        db.record_playback("/music/t2.flac", 200_000, Some(44_100), Some(16))
+            .unwrap();
+        // Track 3 (Lossless CD: 44.1k/16) played once, 100s = 1.6 mins
+        db.record_playback("/music/t3.mp3", 100_000, Some(44_100), Some(16))
+            .unwrap();
+
+        let recap = db.get_listening_recap().expect("get listening recap");
+        assert_eq!(recap.total_plays, 4);
+        assert_eq!(recap.total_minutes_listened, 15); // (600 + 200 + 100) / 60 = 15 mins
+
+        // Top tracks
+        assert_eq!(recap.top_tracks.len(), 3);
+        assert_eq!(recap.top_tracks[0].title, "Paranoid Android");
+        assert_eq!(recap.top_tracks[0].play_count, 2);
+
+        // Top artists
+        assert_eq!(recap.top_artists.len(), 2);
+        assert_eq!(recap.top_artists[0].artist, "Radiohead");
+        assert_eq!(recap.top_artists[0].play_count, 3);
+        assert_eq!(recap.top_artists[1].artist, "Pink Floyd");
+        assert_eq!(recap.top_artists[1].play_count, 1);
+
+        // Top genre
+        assert_eq!(recap.top_genre, Some("Alternative Rock".into()));
+
+        // Lossless and Hi-Res percentage:
+        // All 4 plays are >= 44.1k/16 => 100% lossless
+        // 2 of 4 plays are 96k/24 => 50% hi-res
+        assert!((recap.lossless_percentage - 100.0).abs() < 1e-3);
+        assert!((recap.hi_res_percentage - 50.0).abs() < 1e-3);
     }
 }

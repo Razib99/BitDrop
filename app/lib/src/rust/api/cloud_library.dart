@@ -10,7 +10,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 // These functions are ignored because they are not marked as `pub`: `fetch_online_cover_art`, `parse_filename_metadata`, `parse_index_number`, `parse_track_and_title`, `parse_year`, `sanitize_filename`, `throttle_itunes`, `url_encode`
 // These functions are ignored because they have generic arguments: `with_db_mut`, `with_db`
 // These types are ignored because they are not used by any `pub` functions: `CACHE_DIR`, `DB`, `HTTP_CLIENT`, `RATE_LIMITER`, `RT`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `deref`, `deref`, `deref`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Opens (or creates) the library database. Safe to call repeatedly.
 Future<void> cloudLibraryOpen(
@@ -236,6 +236,43 @@ Future<int> cloudLibraryScanLocalFolder(
 Future<int> cloudLibraryPruneLocalTracks({required String rootLabel}) =>
     RustLib.instance.api
         .crateApiCloudLibraryCloudLibraryPruneLocalTracks(rootLabel: rootLabel);
+
+/// Retrieves cached lyrics for `file_id`. If not cached, queries LRCLIB online fallback
+/// and saves the result in SQLite.
+Future<CloudTrackLyrics?> cloudLibraryGetLyrics(
+        {required String fileId,
+        required String artist,
+        required String title,
+        required String album,
+        required int durationSecs}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryGetLyrics(
+        fileId: fileId,
+        artist: artist,
+        title: title,
+        album: album,
+        durationSecs: durationSecs);
+
+/// Manually saves or overrides lyrics for `file_id`.
+Future<void> cloudLibrarySaveLyrics(
+        {required String fileId, required CloudTrackLyrics lyrics}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibrarySaveLyrics(
+        fileId: fileId, lyrics: lyrics);
+
+/// Records a qualified playback entry into the `playback_history` table.
+Future<void> cloudLibraryRecordPlayback(
+        {required String fileId,
+        required int listenedMs,
+        int? sampleRate,
+        int? bitDepth}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryRecordPlayback(
+        fileId: fileId,
+        listenedMs: listenedMs,
+        sampleRate: sampleRate,
+        bitDepth: bitDepth);
+
+/// Computes the complete Audiophile Listening Recap from `playback_history`.
+Future<CloudListeningRecap> cloudLibraryGetListeningRecap() =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryGetListeningRecap();
 
 /// Materialized album summary for instant grid/list rendering.
 class AlbumSummary {
@@ -494,6 +531,134 @@ class CloudGenre {
           artworkPath == other.artworkPath;
 }
 
+/// Aggregate metrics for the Audiophile Listening Recap.
+class CloudListeningRecap {
+  final BigInt totalMinutesListened;
+  final BigInt totalPlays;
+  final List<CloudRecapTrackItem> topTracks;
+  final List<CloudRecapArtistItem> topArtists;
+  final String? topGenre;
+  final double losslessPercentage;
+  final double hiResPercentage;
+
+  const CloudListeningRecap({
+    required this.totalMinutesListened,
+    required this.totalPlays,
+    required this.topTracks,
+    required this.topArtists,
+    this.topGenre,
+    required this.losslessPercentage,
+    required this.hiResPercentage,
+  });
+
+  @override
+  int get hashCode =>
+      totalMinutesListened.hashCode ^
+      totalPlays.hashCode ^
+      topTracks.hashCode ^
+      topArtists.hashCode ^
+      topGenre.hashCode ^
+      losslessPercentage.hashCode ^
+      hiResPercentage.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudListeningRecap &&
+          runtimeType == other.runtimeType &&
+          totalMinutesListened == other.totalMinutesListened &&
+          totalPlays == other.totalPlays &&
+          topTracks == other.topTracks &&
+          topArtists == other.topArtists &&
+          topGenre == other.topGenre &&
+          losslessPercentage == other.losslessPercentage &&
+          hiResPercentage == other.hiResPercentage;
+}
+
+/// A single timestamped lyric line for UI rendering.
+class CloudLyricLine {
+  final BigInt timestampMs;
+  final String text;
+
+  const CloudLyricLine({
+    required this.timestampMs,
+    required this.text,
+  });
+
+  @override
+  int get hashCode => timestampMs.hashCode ^ text.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudLyricLine &&
+          runtimeType == other.runtimeType &&
+          timestampMs == other.timestampMs &&
+          text == other.text;
+}
+
+/// Individual artist stats item for the listening recap.
+class CloudRecapArtistItem {
+  final String artist;
+  final int playCount;
+  final int totalMinutes;
+
+  const CloudRecapArtistItem({
+    required this.artist,
+    required this.playCount,
+    required this.totalMinutes,
+  });
+
+  @override
+  int get hashCode =>
+      artist.hashCode ^ playCount.hashCode ^ totalMinutes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudRecapArtistItem &&
+          runtimeType == other.runtimeType &&
+          artist == other.artist &&
+          playCount == other.playCount &&
+          totalMinutes == other.totalMinutes;
+}
+
+/// Individual track stats item for the listening recap.
+class CloudRecapTrackItem {
+  final String fileId;
+  final String title;
+  final String artist;
+  final int playCount;
+  final int totalMinutes;
+
+  const CloudRecapTrackItem({
+    required this.fileId,
+    required this.title,
+    required this.artist,
+    required this.playCount,
+    required this.totalMinutes,
+  });
+
+  @override
+  int get hashCode =>
+      fileId.hashCode ^
+      title.hashCode ^
+      artist.hashCode ^
+      playCount.hashCode ^
+      totalMinutes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudRecapTrackItem &&
+          runtimeType == other.runtimeType &&
+          fileId == other.fileId &&
+          title == other.title &&
+          artist == other.artist &&
+          playCount == other.playCount &&
+          totalMinutes == other.totalMinutes;
+}
+
 /// A track as the UI sees it.
 class CloudTrack {
   final String fileId;
@@ -582,6 +747,31 @@ class CloudTrack {
           sizeBytes == other.sizeBytes &&
           tagsRead == other.tagsRead &&
           artworkPath == other.artworkPath;
+}
+
+/// Parsed lyrics for a track, supporting both synchronized and plain formats.
+class CloudTrackLyrics {
+  final bool synced;
+  final List<CloudLyricLine> lines;
+  final String plainLyrics;
+
+  const CloudTrackLyrics({
+    required this.synced,
+    required this.lines,
+    required this.plainLyrics,
+  });
+
+  @override
+  int get hashCode => synced.hashCode ^ lines.hashCode ^ plainLyrics.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudTrackLyrics &&
+          runtimeType == other.runtimeType &&
+          synced == other.synced &&
+          lines == other.lines &&
+          plainLyrics == other.plainLyrics;
 }
 
 class KeyValuePair {

@@ -1092,6 +1092,60 @@ class BitDropLibraryService {
     }
   }
 
+  Future<rust_cache.CloudTrackLyrics?> getLyrics(Track track) async {
+    try {
+      final res = await rust_cache.cloudLibraryGetLyrics(
+        fileId: track.id,
+        artist: track.artist,
+        title: track.title,
+        album: track.albumTitle,
+        durationSecs: track.durationMs ~/ 1000,
+      );
+      if (res != null) return res;
+    } catch (e) {
+      debugPrint('[library] failed to get lyrics from rust: $e');
+    }
+    return null;
+  }
+
+  Future<void> saveLyrics({
+    required String fileId,
+    required rust_cache.CloudTrackLyrics lyrics,
+  }) async {
+    try {
+      await rust_cache.cloudLibrarySaveLyrics(fileId: fileId, lyrics: lyrics);
+    } catch (e) {
+      debugPrint('[library] failed to save lyrics to rust: $e');
+    }
+  }
+
+  Future<void> recordPlayback({
+    required String fileId,
+    required int listenedMs,
+    int? sampleRate,
+    int? bitDepth,
+  }) async {
+    try {
+      await rust_cache.cloudLibraryRecordPlayback(
+        fileId: fileId,
+        listenedMs: listenedMs,
+        sampleRate: sampleRate,
+        bitDepth: bitDepth,
+      );
+    } catch (e) {
+      debugPrint('[library] failed to record playback: $e');
+    }
+  }
+
+  Future<rust_cache.CloudListeningRecap?> getListeningRecap() async {
+    try {
+      return await rust_cache.cloudLibraryGetListeningRecap();
+    } catch (e) {
+      debugPrint('[library] failed to get listening recap: $e');
+      return null;
+    }
+  }
+
   void dispose() {
     _cloudStatusSub?.cancel();
     _syncStatus.close();

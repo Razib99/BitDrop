@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:rxdart/rxdart.dart';
 
@@ -123,6 +124,85 @@ class BitDropSettingsRepository {
       await rust_cache.cloudDbSetKv(key: 'device_profiles', value: json);
     } catch (e) {
       debugPrint('[persistence] failed to save device profiles: $e');
+    }
+  }
+
+  /// Exports app preferences, EQ presets, device profiles, and optional listening recap
+  /// to a portable, human-readable JSON string formatted for 1-tap backup.
+  Future<String> exportBackupJson({ListeningRecap? recap}) async {
+    final payload = <String, dynamic>{
+      'version': 1,
+      'app': 'BitDrop',
+      'exportedAt': DateTime.now().toUtc().toIso8601String(),
+      'app_settings':
+          jsonDecode(PersistenceCodec.serializeAppSettings(_settings.value)),
+      'eq_state': jsonDecode(PersistenceCodec.serializeEqState(_eq.value)),
+      'device_profiles': jsonDecode(
+          PersistenceCodec.serializeDeviceProfiles(_deviceProfiles.value)),
+    };
+    if (recap != null) {
+      payload['listening_recap'] = {
+        'totalMinutesListened': recap.totalMinutesListened,
+        'losslessPlaybackPercent': recap.losslessPercentage,
+        'hiResPlaybackPercent': recap.hiResPercentage,
+        'topGenre': recap.topGenre,
+        'topTracks': recap.topTracks
+            .map((t) => {
+                  'fileId': t.fileId,
+                  'title': t.title,
+                  'artist': t.artist,
+                  'playCount': t.playCount,
+                  'totalMinutes': t.totalMinutes,
+                })
+            .toList(),
+        'topArtists': recap.topArtists
+            .map((a) => {
+                  'artist': a.artist,
+                  'playCount': a.playCount,
+                  'totalMinutes': a.totalMinutes,
+                })
+            .toList(),
+      };
+    }
+    return const JsonEncoder.withIndent('  ').convert(payload);
+  }
+
+  /// Restores app settings, EQ preset state, and device profile mappings from
+  /// a backup JSON string, persisting to SQLite and updating DSP engine state.
+  Future<bool> importBackupJson(String jsonStr) async {
+    try {
+      final decoded = jsonDecode(jsonStr);
+      if (decoded is! Map) return false;
+
+      if (decoded.containsKey('app_settings')) {
+        final sJson = jsonEncode(decoded['app_settings']);
+        final loaded = PersistenceCodec.deserializeAppSettings(sJson);
+        _settings.add(loaded);
+        await saveSettings();
+        onSettingsChanged?.call(loaded);
+      }
+
+      if (decoded.containsKey('eq_state')) {
+        final eqJson = jsonEncode(decoded['eq_state']);
+        final loaded = PersistenceCodec.deserializeEqState(eqJson);
+        _eq.add(loaded);
+        pushEqToEngine(loaded);
+        await saveEqState();
+      }
+
+      if (decoded.containsKey('device_profiles')) {
+        final dpJson = jsonEncode(decoded['device_profiles']);
+        final loaded = PersistenceCodec.deserializeDeviceProfiles(dpJson);
+        if (loaded.isNotEmpty) {
+          _deviceProfiles.add(loaded);
+          await saveDeviceProfiles();
+        }
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint('[persistence] failed to import backup json: $e');
+      return false;
     }
   }
 

@@ -8,6 +8,7 @@ import '../../theme/tokens.dart';
 import '../../util/format.dart';
 import '../../widgets/common.dart';
 import '../../widgets/indicators.dart';
+import 'ambient_lyrics_view.dart';
 
 Future<void> showTrackInfoSheet(BuildContext context, Track track) =>
     showModalBottomSheet(
@@ -131,41 +132,14 @@ Future<void> showLyricsSheet(BuildContext context, Track track) =>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (_) => BottomSheetScaffold(
         title: 'Lyrics',
-        subtitle: '${track.title} · embedded in the file',
-        child: Padding(
-          padding: const EdgeInsets.all(Spacing.md),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Embedded only — BitDrop has no servers to look lyrics up from.
-              Text(
-                _placeholderLyrics,
-                style: context.t.body.copyWith(height: 1.8),
-              ),
-              const SizedBox(height: Spacing.md),
-              Text(
-                'Lyrics come from the file itself. BitDrop never looks them '
-                'up online.',
-                style: context.t.bodySmall
-                    .copyWith(color: context.c.textSecondary),
-              ),
-            ],
-          ),
+        subtitle: '${track.title} · ${track.artist}',
+        child: SizedBox(
+          height: 480,
+          child: AmbientLyricsView(track: track),
         ),
       ),
     );
 
-const _placeholderLyrics = '''
-Low water in the harbour,
-lights across the bay.
-
-Counting out the hours
-until the ferry turns away.
-
-Salt on the breakwater,
-glass on the stone.
-
-Everything that carried us
-is carrying us home.''';

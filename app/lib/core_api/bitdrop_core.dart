@@ -69,6 +69,10 @@ abstract interface class BitDropCore {
   Future<void> recordRecentSearch(String query);
   Future<void> removeRecentSearch(String query);
   Future<void> clearRecentSearches();
+  Future<TrackLyrics?> lyrics(Track track);
+  Future<ListeningRecap?> listeningRecap();
+  Future<String> exportBackup();
+  Future<bool> importBackup(String jsonStr);
 
   // ---- Commands ------------------------------------------------------------
 

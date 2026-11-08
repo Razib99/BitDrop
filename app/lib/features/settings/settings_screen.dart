@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
+import '../home/listening_recap_sheet.dart';
 
 import '../../core_api/commands.dart';
 import '../../core_api/enums.dart';
@@ -497,6 +500,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ],
       ),
       SettingsGroup(
+        title: 'Data & Backup',
+        icon: Icons.backup_outlined,
+        tiles: [
+          NavigationSettingsTile(
+            title: 'Audiophile Listening Recap',
+            subtitle:
+                'On-device listening statistics, lossless % and top tracks',
+            onTap: () => showListeningRecapSheet(context),
+          ),
+          NavigationSettingsTile(
+            title: '1-Tap Export Backup',
+            subtitle:
+                'Exports preferences, EQ presets, and recap to bitdrop_backup.json',
+            onTap: () => _handleExportBackup(context),
+          ),
+          NavigationSettingsTile(
+            title: 'Restore from Backup',
+            subtitle:
+                'Restore settings, EQ presets, and device profiles from JSON',
+            onTap: () => _handleRestoreBackup(context),
+          ),
+        ],
+      ),
+      SettingsGroup(
         title: 'Privacy',
         icon: Icons.lock_outline,
         tiles: [
@@ -537,6 +564,90 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ],
       ),
     ];
+  }
+
+  Future<void> _handleExportBackup(BuildContext context) async {
+    try {
+      final jsonStr = await ref.read(coreProvider).exportBackup();
+      await Clipboard.setData(ClipboardData(text: jsonStr));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Backup copied to clipboard! (bitdrop_backup.json)'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to export backup: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleRestoreBackup(BuildContext context) async {
+    final textController = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Restore from Backup'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Paste the contents of your bitdrop_backup.json below:',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: Spacing.sm),
+            TextField(
+              controller: textController,
+              maxLines: 6,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              decoration: const InputDecoration(
+                hintText: '{\n  "version": 1,\n  ...\n}',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok == true &&
+        textController.text.trim().isNotEmpty &&
+        context.mounted) {
+      final success = await ref
+          .read(coreProvider)
+          .importBackup(textController.text.trim());
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              success
+                  ? 'Settings, EQ, and profiles successfully restored!'
+                  : 'Failed to restore: Invalid backup JSON format.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _confirmSignOut(BuildContext context) async {

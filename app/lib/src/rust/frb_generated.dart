@@ -64,7 +64,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.0.0';
 
   @override
-  int get rustContentHash => 537747525;
+  int get rustContentHash => -1161722417;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -229,6 +229,16 @@ abstract class RustLibApi extends BaseApi {
 
   Future<List<CloudGenre>> crateApiCloudLibraryCloudLibraryGetGenres();
 
+  Future<CloudListeningRecap>
+      crateApiCloudLibraryCloudLibraryGetListeningRecap();
+
+  Future<CloudTrackLyrics?> crateApiCloudLibraryCloudLibraryGetLyrics(
+      {required String fileId,
+      required String artist,
+      required String title,
+      required String album,
+      required int durationSecs});
+
   Future<List<CloudTrackRow>> crateApiCloudLibraryCloudLibraryGetTracksByGenre(
       {required String genre});
 
@@ -252,6 +262,15 @@ abstract class RustLibApi extends BaseApi {
       {required String fileId, required String url, String? authToken});
 
   Future<void> crateApiCloudLibraryCloudLibraryRebuildAlbums();
+
+  Future<void> crateApiCloudLibraryCloudLibraryRecordPlayback(
+      {required String fileId,
+      required int listenedMs,
+      int? sampleRate,
+      int? bitDepth});
+
+  Future<void> crateApiCloudLibraryCloudLibrarySaveLyrics(
+      {required String fileId, required CloudTrackLyrics lyrics});
 
   Future<int> crateApiCloudLibraryCloudLibraryScanLocalFolder(
       {required String directoryPath, required String label});
@@ -1707,6 +1726,66 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<CloudListeningRecap>
+      crateApiCloudLibraryCloudLibraryGetListeningRecap() {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 56, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_cloud_listening_recap,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiCloudLibraryCloudLibraryGetListeningRecapConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiCloudLibraryCloudLibraryGetListeningRecapConstMeta =>
+          const TaskConstMeta(
+            debugName: "cloud_library_get_listening_recap",
+            argNames: [],
+          );
+
+  @override
+  Future<CloudTrackLyrics?> crateApiCloudLibraryCloudLibraryGetLyrics(
+      {required String fileId,
+      required String artist,
+      required String title,
+      required String album,
+      required int durationSecs}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(fileId, serializer);
+        sse_encode_String(artist, serializer);
+        sse_encode_String(title, serializer);
+        sse_encode_String(album, serializer);
+        sse_encode_u_32(durationSecs, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 57, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_box_autoadd_cloud_track_lyrics,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiCloudLibraryCloudLibraryGetLyricsConstMeta,
+      argValues: [fileId, artist, title, album, durationSecs],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiCloudLibraryCloudLibraryGetLyricsConstMeta =>
+      const TaskConstMeta(
+        debugName: "cloud_library_get_lyrics",
+        argNames: ["fileId", "artist", "title", "album", "durationSecs"],
+      );
+
+  @override
   Future<List<CloudTrackRow>> crateApiCloudLibraryCloudLibraryGetTracksByGenre(
       {required String genre}) {
     return handler.executeNormal(NormalTask(
@@ -1714,7 +1793,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(genre, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 56, port: port_);
+            funcId: 58, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_cloud_track_row,
@@ -1742,7 +1821,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(folderPath, serializer);
         sse_encode_bool(recursive, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 57, port: port_);
+            funcId: 59, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_cloud_track_row,
@@ -1770,7 +1849,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(dbPath, serializer);
         sse_encode_String(cacheDir, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 58, port: port_);
+            funcId: 60, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1796,7 +1875,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_u_32(limit, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 59, port: port_);
+            funcId: 61, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_String,
@@ -1822,7 +1901,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(rootLabel, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 60, port: port_);
+            funcId: 62, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_32,
@@ -1851,7 +1930,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_list_String(folderPrefixes, serializer);
         sse_encode_list_String(validFileIds, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 61, port: port_);
+            funcId: 63, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_String,
@@ -1879,7 +1958,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(url, serializer);
         sse_encode_opt_String(authToken, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 62, port: port_);
+            funcId: 64, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
@@ -1903,7 +1982,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 63, port: port_);
+            funcId: 65, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1922,6 +2001,65 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiCloudLibraryCloudLibraryRecordPlayback(
+      {required String fileId,
+      required int listenedMs,
+      int? sampleRate,
+      int? bitDepth}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(fileId, serializer);
+        sse_encode_u_32(listenedMs, serializer);
+        sse_encode_opt_box_autoadd_u_32(sampleRate, serializer);
+        sse_encode_opt_box_autoadd_u_32(bitDepth, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 66, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiCloudLibraryCloudLibraryRecordPlaybackConstMeta,
+      argValues: [fileId, listenedMs, sampleRate, bitDepth],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiCloudLibraryCloudLibraryRecordPlaybackConstMeta =>
+      const TaskConstMeta(
+        debugName: "cloud_library_record_playback",
+        argNames: ["fileId", "listenedMs", "sampleRate", "bitDepth"],
+      );
+
+  @override
+  Future<void> crateApiCloudLibraryCloudLibrarySaveLyrics(
+      {required String fileId, required CloudTrackLyrics lyrics}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(fileId, serializer);
+        sse_encode_box_autoadd_cloud_track_lyrics(lyrics, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 67, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiCloudLibraryCloudLibrarySaveLyricsConstMeta,
+      argValues: [fileId, lyrics],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiCloudLibraryCloudLibrarySaveLyricsConstMeta =>
+      const TaskConstMeta(
+        debugName: "cloud_library_save_lyrics",
+        argNames: ["fileId", "lyrics"],
+      );
+
+  @override
   Future<int> crateApiCloudLibraryCloudLibraryScanLocalFolder(
       {required String directoryPath, required String label}) {
     return handler.executeNormal(NormalTask(
@@ -1930,7 +2068,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(directoryPath, serializer);
         sse_encode_String(label, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 64, port: port_);
+            funcId: 68, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_32,
@@ -1957,7 +2095,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_list_String(fileIds, serializer);
         sse_encode_opt_String(authToken, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 65, port: port_);
+            funcId: 69, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_32,
@@ -1984,7 +2122,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(query, serializer);
         sse_encode_opt_box_autoadd_u_32(limit, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 66, port: port_);
+            funcId: 70, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_cloud_track,
@@ -2008,7 +2146,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 67, port: port_);
+            funcId: 71, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_32,
@@ -2033,7 +2171,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 68, port: port_);
+            funcId: 72, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_cloud_track,
@@ -2057,7 +2195,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 69, port: port_);
+            funcId: 73, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_64,
@@ -2081,7 +2219,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_list_prim_u_8_loose(audioData, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 70)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 74)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_decoded_audio,
@@ -2105,7 +2243,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(path, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 71)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 75)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
@@ -2128,7 +2266,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(name, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 72)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 76)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -2151,7 +2289,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 73, port: port_);
+            funcId: 77, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -2176,7 +2314,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_u_32(sampleRate, serializer);
         sse_encode_u_32(channels, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 74)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 78)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -2200,7 +2338,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(path, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 75)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 79)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_track_metadata,
@@ -2224,7 +2362,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(path, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 76)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 80)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_track_metadata,
@@ -2306,6 +2444,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   AutoEqProfileData dco_decode_box_autoadd_auto_eq_profile_data(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_auto_eq_profile_data(raw);
+  }
+
+  @protected
+  CloudTrackLyrics dco_decode_box_autoadd_cloud_track_lyrics(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_cloud_track_lyrics(raw);
   }
 
   @protected
@@ -2410,6 +2554,63 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudListeningRecap dco_decode_cloud_listening_recap(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return CloudListeningRecap(
+      totalMinutesListened: dco_decode_u_64(arr[0]),
+      totalPlays: dco_decode_u_64(arr[1]),
+      topTracks: dco_decode_list_cloud_recap_track_item(arr[2]),
+      topArtists: dco_decode_list_cloud_recap_artist_item(arr[3]),
+      topGenre: dco_decode_opt_String(arr[4]),
+      losslessPercentage: dco_decode_f_64(arr[5]),
+      hiResPercentage: dco_decode_f_64(arr[6]),
+    );
+  }
+
+  @protected
+  CloudLyricLine dco_decode_cloud_lyric_line(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return CloudLyricLine(
+      timestampMs: dco_decode_u_64(arr[0]),
+      text: dco_decode_String(arr[1]),
+    );
+  }
+
+  @protected
+  CloudRecapArtistItem dco_decode_cloud_recap_artist_item(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return CloudRecapArtistItem(
+      artist: dco_decode_String(arr[0]),
+      playCount: dco_decode_u_32(arr[1]),
+      totalMinutes: dco_decode_u_32(arr[2]),
+    );
+  }
+
+  @protected
+  CloudRecapTrackItem dco_decode_cloud_recap_track_item(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return CloudRecapTrackItem(
+      fileId: dco_decode_String(arr[0]),
+      title: dco_decode_String(arr[1]),
+      artist: dco_decode_String(arr[2]),
+      playCount: dco_decode_u_32(arr[3]),
+      totalMinutes: dco_decode_u_32(arr[4]),
+    );
+  }
+
+  @protected
   CloudTrack dco_decode_cloud_track(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2434,6 +2635,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       sizeBytes: dco_decode_u_64(arr[15]),
       tagsRead: dco_decode_bool(arr[16]),
       artworkPath: dco_decode_String(arr[17]),
+    );
+  }
+
+  @protected
+  CloudTrackLyrics dco_decode_cloud_track_lyrics(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return CloudTrackLyrics(
+      synced: dco_decode_bool(arr[0]),
+      lines: dco_decode_list_cloud_lyric_line(arr[1]),
+      plainLyrics: dco_decode_String(arr[2]),
     );
   }
 
@@ -2691,6 +2905,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<CloudLyricLine> dco_decode_list_cloud_lyric_line(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_cloud_lyric_line).toList();
+  }
+
+  @protected
+  List<CloudRecapArtistItem> dco_decode_list_cloud_recap_artist_item(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_cloud_recap_artist_item)
+        .toList();
+  }
+
+  @protected
+  List<CloudRecapTrackItem> dco_decode_list_cloud_recap_track_item(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_cloud_recap_track_item)
+        .toList();
+  }
+
+  @protected
   List<CloudTrack> dco_decode_list_cloud_track(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_cloud_track).toList();
@@ -2769,6 +3007,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return raw == null
         ? null
         : dco_decode_box_autoadd_auto_eq_profile_data(raw);
+  }
+
+  @protected
+  CloudTrackLyrics? dco_decode_opt_box_autoadd_cloud_track_lyrics(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_cloud_track_lyrics(raw);
   }
 
   @protected
@@ -2989,6 +3233,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudTrackLyrics sse_decode_box_autoadd_cloud_track_lyrics(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_cloud_track_lyrics(deserializer));
+  }
+
+  @protected
   CloudTrackRow sse_decode_box_autoadd_cloud_track_row(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -3090,6 +3341,65 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudListeningRecap sse_decode_cloud_listening_recap(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_totalMinutesListened = sse_decode_u_64(deserializer);
+    var var_totalPlays = sse_decode_u_64(deserializer);
+    var var_topTracks = sse_decode_list_cloud_recap_track_item(deserializer);
+    var var_topArtists = sse_decode_list_cloud_recap_artist_item(deserializer);
+    var var_topGenre = sse_decode_opt_String(deserializer);
+    var var_losslessPercentage = sse_decode_f_64(deserializer);
+    var var_hiResPercentage = sse_decode_f_64(deserializer);
+    return CloudListeningRecap(
+        totalMinutesListened: var_totalMinutesListened,
+        totalPlays: var_totalPlays,
+        topTracks: var_topTracks,
+        topArtists: var_topArtists,
+        topGenre: var_topGenre,
+        losslessPercentage: var_losslessPercentage,
+        hiResPercentage: var_hiResPercentage);
+  }
+
+  @protected
+  CloudLyricLine sse_decode_cloud_lyric_line(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_timestampMs = sse_decode_u_64(deserializer);
+    var var_text = sse_decode_String(deserializer);
+    return CloudLyricLine(timestampMs: var_timestampMs, text: var_text);
+  }
+
+  @protected
+  CloudRecapArtistItem sse_decode_cloud_recap_artist_item(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_artist = sse_decode_String(deserializer);
+    var var_playCount = sse_decode_u_32(deserializer);
+    var var_totalMinutes = sse_decode_u_32(deserializer);
+    return CloudRecapArtistItem(
+        artist: var_artist,
+        playCount: var_playCount,
+        totalMinutes: var_totalMinutes);
+  }
+
+  @protected
+  CloudRecapTrackItem sse_decode_cloud_recap_track_item(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_fileId = sse_decode_String(deserializer);
+    var var_title = sse_decode_String(deserializer);
+    var var_artist = sse_decode_String(deserializer);
+    var var_playCount = sse_decode_u_32(deserializer);
+    var var_totalMinutes = sse_decode_u_32(deserializer);
+    return CloudRecapTrackItem(
+        fileId: var_fileId,
+        title: var_title,
+        artist: var_artist,
+        playCount: var_playCount,
+        totalMinutes: var_totalMinutes);
+  }
+
+  @protected
   CloudTrack sse_decode_cloud_track(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_fileId = sse_decode_String(deserializer);
@@ -3129,6 +3439,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sizeBytes: var_sizeBytes,
         tagsRead: var_tagsRead,
         artworkPath: var_artworkPath);
+  }
+
+  @protected
+  CloudTrackLyrics sse_decode_cloud_track_lyrics(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_synced = sse_decode_bool(deserializer);
+    var var_lines = sse_decode_list_cloud_lyric_line(deserializer);
+    var var_plainLyrics = sse_decode_String(deserializer);
+    return CloudTrackLyrics(
+        synced: var_synced, lines: var_lines, plainLyrics: var_plainLyrics);
   }
 
   @protected
@@ -3460,6 +3780,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<CloudLyricLine> sse_decode_list_cloud_lyric_line(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <CloudLyricLine>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_cloud_lyric_line(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<CloudRecapArtistItem> sse_decode_list_cloud_recap_artist_item(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <CloudRecapArtistItem>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_cloud_recap_artist_item(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<CloudRecapTrackItem> sse_decode_list_cloud_recap_track_item(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <CloudRecapTrackItem>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_cloud_recap_track_item(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<CloudTrack> sse_decode_list_cloud_track(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -3588,6 +3947,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_auto_eq_profile_data(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  CloudTrackLyrics? sse_decode_opt_box_autoadd_cloud_track_lyrics(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_cloud_track_lyrics(deserializer));
     } else {
       return null;
     }
@@ -3839,6 +4210,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_cloud_track_lyrics(
+      CloudTrackLyrics self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_cloud_track_lyrics(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_cloud_track_row(
       CloudTrackRow self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -3915,6 +4293,47 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_cloud_listening_recap(
+      CloudListeningRecap self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.totalMinutesListened, serializer);
+    sse_encode_u_64(self.totalPlays, serializer);
+    sse_encode_list_cloud_recap_track_item(self.topTracks, serializer);
+    sse_encode_list_cloud_recap_artist_item(self.topArtists, serializer);
+    sse_encode_opt_String(self.topGenre, serializer);
+    sse_encode_f_64(self.losslessPercentage, serializer);
+    sse_encode_f_64(self.hiResPercentage, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_lyric_line(
+      CloudLyricLine self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.timestampMs, serializer);
+    sse_encode_String(self.text, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_recap_artist_item(
+      CloudRecapArtistItem self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.artist, serializer);
+    sse_encode_u_32(self.playCount, serializer);
+    sse_encode_u_32(self.totalMinutes, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_recap_track_item(
+      CloudRecapTrackItem self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.fileId, serializer);
+    sse_encode_String(self.title, serializer);
+    sse_encode_String(self.artist, serializer);
+    sse_encode_u_32(self.playCount, serializer);
+    sse_encode_u_32(self.totalMinutes, serializer);
+  }
+
+  @protected
   void sse_encode_cloud_track(CloudTrack self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.fileId, serializer);
@@ -3935,6 +4354,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_64(self.sizeBytes, serializer);
     sse_encode_bool(self.tagsRead, serializer);
     sse_encode_String(self.artworkPath, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_track_lyrics(
+      CloudTrackLyrics self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.synced, serializer);
+    sse_encode_list_cloud_lyric_line(self.lines, serializer);
+    sse_encode_String(self.plainLyrics, serializer);
   }
 
   @protected
@@ -4187,6 +4615,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_cloud_lyric_line(
+      List<CloudLyricLine> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_cloud_lyric_line(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_cloud_recap_artist_item(
+      List<CloudRecapArtistItem> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_cloud_recap_artist_item(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_cloud_recap_track_item(
+      List<CloudRecapTrackItem> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_cloud_recap_track_item(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_cloud_track(
       List<CloudTrack> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -4306,6 +4764,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_auto_eq_profile_data(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_track_lyrics(
+      CloudTrackLyrics? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_cloud_track_lyrics(self, serializer);
     }
   }
 

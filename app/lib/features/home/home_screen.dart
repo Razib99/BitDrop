@@ -12,6 +12,7 @@ import '../../l10n/l10n.dart';
 import '../../providers/core_providers.dart';
 import '../../providers/player_sheet_provider.dart';
 import '../storage/google_drive_service.dart';
+import 'listening_recap_sheet.dart';
 import '../../routing/routes.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
@@ -51,6 +52,11 @@ class HomeScreen extends ConsumerWidget {
               tooltip: context.l10n.navSearch,
               icon: const Icon(Icons.search),
               onPressed: () => context.go(Routes.search),
+            ),
+            IconButton(
+              tooltip: 'Audiophile Recap',
+              icon: const Icon(Icons.insights_outlined),
+              onPressed: () => showListeningRecapSheet(context),
             ),
             IconButton(
               tooltip: context.l10n.navSettings,

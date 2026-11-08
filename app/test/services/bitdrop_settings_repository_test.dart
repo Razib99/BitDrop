@@ -177,5 +177,87 @@ Filter 2: ON LSC Fc 80 Hz Gain 2.0 dB Q 0.71
       expect(repo.currentEq.bands.length, equals(2));
       expect(repo.currentEq.presetName, equals('Imported Parametric EQ'));
     });
+
+    test('exportBackupJson exports valid JSON payload with recap metrics', () async {
+      await repo.handleSetSetting(const SetSetting(key: 'gapless', value: false));
+      const recap = ListeningRecap(
+        totalMinutesListened: 120,
+        totalPlays: 25,
+        topTracks: [
+          RecapTrackItem(
+            fileId: 'track-1',
+            title: 'Comfortably Numb',
+            artist: 'Pink Floyd',
+            playCount: 10,
+            totalMinutes: 62,
+          ),
+        ],
+        topArtists: [
+          RecapArtistItem(
+            artist: 'Pink Floyd',
+            playCount: 15,
+            totalMinutes: 90,
+          ),
+        ],
+        topGenre: 'Progressive Rock',
+        losslessPercentage: 92.5,
+        hiResPercentage: 65.0,
+      );
+
+      final jsonStr = await repo.exportBackupJson(recap: recap);
+      expect(jsonStr, contains('"app": "BitDrop"'));
+      expect(jsonStr, contains('"gapless": false'));
+      expect(jsonStr, contains('"Comfortably Numb"'));
+      expect(jsonStr, contains('"Pink Floyd"'));
+      expect(jsonStr, contains('"Progressive Rock"'));
+    });
+
+    test('importBackupJson restores settings, eq state, and device profiles', () async {
+      const backupJson = '''
+{
+  "version": 1,
+  "app": "BitDrop",
+  "app_settings": {
+    "gapless": false,
+    "directUsbDriver": true,
+    "safetyAttenuationEnabled": true,
+    "safetyAttenuationDb": -20.0
+  },
+  "eq_state": {
+    "mode": "parametric",
+    "preampDb": -3.5,
+    "bypass": false,
+    "bands": [
+      {
+        "id": 1,
+        "type": "peak",
+        "frequencyHz": 120.0,
+        "gainDb": 4.0,
+        "q": 1.2,
+        "enabled": true
+      }
+    ]
+  },
+  "device_profiles": [
+    {
+      "deviceId": "custom-dac",
+      "deviceName": "Custom Audiophile DAC",
+      "replayGain": "album",
+      "autoApply": true
+    }
+  ]
+}
+''';
+      final ok = await repo.importBackupJson(backupJson);
+      expect(ok, isTrue);
+      expect(repo.currentSettings.gapless, isFalse);
+      expect(repo.currentSettings.directUsbDriver, isTrue);
+      expect(repo.currentSettings.safetyAttenuationDb, equals(-20.0));
+      expect(repo.currentEq.mode, equals(EqMode.parametric));
+      expect(repo.currentEq.preampDb, equals(-3.5));
+      expect(repo.currentEq.bands.length, equals(1));
+      expect(repo.currentEq.bands.first.frequencyHz, equals(120.0));
+      expect(repo.currentDeviceProfiles.any((p) => p.deviceId == 'custom-dac'), isTrue);
+    });
   });
 }

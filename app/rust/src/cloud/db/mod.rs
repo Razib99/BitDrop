@@ -76,6 +76,36 @@ pub struct ReplacedFile {
     pub new_file_id: String,
 }
 
+/// Individual track stats item for the listening recap.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RecapTrackItem {
+    pub file_id: String,
+    pub title: String,
+    pub artist: String,
+    pub play_count: u32,
+    pub total_minutes: u32,
+}
+
+/// Individual artist stats item for the listening recap.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RecapArtistItem {
+    pub artist: String,
+    pub play_count: u32,
+    pub total_minutes: u32,
+}
+
+/// Aggregate metrics for the Audiophile Listening Recap.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ListeningRecap {
+    pub total_minutes_listened: u64,
+    pub total_plays: u64,
+    pub top_tracks: Vec<RecapTrackItem>,
+    pub top_artists: Vec<RecapArtistItem>,
+    pub top_genre: Option<String>,
+    pub lossless_percentage: f64,
+    pub hi_res_percentage: f64,
+}
+
 /// A placeholder record for a newly discovered audio file.
 pub struct TrackPlaceholder {
     pub file_id: String,
@@ -482,6 +512,41 @@ impl MetadataDb {
             [],
         )?;
 
+        // 10. Time-synced and plain-text lyrics cache (Phase 3.1)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS track_lyrics (
+                file_id          TEXT PRIMARY KEY,
+                synced           INTEGER NOT NULL DEFAULT 0,
+                plain_text       TEXT NOT NULL DEFAULT '',
+                synced_json      TEXT NOT NULL DEFAULT '[]',
+                fetched_at       INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )?;
+
+        // 11. Playback history and listening stats tracking (Phase 3.3)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS playback_history (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id          TEXT NOT NULL,
+                played_at_ts     INTEGER NOT NULL,
+                listened_ms      INTEGER NOT NULL,
+                sample_rate      INTEGER,
+                bit_depth        INTEGER
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_playback_history_file_id ON playback_history(file_id)",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_playback_history_played_at ON playback_history(played_at_ts)",
+            [],
+        )?;
+
         let autoeq = AutoEqRepository::new(conn);
         autoeq.seed_autoeq_profiles()?;
 
@@ -630,6 +695,33 @@ impl MetadataDb {
 
     pub fn rebuild_genres_index(&self) -> Result<()> {
         self.library().rebuild_genres_index()
+    }
+
+    pub fn get_lyrics(&self, file_id: &str) -> Result<Option<crate::cloud::lyrics::TrackLyrics>> {
+        self.library().get_lyrics(file_id)
+    }
+
+    pub fn save_lyrics(
+        &self,
+        file_id: &str,
+        lyrics: &crate::cloud::lyrics::TrackLyrics,
+    ) -> Result<()> {
+        self.library().save_lyrics(file_id, lyrics)
+    }
+
+    pub fn record_playback(
+        &self,
+        file_id: &str,
+        listened_ms: u32,
+        sample_rate: Option<u32>,
+        bit_depth: Option<u32>,
+    ) -> Result<()> {
+        self.library()
+            .record_playback(file_id, listened_ms, sample_rate, bit_depth)
+    }
+
+    pub fn get_listening_recap(&self) -> Result<ListeningRecap> {
+        self.library().get_listening_recap()
     }
 
     pub fn record_cached_chunk(&self, chunk: &CachedChunkRecord) -> Result<()> {

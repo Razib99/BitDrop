@@ -293,3 +293,15 @@ final trackSortProvider = StateProvider<TrackSort>((ref) => TrackSort.title);
 
 /// Multi-select state for library long-press.
 final selectionProvider = StateProvider<Set<String>>((ref) => const {});
+
+/// Time-synced or plain lyrics for the given track.
+final lyricsProvider =
+    FutureProvider.family<TrackLyrics?, Track>((ref, track) {
+  return ref.watch(coreProvider).lyrics(track);
+});
+
+/// Live Audiophile Listening Recap metrics.
+final listeningRecapProvider = FutureProvider<ListeningRecap?>((ref) {
+  return ref.watch(coreProvider).listeningRecap();
+});
+

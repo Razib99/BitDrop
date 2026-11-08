@@ -1142,3 +1142,101 @@ class SearchResults {
 
   bool get isNotEmpty => !isEmpty;
 }
+
+@immutable
+class LyricLine {
+  const LyricLine({
+    required this.timestampMs,
+    required this.text,
+  });
+
+  final int timestampMs;
+  final String text;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LyricLine &&
+          runtimeType == other.runtimeType &&
+          timestampMs == other.timestampMs &&
+          text == other.text;
+
+  @override
+  int get hashCode => timestampMs.hashCode ^ text.hashCode;
+}
+
+@immutable
+class TrackLyrics {
+  const TrackLyrics({
+    required this.synced,
+    required this.lines,
+    required this.plainLyrics,
+  });
+
+  final bool synced;
+  final List<LyricLine> lines;
+  final String plainLyrics;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TrackLyrics &&
+          runtimeType == other.runtimeType &&
+          synced == other.synced &&
+          plainLyrics == other.plainLyrics;
+
+  @override
+  int get hashCode => synced.hashCode ^ lines.hashCode ^ plainLyrics.hashCode;
+}
+
+@immutable
+class RecapTrackItem {
+  const RecapTrackItem({
+    required this.fileId,
+    required this.title,
+    required this.artist,
+    required this.playCount,
+    required this.totalMinutes,
+  });
+
+  final String fileId;
+  final String title;
+  final String artist;
+  final int playCount;
+  final int totalMinutes;
+}
+
+@immutable
+class RecapArtistItem {
+  const RecapArtistItem({
+    required this.artist,
+    required this.playCount,
+    required this.totalMinutes,
+  });
+
+  final String artist;
+  final int playCount;
+  final int totalMinutes;
+}
+
+@immutable
+class ListeningRecap {
+  const ListeningRecap({
+    required this.totalMinutesListened,
+    required this.totalPlays,
+    required this.topTracks,
+    required this.topArtists,
+    this.topGenre,
+    required this.losslessPercentage,
+    required this.hiResPercentage,
+  });
+
+  final int totalMinutesListened;
+  final int totalPlays;
+  final List<RecapTrackItem> topTracks;
+  final List<RecapArtistItem> topArtists;
+  final String? topGenre;
+  final double losslessPercentage;
+  final double hiResPercentage;
+}
+

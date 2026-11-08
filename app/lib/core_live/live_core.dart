@@ -61,6 +61,7 @@ class LiveBitDropCore implements BitDropCore {
 
   /// When the current stall began, for escalating the buffering copy.
   DateTime? _bufferingSince;
+  bool _playbackRecorded = false;
 
   /// Last seen output-stream open count. An exclusive AAudio stream is torn
   /// down by any routing change and the engine silently rebuilds it; logging
@@ -303,6 +304,7 @@ class LiveBitDropCore implements BitDropCore {
     _audioHandler.queue.listen((_) => _emitQueue());
 
     _audioHandler.mediaItem.listen((item) {
+      _playbackRecorded = false;
       if (item != null) {
         final track = _lookupTrack(item.id);
         if (track != null) {
@@ -1407,6 +1409,62 @@ class LiveBitDropCore implements BitDropCore {
     }
   }
 
+  @override
+  Future<TrackLyrics?> lyrics(Track track) async {
+    final rustLyrics = await _libraryService.getLyrics(track);
+    if (rustLyrics == null) return null;
+    return TrackLyrics(
+      synced: rustLyrics.synced,
+      lines: rustLyrics.lines
+          .map((l) => LyricLine(
+                timestampMs: l.timestampMs.toInt(),
+                text: l.text,
+              ))
+          .toList(),
+      plainLyrics: rustLyrics.plainLyrics,
+    );
+  }
+
+  @override
+  Future<ListeningRecap?> listeningRecap() async {
+    final rustRecap = await _libraryService.getListeningRecap();
+    if (rustRecap == null) return null;
+    return ListeningRecap(
+      totalMinutesListened: rustRecap.totalMinutesListened.toInt(),
+      totalPlays: rustRecap.totalPlays.toInt(),
+      topTracks: rustRecap.topTracks
+          .map((t) => RecapTrackItem(
+                fileId: t.fileId,
+                title: t.title,
+                artist: t.artist,
+                playCount: t.playCount,
+                totalMinutes: t.totalMinutes,
+              ))
+          .toList(),
+      topArtists: rustRecap.topArtists
+          .map((a) => RecapArtistItem(
+                artist: a.artist,
+                playCount: a.playCount,
+                totalMinutes: a.totalMinutes,
+              ))
+          .toList(),
+      topGenre: rustRecap.topGenre,
+      losslessPercentage: rustRecap.losslessPercentage,
+      hiResPercentage: rustRecap.hiResPercentage,
+    );
+  }
+
+  @override
+  Future<String> exportBackup() async {
+    final recap = await listeningRecap();
+    return _settingsRepo.exportBackupJson(recap: recap);
+  }
+
+  @override
+  Future<bool> importBackup(String jsonStr) async {
+    return _settingsRepo.importBackupJson(jsonStr);
+  }
+
   String _currentContextLabel = '';
 
   void _emitQueue() {
@@ -2204,6 +2262,7 @@ class LiveBitDropCore implements BitDropCore {
         final posMs = rust.engineGetPosition();
         final durationMs =
             _audioHandler.mediaItem.value?.duration?.inMilliseconds ?? 0;
+        _checkAndRecordPlayback(posMs, durationMs);
         final aheadMs = _position.value.bufferAheadMs;
         _position.add(PositionInfo(
           positionMs: posMs,
@@ -2213,6 +2272,23 @@ class LiveBitDropCore implements BitDropCore {
         ));
       } catch (_) {}
     });
+  }
+
+  void _checkAndRecordPlayback(int posMs, int durationMs) {
+    if (_playbackRecorded) return;
+    final currentTrack = _nowPlaying.valueOrNull?.track;
+    if (currentTrack == null) return;
+    final thresholdMs =
+        durationMs > 0 && durationMs < 60000 ? durationMs ~/ 2 : 30000;
+    if (posMs >= thresholdMs) {
+      _playbackRecorded = true;
+      _libraryService.recordPlayback(
+        fileId: currentTrack.id,
+        listenedMs: posMs,
+        sampleRate: currentTrack.format.sampleRate,
+        bitDepth: currentTrack.format.bitDepth,
+      );
+    }
   }
 
   void _stopUiPositionTimer() {

@@ -37,7 +37,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.0.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 537747525;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1161722417;
 
 // Section: executor
 
@@ -1892,6 +1892,81 @@ fn wire__crate__api__cloud_library__cloud_library_get_genres_impl(
         },
     )
 }
+fn wire__crate__api__cloud_library__cloud_library_get_listening_recap_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud_library_get_listening_recap",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::cloud_library::cloud_library_get_listening_recap()?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__cloud_library__cloud_library_get_lyrics_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud_library_get_lyrics",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_file_id = <String>::sse_decode(&mut deserializer);
+            let api_artist = <String>::sse_decode(&mut deserializer);
+            let api_title = <String>::sse_decode(&mut deserializer);
+            let api_album = <String>::sse_decode(&mut deserializer);
+            let api_duration_secs = <u32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::cloud_library::cloud_library_get_lyrics(
+                        api_file_id,
+                        api_artist,
+                        api_title,
+                        api_album,
+                        api_duration_secs,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__cloud_library__cloud_library_get_tracks_by_genre_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2168,6 +2243,85 @@ fn wire__crate__api__cloud_library__cloud_library_rebuild_albums_impl(
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok = crate::api::cloud_library::cloud_library_rebuild_albums()?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__cloud_library__cloud_library_record_playback_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud_library_record_playback",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_file_id = <String>::sse_decode(&mut deserializer);
+            let api_listened_ms = <u32>::sse_decode(&mut deserializer);
+            let api_sample_rate = <Option<u32>>::sse_decode(&mut deserializer);
+            let api_bit_depth = <Option<u32>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::cloud_library::cloud_library_record_playback(
+                        api_file_id,
+                        api_listened_ms,
+                        api_sample_rate,
+                        api_bit_depth,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__cloud_library__cloud_library_save_lyrics_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud_library_save_lyrics",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_file_id = <String>::sse_decode(&mut deserializer);
+            let api_lyrics =
+                <crate::api::cloud_library::CloudTrackLyrics>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::cloud_library::cloud_library_save_lyrics(
+                        api_file_id,
+                        api_lyrics,
+                    )?;
                     Ok(output_ok)
                 })())
             }
@@ -2778,6 +2932,74 @@ impl SseDecode for crate::api::cloud_library::CloudGenre {
     }
 }
 
+impl SseDecode for crate::api::cloud_library::CloudListeningRecap {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_totalMinutesListened = <u64>::sse_decode(deserializer);
+        let mut var_totalPlays = <u64>::sse_decode(deserializer);
+        let mut var_topTracks =
+            <Vec<crate::api::cloud_library::CloudRecapTrackItem>>::sse_decode(deserializer);
+        let mut var_topArtists =
+            <Vec<crate::api::cloud_library::CloudRecapArtistItem>>::sse_decode(deserializer);
+        let mut var_topGenre = <Option<String>>::sse_decode(deserializer);
+        let mut var_losslessPercentage = <f64>::sse_decode(deserializer);
+        let mut var_hiResPercentage = <f64>::sse_decode(deserializer);
+        return crate::api::cloud_library::CloudListeningRecap {
+            total_minutes_listened: var_totalMinutesListened,
+            total_plays: var_totalPlays,
+            top_tracks: var_topTracks,
+            top_artists: var_topArtists,
+            top_genre: var_topGenre,
+            lossless_percentage: var_losslessPercentage,
+            hi_res_percentage: var_hiResPercentage,
+        };
+    }
+}
+
+impl SseDecode for crate::api::cloud_library::CloudLyricLine {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_timestampMs = <u64>::sse_decode(deserializer);
+        let mut var_text = <String>::sse_decode(deserializer);
+        return crate::api::cloud_library::CloudLyricLine {
+            timestamp_ms: var_timestampMs,
+            text: var_text,
+        };
+    }
+}
+
+impl SseDecode for crate::api::cloud_library::CloudRecapArtistItem {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_artist = <String>::sse_decode(deserializer);
+        let mut var_playCount = <u32>::sse_decode(deserializer);
+        let mut var_totalMinutes = <u32>::sse_decode(deserializer);
+        return crate::api::cloud_library::CloudRecapArtistItem {
+            artist: var_artist,
+            play_count: var_playCount,
+            total_minutes: var_totalMinutes,
+        };
+    }
+}
+
+impl SseDecode for crate::api::cloud_library::CloudRecapTrackItem {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_fileId = <String>::sse_decode(deserializer);
+        let mut var_title = <String>::sse_decode(deserializer);
+        let mut var_artist = <String>::sse_decode(deserializer);
+        let mut var_playCount = <u32>::sse_decode(deserializer);
+        let mut var_totalMinutes = <u32>::sse_decode(deserializer);
+        return crate::api::cloud_library::CloudRecapTrackItem {
+            file_id: var_fileId,
+            title: var_title,
+            artist: var_artist,
+            play_count: var_playCount,
+            total_minutes: var_totalMinutes,
+        };
+    }
+}
+
 impl SseDecode for crate::api::cloud_library::CloudTrack {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2818,6 +3040,21 @@ impl SseDecode for crate::api::cloud_library::CloudTrack {
             size_bytes: var_sizeBytes,
             tags_read: var_tagsRead,
             artwork_path: var_artworkPath,
+        };
+    }
+}
+
+impl SseDecode for crate::api::cloud_library::CloudTrackLyrics {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_synced = <bool>::sse_decode(deserializer);
+        let mut var_lines =
+            <Vec<crate::api::cloud_library::CloudLyricLine>>::sse_decode(deserializer);
+        let mut var_plainLyrics = <String>::sse_decode(deserializer);
+        return crate::api::cloud_library::CloudTrackLyrics {
+            synced: var_synced,
+            lines: var_lines,
+            plain_lyrics: var_plainLyrics,
         };
     }
 }
@@ -3201,6 +3438,44 @@ impl SseDecode for Vec<crate::api::cloud_library::CloudGenre> {
     }
 }
 
+impl SseDecode for Vec<crate::api::cloud_library::CloudLyricLine> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::cloud_library::CloudLyricLine>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::cloud_library::CloudRecapArtistItem> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::cloud_library::CloudRecapArtistItem>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::cloud_library::CloudRecapTrackItem> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::cloud_library::CloudRecapTrackItem>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::cloud_library::CloudTrack> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3333,6 +3608,19 @@ impl SseDecode for Option<crate::api::cloud_library::AutoEqProfileData> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<crate::api::cloud_library::AutoEqProfileData>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::cloud_library::CloudTrackLyrics> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::cloud_library::CloudTrackLyrics>::sse_decode(
                 deserializer,
             ));
         } else {
@@ -3686,91 +3974,115 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        56 => wire__crate__api__cloud_library__cloud_library_get_tracks_by_genre_impl(
+        56 => wire__crate__api__cloud_library__cloud_library_get_listening_recap_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        57 => wire__crate__api__cloud_library__cloud_library_get_tracks_in_folder_impl(
+        57 => wire__crate__api__cloud_library__cloud_library_get_lyrics_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        58 => wire__crate__api__cloud_library__cloud_library_open_impl(
+        58 => wire__crate__api__cloud_library__cloud_library_get_tracks_by_genre_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        59 => wire__crate__api__cloud_library__cloud_library_pending_impl(
+        59 => wire__crate__api__cloud_library__cloud_library_get_tracks_in_folder_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        60 => wire__crate__api__cloud_library__cloud_library_prune_local_tracks_impl(
+        60 => wire__crate__api__cloud_library__cloud_library_open_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        61 => wire__crate__api__cloud_library__cloud_library_prune_missing_impl(
+        61 => wire__crate__api__cloud_library__cloud_library_pending_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        62 => wire__crate__api__cloud_library__cloud_library_read_tags_impl(
+        62 => wire__crate__api__cloud_library__cloud_library_prune_local_tracks_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        63 => wire__crate__api__cloud_library__cloud_library_rebuild_albums_impl(
+        63 => wire__crate__api__cloud_library__cloud_library_prune_missing_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        64 => wire__crate__api__cloud_library__cloud_library_scan_local_folder_impl(
+        64 => wire__crate__api__cloud_library__cloud_library_read_tags_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        65 => wire__crate__api__cloud_library__cloud_library_scan_tags_batch_impl(
+        65 => wire__crate__api__cloud_library__cloud_library_rebuild_albums_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        66 => wire__crate__api__cloud_library__cloud_library_search_impl(
+        66 => wire__crate__api__cloud_library__cloud_library_record_playback_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        67 => wire__crate__api__cloud_library__cloud_library_sync_missing_artwork_impl(
+        67 => wire__crate__api__cloud_library__cloud_library_save_lyrics_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        68 => wire__crate__api__cloud_library__cloud_library_tracks_impl(
+        68 => wire__crate__api__cloud_library__cloud_library_scan_local_folder_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        69 => wire__crate__api__cloud_library__get_total_cache_bytes_impl(
+        69 => wire__crate__api__cloud_library__cloud_library_scan_tags_batch_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        73 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        70 => wire__crate__api__cloud_library__cloud_library_search_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        71 => wire__crate__api__cloud_library__cloud_library_sync_missing_artwork_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        72 => wire__crate__api__cloud_library__cloud_library_tracks_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        73 => wire__crate__api__cloud_library__get_total_cache_bytes_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        77 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3846,12 +4158,12 @@ fn pde_ffi_dispatcher_sync_impl(
             rust_vec_len,
             data_len,
         ),
-        70 => wire__crate__api__simple__decode_flac_full_impl(ptr, rust_vec_len, data_len),
-        71 => wire__crate__api__simple__get_cover_art_impl(ptr, rust_vec_len, data_len),
-        72 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-        74 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
-        75 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
-        76 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
+        74 => wire__crate__api__simple__decode_flac_full_impl(ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__simple__get_cover_art_impl(ptr, rust_vec_len, data_len),
+        76 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        78 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4049,6 +4361,99 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::CloudGenre>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudListeningRecap {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.total_minutes_listened.into_into_dart().into_dart(),
+            self.total_plays.into_into_dart().into_dart(),
+            self.top_tracks.into_into_dart().into_dart(),
+            self.top_artists.into_into_dart().into_dart(),
+            self.top_genre.into_into_dart().into_dart(),
+            self.lossless_percentage.into_into_dart().into_dart(),
+            self.hi_res_percentage.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_library::CloudListeningRecap
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::CloudListeningRecap>
+    for crate::api::cloud_library::CloudListeningRecap
+{
+    fn into_into_dart(self) -> crate::api::cloud_library::CloudListeningRecap {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudLyricLine {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.timestamp_ms.into_into_dart().into_dart(),
+            self.text.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_library::CloudLyricLine
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::CloudLyricLine>
+    for crate::api::cloud_library::CloudLyricLine
+{
+    fn into_into_dart(self) -> crate::api::cloud_library::CloudLyricLine {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudRecapArtistItem {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.artist.into_into_dart().into_dart(),
+            self.play_count.into_into_dart().into_dart(),
+            self.total_minutes.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_library::CloudRecapArtistItem
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::CloudRecapArtistItem>
+    for crate::api::cloud_library::CloudRecapArtistItem
+{
+    fn into_into_dart(self) -> crate::api::cloud_library::CloudRecapArtistItem {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudRecapTrackItem {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.file_id.into_into_dart().into_dart(),
+            self.title.into_into_dart().into_dart(),
+            self.artist.into_into_dart().into_dart(),
+            self.play_count.into_into_dart().into_dart(),
+            self.total_minutes.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_library::CloudRecapTrackItem
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::CloudRecapTrackItem>
+    for crate::api::cloud_library::CloudRecapTrackItem
+{
+    fn into_into_dart(self) -> crate::api::cloud_library::CloudRecapTrackItem {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudTrack {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -4082,6 +4487,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::CloudTrack>
     for crate::api::cloud_library::CloudTrack
 {
     fn into_into_dart(self) -> crate::api::cloud_library::CloudTrack {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudTrackLyrics {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.synced.into_into_dart().into_dart(),
+            self.lines.into_into_dart().into_dart(),
+            self.plain_lyrics.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::cloud_library::CloudTrackLyrics
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::cloud_library::CloudTrackLyrics>
+    for crate::api::cloud_library::CloudTrackLyrics
+{
+    fn into_into_dart(self) -> crate::api::cloud_library::CloudTrackLyrics {
         self
     }
 }
@@ -4631,6 +5058,53 @@ impl SseEncode for crate::api::cloud_library::CloudGenre {
     }
 }
 
+impl SseEncode for crate::api::cloud_library::CloudListeningRecap {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u64>::sse_encode(self.total_minutes_listened, serializer);
+        <u64>::sse_encode(self.total_plays, serializer);
+        <Vec<crate::api::cloud_library::CloudRecapTrackItem>>::sse_encode(
+            self.top_tracks,
+            serializer,
+        );
+        <Vec<crate::api::cloud_library::CloudRecapArtistItem>>::sse_encode(
+            self.top_artists,
+            serializer,
+        );
+        <Option<String>>::sse_encode(self.top_genre, serializer);
+        <f64>::sse_encode(self.lossless_percentage, serializer);
+        <f64>::sse_encode(self.hi_res_percentage, serializer);
+    }
+}
+
+impl SseEncode for crate::api::cloud_library::CloudLyricLine {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u64>::sse_encode(self.timestamp_ms, serializer);
+        <String>::sse_encode(self.text, serializer);
+    }
+}
+
+impl SseEncode for crate::api::cloud_library::CloudRecapArtistItem {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.artist, serializer);
+        <u32>::sse_encode(self.play_count, serializer);
+        <u32>::sse_encode(self.total_minutes, serializer);
+    }
+}
+
+impl SseEncode for crate::api::cloud_library::CloudRecapTrackItem {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.file_id, serializer);
+        <String>::sse_encode(self.title, serializer);
+        <String>::sse_encode(self.artist, serializer);
+        <u32>::sse_encode(self.play_count, serializer);
+        <u32>::sse_encode(self.total_minutes, serializer);
+    }
+}
+
 impl SseEncode for crate::api::cloud_library::CloudTrack {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -4652,6 +5126,15 @@ impl SseEncode for crate::api::cloud_library::CloudTrack {
         <u64>::sse_encode(self.size_bytes, serializer);
         <bool>::sse_encode(self.tags_read, serializer);
         <String>::sse_encode(self.artwork_path, serializer);
+    }
+}
+
+impl SseEncode for crate::api::cloud_library::CloudTrackLyrics {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.synced, serializer);
+        <Vec<crate::api::cloud_library::CloudLyricLine>>::sse_encode(self.lines, serializer);
+        <String>::sse_encode(self.plain_lyrics, serializer);
     }
 }
 
@@ -4925,6 +5408,36 @@ impl SseEncode for Vec<crate::api::cloud_library::CloudGenre> {
     }
 }
 
+impl SseEncode for Vec<crate::api::cloud_library::CloudLyricLine> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::cloud_library::CloudLyricLine>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::cloud_library::CloudRecapArtistItem> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::cloud_library::CloudRecapArtistItem>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::cloud_library::CloudRecapTrackItem> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::cloud_library::CloudRecapTrackItem>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::cloud_library::CloudTrack> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5031,6 +5544,16 @@ impl SseEncode for Option<crate::api::cloud_library::AutoEqProfileData> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::cloud_library::AutoEqProfileData>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::cloud_library::CloudTrackLyrics> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::cloud_library::CloudTrackLyrics>::sse_encode(value, serializer);
         }
     }
 }

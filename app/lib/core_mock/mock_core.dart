@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import '../core_api/bitdrop_core.dart';
@@ -1241,6 +1242,72 @@ class MockBitDropCore implements BitDropCore {
   @override
   Future<void> clearRecentSearches() async {
     _recentSearches.clear();
+  }
+
+  @override
+  Future<TrackLyrics?> lyrics(Track track) async {
+    return const TrackLyrics(
+      synced: true,
+      lines: [
+        LyricLine(timestampMs: 0, text: 'Simulated intro melody...'),
+        LyricLine(timestampMs: 8000, text: 'First verse starts right here'),
+        LyricLine(timestampMs: 18000, text: 'The rhythm builds steadily'),
+        LyricLine(timestampMs: 30000, text: 'Chorus rises with the beat'),
+        LyricLine(timestampMs: 45000, text: 'Outro gently fading into silence'),
+      ],
+      plainLyrics:
+          'Simulated intro melody...\nFirst verse starts right here\nThe rhythm builds steadily\nChorus rises with the beat\nOutro gently fading into silence',
+    );
+  }
+
+  @override
+  Future<ListeningRecap?> listeningRecap() async {
+    return const ListeningRecap(
+      totalMinutesListened: 1240,
+      totalPlays: 312,
+      topTracks: [
+        RecapTrackItem(
+          fileId: 'mock-1',
+          title: 'Paranoid Android',
+          artist: 'Radiohead',
+          playCount: 24,
+          totalMinutes: 153,
+        ),
+      ],
+      topArtists: [
+        RecapArtistItem(
+          artist: 'Radiohead',
+          playCount: 58,
+          totalMinutes: 362,
+        ),
+      ],
+      topGenre: 'Alternative Rock',
+      losslessPercentage: 100.0,
+      hiResPercentage: 72.5,
+    );
+  }
+
+  @override
+  Future<String> exportBackup() async {
+    final recap = await listeningRecap();
+    return jsonEncode({
+      'version': 1,
+      'app': 'BitDrop',
+      'exportedAt': DateTime.now().toUtc().toIso8601String(),
+      'app_settings': {},
+      'eq_state': {},
+      'listening_recap': {
+        'totalMinutesListened': recap?.totalMinutesListened ?? 0,
+        'losslessPlaybackPercent': recap?.losslessPercentage ?? 0,
+        'hiResPlaybackPercent': recap?.hiResPercentage ?? 0,
+        'topGenre': recap?.topGenre ?? '',
+      },
+    });
+  }
+
+  @override
+  Future<bool> importBackup(String jsonStr) async {
+    return true;
   }
 
   bool _matchesQuality(AudioFormat fmt, QualityFilter quality) =>

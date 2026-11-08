@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -16,11 +17,11 @@ import '../../util/poster_color.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/cache_seek_bar.dart';
 import '../../widgets/common.dart';
-import '../../widgets/indicators.dart';
 import '../../widgets/marquee.dart';
 import '../../widgets/meters.dart';
 import '../../widgets/transport.dart';
 import '../signal_path/signal_path_sheet.dart';
+import 'ambient_lyrics_view.dart';
 import 'track_info_sheet.dart';
 
 /// The hero screen, in three curated styles (Settings › Appearance).
@@ -37,6 +38,7 @@ class NowPlayingScreen extends ConsumerStatefulWidget {
 class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
   double _dragOffset = 0.0;
   bool _isDragging = false;
+  bool _showLyrics = false;
 
   void _onVerticalDragStart(DragStartDetails details) {
     _isDragging = true;
@@ -111,7 +113,13 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                             style: settings.nowPlayingStyle)
                         : switch (settings.nowPlayingStyle) {
                             NowPlayingStyle.classic =>
-                              _ClassicLayout(nowPlaying: np, signal: signal),
+                              _ClassicLayout(
+                                nowPlaying: np,
+                                signal: signal,
+                                showLyrics: _showLyrics,
+                                onToggleLyrics: () =>
+                                    setState(() => _showLyrics = !_showLyrics),
+                              ),
                             NowPlayingStyle.minimal =>
                               _MinimalLayout(nowPlaying: np, signal: signal),
                             NowPlayingStyle.studio =>
@@ -294,10 +302,17 @@ class NowPlayingOverflowMenu extends ConsumerWidget {
 
 /// Classic: art-led, the default.
 class _ClassicLayout extends ConsumerWidget {
-  const _ClassicLayout({required this.nowPlaying, required this.signal});
+  const _ClassicLayout({
+    required this.nowPlaying,
+    required this.signal,
+    this.showLyrics = false,
+    this.onToggleLyrics,
+  });
 
   final NowPlaying nowPlaying;
   final SignalPath? signal;
+  final bool showLyrics;
+  final VoidCallback? onToggleLyrics;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -312,9 +327,25 @@ class _ClassicLayout extends ConsumerWidget {
         child: Column(
           children: [
             const SizedBox(height: Spacing.md),
-            NowPlayingSwipeableArt(
-              nowPlaying: nowPlaying,
-              size: (width - Spacing.xl * 2).clamp(120.0, 220.0),
+            AnimatedCrossFade(
+              firstChild: Center(
+                child: NowPlayingSwipeableArt(
+                  nowPlaying: nowPlaying,
+                  size: (width - Spacing.xl * 2).clamp(120.0, 220.0),
+                ),
+              ),
+              secondChild: SizedBox(
+                height: 220.0,
+                width: width - Spacing.xl * 2,
+                child: AmbientLyricsView(
+                  track: nowPlaying.track,
+                  onClose: onToggleLyrics,
+                ),
+              ),
+              crossFadeState: showLyrics
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              duration: const Duration(milliseconds: 320),
             ),
             const SizedBox(height: Spacing.lg),
             ..._controls(context),
@@ -333,9 +364,23 @@ class _ClassicLayout extends ConsumerWidget {
               final size = (side < box.maxHeight ? side : box.maxHeight)
                   .clamp(96.0, 420.0);
               return Center(
-                child: NowPlayingSwipeableArt(
-                  nowPlaying: nowPlaying,
-                  size: size.toDouble(),
+                child: AnimatedCrossFade(
+                  firstChild: NowPlayingSwipeableArt(
+                    nowPlaying: nowPlaying,
+                    size: size.toDouble(),
+                  ),
+                  secondChild: SizedBox(
+                    height: box.maxHeight,
+                    width: width - Spacing.md * 2,
+                    child: AmbientLyricsView(
+                      track: nowPlaying.track,
+                      onClose: onToggleLyrics,
+                    ),
+                  ),
+                  crossFadeState: showLyrics
+                      ? CrossFadeState.showSecond
+                      : CrossFadeState.showFirst,
+                  duration: const Duration(milliseconds: 320),
                 ),
               );
             },
@@ -369,7 +414,11 @@ class _ClassicLayout extends ConsumerWidget {
           child: TransportControls(),
         ),
         const SizedBox(height: Spacing.sm),
-        NowPlayingBottomActions(nowPlaying: nowPlaying),
+        NowPlayingBottomActions(
+          nowPlaying: nowPlaying,
+          showLyrics: showLyrics,
+          onToggleLyrics: onToggleLyrics,
+        ),
       ];
 }
 
@@ -729,7 +778,9 @@ class NowPlayingTitleBlock extends ConsumerWidget {
   }
 }
 
-/// The one-line verdict, tappable into the full Signal Path.
+/// Translucent frosted-glass "Live Signal Path Pill" directly beneath track title/artist.
+/// Compact audiophile badge (e.g. FLAC · 24-bit / 96.0 kHz · Bit-Perfect or 64-Bit DSP · 48.0 kHz).
+/// Tapping the pill opens the full Signal Path & Hardware Telemetry Inspector sheet.
 class NowPlayingSignalChip extends StatelessWidget {
   const NowPlayingSignalChip({super.key, required this.signal});
 
@@ -737,7 +788,8 @@ class NowPlayingSignalChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isResampled = signal.tier == OutputTier.resampled || signal.source.sampleRate != signal.actual.sampleRate;
+    final isResampled = signal.tier == OutputTier.resampled ||
+        signal.source.sampleRate != signal.actual.sampleRate;
     final isBitPerfect = signal.tier == OutputTier.bitPerfect;
     final isDspNative = !isResampled && signal.dspActive;
     final isAndroidMixed = !isResampled && !signal.dspActive && !isBitPerfect;
@@ -752,7 +804,8 @@ class NowPlayingSignalChip extends StatelessWidget {
       statusColor = context.c.tierBitPerfect;
       statusIcon = Icons.diamond_outlined;
       statusLabel = 'BIT-PERFECT';
-      final detail = '${Fmt.kHz(signal.source.sampleRate)} / ${signal.source.bitDepth}-bit';
+      final detail =
+          '${Fmt.kHz(signal.source.sampleRate)} / ${signal.source.bitDepth}-bit';
       subText = device == null ? ' · $detail' : ' · $detail → $device';
     } else if (isDspNative) {
       statusColor = context.c.dspActive;
@@ -764,12 +817,15 @@ class NowPlayingSignalChip extends StatelessWidget {
       statusColor = context.c.tierNativeRate;
       statusIcon = Icons.check_circle_outline;
       statusLabel = 'NATIVE RATE (${Fmt.kHz(signal.source.sampleRate)})';
-      subText = device == null ? ' · Android Mixed' : ' · Android Mixed → $device';
+      subText = device == null
+          ? ' · Android Mixed'
+          : ' · Android Mixed → $device';
     } else if (isResampled) {
       statusColor = context.c.tierResampled;
       statusIcon = Icons.change_history;
       statusLabel = 'RESAMPLED';
-      final detail = '${Fmt.kHzBare(signal.source.sampleRate)} → ${Fmt.kHz(signal.actual.sampleRate)}';
+      final detail =
+          '${Fmt.kHzBare(signal.source.sampleRate)} → ${Fmt.kHz(signal.actual.sampleRate)}';
       subText = device == null ? ' · $detail' : ' · $detail → $device';
     } else {
       statusColor = const Color(0xFF9E9E9E);
@@ -782,87 +838,77 @@ class NowPlayingSignalChip extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
-      child: Wrap(
-        alignment: WrapAlignment.center,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: Spacing.xs,
-        runSpacing: Spacing.xxs,
-        children: [
-          ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: screenWidth - Spacing.md * 2),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: statusColor.withOpacity(isBitPerfect ? 0.14 : 0.08),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: statusColor.withOpacity(isBitPerfect ? 0.7 : 0.35),
-                  width: isBitPerfect ? 1.4 : 1.0,
-                ),
-              ),
+      child: Center(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: Material(
+              color: Colors.transparent,
               child: InkWell(
                 onTap: () => showSignalPathSheet(context),
-                borderRadius: BorderRadius.circular(14),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      statusIcon,
-                      size: 13,
-                      color: statusColor,
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  constraints: BoxConstraints(
+                    maxWidth: screenWidth - Spacing.md * 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(isBitPerfect ? 0.16 : 0.10),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color:
+                          statusColor.withOpacity(isBitPerfect ? 0.65 : 0.35),
+                      width: isBitPerfect ? 1.2 : 0.9,
                     ),
-                    const SizedBox(width: 5),
-                    Text(
-                      statusLabel,
-                      style: TextStyle(
-                        fontFamily: 'Inter',
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.6,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        statusIcon,
+                        size: 13,
                         color: statusColor,
                       ),
-                    ),
-                    if (subText.isNotEmpty)
-                      Flexible(
-                        child: Text(
-                          subText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontFamily: 'Inter',
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                            color: statusColor.withOpacity(0.9),
-                          ),
+                      const SizedBox(width: 5),
+                      Text(
+                        statusLabel,
+                        style: TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.6,
+                          color: statusColor,
                         ),
                       ),
-                    const SizedBox(width: 6),
-                    Tooltip(
-                      message: 'Inspect signal path & DAC status',
-                      child: InkWell(
-                        onTap: () => showSignalPathSheet(context),
-                        borderRadius: BorderRadius.circular(12),
-                        child: Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            color: statusColor.withOpacity(0.18),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.visibility_outlined,
-                            size: 13,
-                            color: statusColor,
+                      if (subText.isNotEmpty)
+                        Flexible(
+                          child: Text(
+                            subText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontFamily: 'Inter',
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: statusColor.withOpacity(0.9),
+                            ),
                           ),
                         ),
+                      const SizedBox(width: 5),
+                      Icon(
+                        Icons.chevron_right,
+                        size: 13,
+                        color: statusColor.withOpacity(0.8),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
-          if (signal.dspActive) const DspBadge(),
-        ],
+        ),
       ),
     );
   }
@@ -903,9 +949,16 @@ class NowPlayingVolumeHint extends ConsumerWidget {
 }
 
 class NowPlayingBottomActions extends ConsumerWidget {
-  const NowPlayingBottomActions({super.key, required this.nowPlaying});
+  const NowPlayingBottomActions({
+    super.key,
+    required this.nowPlaying,
+    this.showLyrics = false,
+    this.onToggleLyrics,
+  });
 
   final NowPlaying nowPlaying;
+  final bool showLyrics;
+  final VoidCallback? onToggleLyrics;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -936,14 +989,18 @@ class NowPlayingBottomActions extends ConsumerWidget {
           label: l.navOutput,
           onTap: () => context.push(Routes.output),
         ),
-        // Lyrics appear only when the file actually carries them: BitDrop has
-        // no servers, so there is nowhere to fetch them from.
-        if (nowPlaying.track.hasLyrics)
-          ActionPill(
-            icon: Icons.lyrics_outlined,
-            label: l.navLyrics,
-            onTap: () => showLyricsSheet(context, nowPlaying.track),
-          ),
+        ActionPill(
+          icon: showLyrics ? Icons.album_outlined : Icons.lyrics_outlined,
+          label: showLyrics ? 'Artwork' : l.navLyrics,
+          active: showLyrics,
+          onTap: () {
+            if (onToggleLyrics != null) {
+              onToggleLyrics!();
+            } else {
+              showLyricsSheet(context, nowPlaying.track);
+            }
+          },
+        ),
         ActionPill(
           icon: Icons.more_horiz,
           label: l.actionMore,

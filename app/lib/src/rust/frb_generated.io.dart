@@ -46,6 +46,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AutoEqProfileData dco_decode_box_autoadd_auto_eq_profile_data(dynamic raw);
 
   @protected
+  CloudTrackLyrics dco_decode_box_autoadd_cloud_track_lyrics(dynamic raw);
+
+  @protected
   CloudTrackRow dco_decode_box_autoadd_cloud_track_row(dynamic raw);
 
   @protected
@@ -73,7 +76,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudGenre dco_decode_cloud_genre(dynamic raw);
 
   @protected
+  CloudListeningRecap dco_decode_cloud_listening_recap(dynamic raw);
+
+  @protected
+  CloudLyricLine dco_decode_cloud_lyric_line(dynamic raw);
+
+  @protected
+  CloudRecapArtistItem dco_decode_cloud_recap_artist_item(dynamic raw);
+
+  @protected
+  CloudRecapTrackItem dco_decode_cloud_recap_track_item(dynamic raw);
+
+  @protected
   CloudTrack dco_decode_cloud_track(dynamic raw);
+
+  @protected
+  CloudTrackLyrics dco_decode_cloud_track_lyrics(dynamic raw);
 
   @protected
   CloudTrackRow dco_decode_cloud_track_row(dynamic raw);
@@ -133,6 +151,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<CloudGenre> dco_decode_list_cloud_genre(dynamic raw);
 
   @protected
+  List<CloudLyricLine> dco_decode_list_cloud_lyric_line(dynamic raw);
+
+  @protected
+  List<CloudRecapArtistItem> dco_decode_list_cloud_recap_artist_item(
+      dynamic raw);
+
+  @protected
+  List<CloudRecapTrackItem> dco_decode_list_cloud_recap_track_item(dynamic raw);
+
+  @protected
   List<CloudTrack> dco_decode_list_cloud_track(dynamic raw);
 
   @protected
@@ -171,6 +199,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   AutoEqProfileData? dco_decode_opt_box_autoadd_auto_eq_profile_data(
       dynamic raw);
+
+  @protected
+  CloudTrackLyrics? dco_decode_opt_box_autoadd_cloud_track_lyrics(dynamic raw);
 
   @protected
   CloudTrackRow? dco_decode_opt_box_autoadd_cloud_track_row(dynamic raw);
@@ -236,6 +267,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  CloudTrackLyrics sse_decode_box_autoadd_cloud_track_lyrics(
+      SseDeserializer deserializer);
+
+  @protected
   CloudTrackRow sse_decode_box_autoadd_cloud_track_row(
       SseDeserializer deserializer);
 
@@ -265,7 +300,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudGenre sse_decode_cloud_genre(SseDeserializer deserializer);
 
   @protected
+  CloudListeningRecap sse_decode_cloud_listening_recap(
+      SseDeserializer deserializer);
+
+  @protected
+  CloudLyricLine sse_decode_cloud_lyric_line(SseDeserializer deserializer);
+
+  @protected
+  CloudRecapArtistItem sse_decode_cloud_recap_artist_item(
+      SseDeserializer deserializer);
+
+  @protected
+  CloudRecapTrackItem sse_decode_cloud_recap_track_item(
+      SseDeserializer deserializer);
+
+  @protected
   CloudTrack sse_decode_cloud_track(SseDeserializer deserializer);
+
+  @protected
+  CloudTrackLyrics sse_decode_cloud_track_lyrics(SseDeserializer deserializer);
 
   @protected
   CloudTrackRow sse_decode_cloud_track_row(SseDeserializer deserializer);
@@ -333,6 +386,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<CloudGenre> sse_decode_list_cloud_genre(SseDeserializer deserializer);
 
   @protected
+  List<CloudLyricLine> sse_decode_list_cloud_lyric_line(
+      SseDeserializer deserializer);
+
+  @protected
+  List<CloudRecapArtistItem> sse_decode_list_cloud_recap_artist_item(
+      SseDeserializer deserializer);
+
+  @protected
+  List<CloudRecapTrackItem> sse_decode_list_cloud_recap_track_item(
+      SseDeserializer deserializer);
+
+  @protected
   List<CloudTrack> sse_decode_list_cloud_track(SseDeserializer deserializer);
 
   @protected
@@ -374,6 +439,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AutoEqProfileData? sse_decode_opt_box_autoadd_auto_eq_profile_data(
+      SseDeserializer deserializer);
+
+  @protected
+  CloudTrackLyrics? sse_decode_opt_box_autoadd_cloud_track_lyrics(
       SseDeserializer deserializer);
 
   @protected
@@ -444,6 +513,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       AutoEqProfileData self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_cloud_track_lyrics(
+      CloudTrackLyrics self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_cloud_track_row(
       CloudTrackRow self, SseSerializer serializer);
 
@@ -475,7 +548,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_cloud_genre(CloudGenre self, SseSerializer serializer);
 
   @protected
+  void sse_encode_cloud_listening_recap(
+      CloudListeningRecap self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cloud_lyric_line(
+      CloudLyricLine self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cloud_recap_artist_item(
+      CloudRecapArtistItem self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cloud_recap_track_item(
+      CloudRecapTrackItem self, SseSerializer serializer);
+
+  @protected
   void sse_encode_cloud_track(CloudTrack self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cloud_track_lyrics(
+      CloudTrackLyrics self, SseSerializer serializer);
 
   @protected
   void sse_encode_cloud_track_row(CloudTrackRow self, SseSerializer serializer);
@@ -544,6 +637,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<CloudGenre> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_cloud_lyric_line(
+      List<CloudLyricLine> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_cloud_recap_artist_item(
+      List<CloudRecapArtistItem> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_cloud_recap_track_item(
+      List<CloudRecapTrackItem> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_cloud_track(
       List<CloudTrack> self, SseSerializer serializer);
 
@@ -592,6 +697,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_auto_eq_profile_data(
       AutoEqProfileData? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_track_lyrics(
+      CloudTrackLyrics? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_cloud_track_row(

@@ -194,6 +194,8 @@ class ActionPill extends StatelessWidget {
     required this.onTap,
     this.dot = false,
     this.badge,
+    this.active = false,
+    this.iconColor,
   });
 
   final IconData icon;
@@ -203,10 +205,13 @@ class ActionPill extends StatelessWidget {
   /// Pink dot: something in this stage is altering the audio.
   final bool dot;
   final String? badge;
+  final bool active;
+  final Color? iconColor;
 
   @override
   Widget build(BuildContext context) {
     final c = context.c;
+    final color = iconColor ?? (active ? c.accent : c.textSecondary);
     return Semantics(
       button: true,
       label: dot ? '$label, active' : label,
@@ -223,7 +228,7 @@ class ActionPill extends StatelessWidget {
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  Icon(icon, size: 22, color: c.textSecondary),
+                  Icon(icon, size: 22, color: color),
                   if (dot)
                     Positioned(
                       right: -2,
@@ -243,7 +248,10 @@ class ActionPill extends StatelessWidget {
               const SizedBox(height: 3),
               Text(
                 badge ?? label,
-                style: context.t.monoLabel.copyWith(color: c.textSecondary),
+                style: context.t.monoLabel.copyWith(
+                  color: active ? c.accent : c.textSecondary,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                ),
               ),
             ],
           ),

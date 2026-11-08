@@ -168,6 +168,117 @@ pub struct ScanCounts {
     pub tagged: u32,
 }
 
+/// A single timestamped lyric line for UI rendering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudLyricLine {
+    pub timestamp_ms: u64,
+    pub text: String,
+}
+
+/// Parsed lyrics for a track, supporting both synchronized and plain formats.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudTrackLyrics {
+    pub synced: bool,
+    pub lines: Vec<CloudLyricLine>,
+    pub plain_lyrics: String,
+}
+
+impl From<crate::cloud::lyrics::TrackLyrics> for CloudTrackLyrics {
+    fn from(l: crate::cloud::lyrics::TrackLyrics) -> Self {
+        Self {
+            synced: l.synced,
+            lines: l
+                .lines
+                .into_iter()
+                .map(|line| CloudLyricLine {
+                    timestamp_ms: line.timestamp_ms,
+                    text: line.text,
+                })
+                .collect(),
+            plain_lyrics: l.plain_lyrics,
+        }
+    }
+}
+
+impl From<CloudTrackLyrics> for crate::cloud::lyrics::TrackLyrics {
+    fn from(l: CloudTrackLyrics) -> Self {
+        Self {
+            synced: l.synced,
+            lines: l
+                .lines
+                .into_iter()
+                .map(|line| crate::cloud::lyrics::LyricLine {
+                    timestamp_ms: line.timestamp_ms,
+                    text: line.text,
+                })
+                .collect(),
+            plain_lyrics: l.plain_lyrics,
+        }
+    }
+}
+
+/// Individual track stats item for the listening recap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudRecapTrackItem {
+    pub file_id: String,
+    pub title: String,
+    pub artist: String,
+    pub play_count: u32,
+    pub total_minutes: u32,
+}
+
+/// Individual artist stats item for the listening recap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudRecapArtistItem {
+    pub artist: String,
+    pub play_count: u32,
+    pub total_minutes: u32,
+}
+
+/// Aggregate metrics for the Audiophile Listening Recap.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CloudListeningRecap {
+    pub total_minutes_listened: u64,
+    pub total_plays: u64,
+    pub top_tracks: Vec<CloudRecapTrackItem>,
+    pub top_artists: Vec<CloudRecapArtistItem>,
+    pub top_genre: Option<String>,
+    pub lossless_percentage: f64,
+    pub hi_res_percentage: f64,
+}
+
+impl From<crate::cloud::db::ListeningRecap> for CloudListeningRecap {
+    fn from(r: crate::cloud::db::ListeningRecap) -> Self {
+        Self {
+            total_minutes_listened: r.total_minutes_listened,
+            total_plays: r.total_plays,
+            top_tracks: r
+                .top_tracks
+                .into_iter()
+                .map(|t| CloudRecapTrackItem {
+                    file_id: t.file_id,
+                    title: t.title,
+                    artist: t.artist,
+                    play_count: t.play_count,
+                    total_minutes: t.total_minutes,
+                })
+                .collect(),
+            top_artists: r
+                .top_artists
+                .into_iter()
+                .map(|a| CloudRecapArtistItem {
+                    artist: a.artist,
+                    play_count: a.play_count,
+                    total_minutes: a.total_minutes,
+                })
+                .collect(),
+            top_genre: r.top_genre,
+            lossless_percentage: r.lossless_percentage,
+            hi_res_percentage: r.hi_res_percentage,
+        }
+    }
+}
+
 #[flutter_rust_bridge::frb(ignore)]
 pub fn with_db<T>(f: impl FnOnce(&MetadataDb) -> anyhow::Result<T>) -> Result<T, String> {
     let guard = DB.lock().map_err(|e| e.to_string())?;
@@ -2173,5 +2284,66 @@ pub fn cloud_library_prune_local_tracks(root_label: String) -> Result<u32, Strin
     with_db_mut(|db| {
         let count = db.prune_missing_local_tracks(root_label.trim())?;
         Ok(count as u32)
+    })
+}
+
+/// Retrieves cached lyrics for `file_id`. If not cached, queries LRCLIB online fallback
+/// and saves the result in SQLite.
+pub fn cloud_library_get_lyrics(
+    file_id: String,
+    artist: String,
+    title: String,
+    album: String,
+    duration_secs: u32,
+) -> Result<Option<CloudTrackLyrics>, String> {
+    let cached = with_db(|db| db.get_lyrics(&file_id).map_err(|e| anyhow::anyhow!(e)))?;
+
+    if let Some(lyrics) = cached {
+        return Ok(Some(lyrics.into()));
+    }
+
+    let fetched = RT
+        .block_on(async {
+            crate::cloud::lyrics::fetch_lrclib(&HTTP_CLIENT, &artist, &title, &album, duration_secs)
+                .await
+        })
+        .map_err(|e| e.to_string())?;
+
+    if let Some(ref lyrics) = fetched {
+        with_db(|db| {
+            db.save_lyrics(&file_id, lyrics)
+                .map_err(|e| anyhow::anyhow!(e))
+        })?;
+    }
+
+    Ok(fetched.map(Into::into))
+}
+
+/// Manually saves or overrides lyrics for `file_id`.
+pub fn cloud_library_save_lyrics(file_id: String, lyrics: CloudTrackLyrics) -> Result<(), String> {
+    with_db(|db| {
+        db.save_lyrics(&file_id, &lyrics.into())
+            .map_err(|e| anyhow::anyhow!(e))
+    })
+}
+
+/// Records a qualified playback entry into the `playback_history` table.
+pub fn cloud_library_record_playback(
+    file_id: String,
+    listened_ms: u32,
+    sample_rate: Option<u32>,
+    bit_depth: Option<u32>,
+) -> Result<(), String> {
+    with_db(|db| {
+        db.record_playback(&file_id, listened_ms, sample_rate, bit_depth)
+            .map_err(|e| anyhow::anyhow!(e))
+    })
+}
+
+/// Computes the complete Audiophile Listening Recap from `playback_history`.
+pub fn cloud_library_get_listening_recap() -> Result<CloudListeningRecap, String> {
+    with_db(|db| {
+        let recap = db.get_listening_recap().map_err(|e| anyhow::anyhow!(e))?;
+        Ok(recap.into())
     })
 }
