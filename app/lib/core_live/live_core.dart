@@ -17,6 +17,9 @@ import 'cloud_library.dart';
 import 'output_device.dart';
 import 'parametric_eq_parser.dart';
 import 'persistence_codec.dart';
+import '../services/bitdrop_library_service.dart';
+import '../services/bitdrop_output_coordinator.dart';
+import '../services/bitdrop_settings_repository.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
 import '../src/rust/api/cloud_library.dart' as rust_cache;
 import '../src/rust/api/simple.dart' as rust_simple;
@@ -25,6 +28,14 @@ import '../util/biquad.dart';
 class LiveBitDropCore implements BitDropCore {
   final BitDropAudioHandler _audioHandler;
   Timer? _sleepTimer;
+
+  late final BitDropLibraryService _libraryService;
+  late final BitDropSettingsRepository _settingsRepo;
+  late final BitDropOutputCoordinator _outputCoord;
+
+  BitDropLibraryService get libraryService => _libraryService;
+  BitDropSettingsRepository get settingsRepository => _settingsRepo;
+  BitDropOutputCoordinator get outputCoordinator => _outputCoord;
 
   /// Null until Drive is connected. Everything cloud-related is served from
   /// here; local scanning and the mock catalogue are untouched by it.
@@ -94,10 +105,38 @@ class LiveBitDropCore implements BitDropCore {
     String? chunkCacheDir,
     String? artworkCacheDir,
     OutputDeviceProbe? outputProbe,
+    BitDropLibraryService? libraryService,
+    BitDropSettingsRepository? settingsRepository,
+    BitDropOutputCoordinator? outputCoordinator,
   })  : _cloud = cloudLibrary,
         _chunkCacheDir = chunkCacheDir,
         _artworkCacheDir = artworkCacheDir,
         _outputProbe = outputProbe ?? OutputDeviceProbe() {
+    _libraryService = libraryService ??
+        BitDropLibraryService(
+          cloudLibrary: cloudLibrary,
+          chunkCacheDir: chunkCacheDir,
+          artworkCacheDir: artworkCacheDir,
+          accessTokenProvider: () async =>
+              _audioHandler.accessTokenProvider?.call(),
+          nowPlayingTrackProvider: () => _nowPlaying.value?.track,
+        );
+    _settingsRepo = settingsRepository ??
+        BitDropSettingsRepository(
+          currentTrackProvider: () => _nowPlaying.value?.track,
+          onSettingsChanged: (s) => _settings.add(s),
+          onEqChanged: (e) {
+            _eq.add(e);
+            _recomputeSignalPath();
+          },
+        );
+    _outputCoord = outputCoordinator ??
+        BitDropOutputCoordinator(
+          outputProbe: _outputProbe,
+          currentTrackProvider: () => _nowPlaying.value?.track,
+          cloudProvider: () => _cloud,
+          isDirectUsbDriverEnabled: () => _settings.value.directUsbDriver,
+        );
     try {
       rust.initEngine();
     } catch (e) {
@@ -2357,5 +2396,8 @@ class LiveBitDropCore implements BitDropCore {
     _banners.close();
     _defaultSources.close();
     _sleepTimer?.cancel();
+    _libraryService.dispose();
+    _settingsRepo.dispose();
+    _outputCoord.dispose();
   }
 }

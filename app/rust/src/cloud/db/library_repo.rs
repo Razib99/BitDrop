@@ -1,0 +1,891 @@
+use crate::cloud::db::{
+    AlbumSummaryRow, CloudTrackRow, FolderSummary, GenreSummary, ReplacedFile, TrackPlaceholder,
+    TrackTagUpdate,
+};
+use crate::cloud::local_scanner::LocalTrackInfo;
+use rusqlite::{params, Connection, OptionalExtension, Result, Row};
+use std::path::Path;
+
+/// Repository for audio tracks, albums, artists, folders, genres, and metadata indexing.
+pub struct LibraryRepository<'a> {
+    pub conn: &'a Connection,
+}
+
+impl<'a> LibraryRepository<'a> {
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
+    }
+
+    #[inline]
+    fn row_to_cloud_track(r: &Row) -> Result<CloudTrackRow> {
+        let name: String = r.get(1)?;
+        let title: Option<String> = r.get(3)?;
+        Ok(CloudTrackRow {
+            file_id: r.get(0)?,
+            name: name.clone(),
+            folder_path: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            title: title.filter(|t| !t.is_empty()).unwrap_or_else(|| {
+                name.rsplit_once('.')
+                    .map(|(s, _)| s.to_string())
+                    .unwrap_or(name)
+            }),
+            artist: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            album: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
+            album_artist: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+            genre: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
+            year: r.get::<_, Option<u32>>(8)?.unwrap_or(0),
+            track_number: r.get::<_, Option<u32>>(9)?.unwrap_or(0),
+            disc_number: r.get::<_, Option<u32>>(10)?.unwrap_or(1),
+            duration_ms: r.get::<_, Option<u32>>(11)?.unwrap_or(0),
+            sample_rate: r.get::<_, Option<u32>>(12)?.unwrap_or(0),
+            channels: r.get::<_, Option<u32>>(13)?.unwrap_or(0),
+            bits_per_sample: r.get::<_, Option<u32>>(14)?.unwrap_or(0),
+            size_bytes: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
+            tags_read: r.get::<_, i64>(16)? != 0,
+            artwork_path: r.get::<_, Option<String>>(17)?.unwrap_or_default(),
+        })
+    }
+
+    /// Single placeholder insertion (backward compatible wrapper).
+    pub fn insert_placeholder(
+        &mut self,
+        file_id: &str,
+        name: &str,
+        folder_path: &str,
+        size_bytes: u64,
+    ) -> Result<Vec<ReplacedFile>> {
+        self.batch_insert_placeholders(&[TrackPlaceholder {
+            file_id: file_id.to_string(),
+            name: name.to_string(),
+            folder_path: folder_path.to_string(),
+            size_bytes,
+        }])
+    }
+
+    /// Batched placeholder insertion within a single atomic transaction.
+    ///
+    /// If a track with the same (folder_path, name) already exists with a different
+    /// file_id (e.g. re-uploaded or replaced on Google Drive), the old row is pruned
+    /// and its ReplacedFile mapping is returned so the caller can migrate favorites, pinned state,
+    /// and clean up cached sparse files.
+    pub fn batch_insert_placeholders(
+        &mut self,
+        items: &[TrackPlaceholder],
+    ) -> Result<Vec<ReplacedFile>> {
+        let mut replaced_files = Vec::new();
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut find_stmt = tx.prepare_cached(
+                "SELECT file_id FROM tracks WHERE folder_path = ?1 AND name = ?2 AND file_id != ?3",
+            )?;
+            let mut del_stmt = tx.prepare_cached("DELETE FROM tracks WHERE file_id = ?1")?;
+            let mut insert_stmt = tx.prepare_cached(
+                "INSERT INTO tracks (file_id, name, folder_path, size_bytes, tags_read)
+                 VALUES (?1, ?2, ?3, ?4, 0)
+                 ON CONFLICT(file_id) DO UPDATE SET
+                    name = excluded.name,
+                    folder_path = excluded.folder_path,
+                    size_bytes = excluded.size_bytes,
+                    tags_read = CASE WHEN tracks.size_bytes != excluded.size_bytes THEN 0 ELSE tracks.tags_read END",
+            )?;
+
+            for item in items {
+                let old_ids: Vec<String> = find_stmt
+                    .query_map(params![&item.folder_path, &item.name, &item.file_id], |r| {
+                        r.get(0)
+                    })?
+                    .filter_map(|r| r.ok())
+                    .collect();
+
+                for old_id in old_ids {
+                    del_stmt.execute(params![&old_id])?;
+                    replaced_files.push(ReplacedFile {
+                        old_file_id: old_id,
+                        new_file_id: item.file_id.clone(),
+                    });
+                }
+
+                insert_stmt.execute(params![
+                    item.file_id,
+                    item.name,
+                    item.folder_path,
+                    item.size_bytes as i64
+                ])?;
+            }
+        }
+        tx.commit()?;
+
+        if !replaced_files.is_empty() {
+            self.rebuild_albums_summary()?;
+        }
+
+        Ok(replaced_files)
+    }
+
+    /// Batched insertion of local tracks with fully extracted metadata.
+    ///
+    /// Inserts or updates tracks, setting `tags_read = 1`, and rebuilds the
+    /// albums summary table so UI grids immediately display the imported tracks.
+    pub fn batch_insert_local_tracks(&mut self, items: &[LocalTrackInfo]) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO tracks (
+                    file_id, name, folder_path, size_bytes, title, artist,
+                    album, album_artist, genre, year, track_number, disc_number,
+                    duration_ms, sample_rate, channels, bits_per_sample,
+                    artwork_path, artwork_checked, tags_read
+                 ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6,
+                    ?7, ?8, ?9, ?10, ?11, ?12,
+                    ?13, ?14, ?15, ?16,
+                    ?17, ?18, 1
+                 )
+                 ON CONFLICT(file_id) DO UPDATE SET
+                    name = excluded.name,
+                    folder_path = excluded.folder_path,
+                    size_bytes = excluded.size_bytes,
+                    title = excluded.title,
+                    artist = excluded.artist,
+                    album = excluded.album,
+                    album_artist = excluded.album_artist,
+                    genre = excluded.genre,
+                    year = excluded.year,
+                    track_number = excluded.track_number,
+                    disc_number = excluded.disc_number,
+                    duration_ms = excluded.duration_ms,
+                    sample_rate = excluded.sample_rate,
+                    channels = excluded.channels,
+                    bits_per_sample = excluded.bits_per_sample,
+                    artwork_path = COALESCE(excluded.artwork_path, tracks.artwork_path),
+                    artwork_checked = CASE WHEN excluded.artwork_path IS NOT NULL AND excluded.artwork_path != '' THEN 1 ELSE tracks.artwork_checked END,
+                    tags_read = 1",
+            )?;
+
+            for item in items {
+                let artwork_checked = if item
+                    .artwork_path
+                    .as_deref()
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false)
+                {
+                    1i64
+                } else {
+                    0i64
+                };
+                let sample_rate = if item.sample_rate > 0 {
+                    Some(item.sample_rate as i64)
+                } else {
+                    None
+                };
+                let channels = if item.channels > 0 {
+                    Some(item.channels as i64)
+                } else {
+                    None
+                };
+                let bits_per_sample = if item.bits_per_sample > 0 {
+                    Some(item.bits_per_sample as i64)
+                } else {
+                    None
+                };
+
+                stmt.execute(params![
+                    &item.path,
+                    &item.name,
+                    &item.folder_path,
+                    item.size_bytes as i64,
+                    &item.title,
+                    &item.artist,
+                    &item.album,
+                    &item.album_artist,
+                    &item.genre,
+                    item.year.map(|y| y as i64),
+                    item.track_number.map(|tn| tn as i64).unwrap_or(0),
+                    item.disc_number.map(|dn| dn as i64).unwrap_or(1),
+                    item.duration_ms as i64,
+                    sample_rate,
+                    channels,
+                    bits_per_sample,
+                    &item.artwork_path,
+                    artwork_checked,
+                ])?;
+            }
+        }
+        tx.commit()?;
+
+        self.rebuild_albums_summary()?;
+        Ok(())
+    }
+
+    /// Prunes local tracks belonging to `root_label` whose underlying files
+    /// no longer exist on the local filesystem.
+    ///
+    /// Returns the number of pruned tracks.
+    pub fn prune_missing_local_tracks(&mut self, root_label: &str) -> Result<usize> {
+        let like_pattern = format!("{} / %", root_label);
+        let mut missing_ids = Vec::new();
+
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT file_id FROM tracks WHERE folder_path = ?1 OR folder_path LIKE ?2",
+            )?;
+            let rows =
+                stmt.query_map(params![root_label, like_pattern], |r| r.get::<_, String>(0))?;
+
+            for id in rows.flatten() {
+                if !Path::new(&id).exists() {
+                    missing_ids.push(id);
+                }
+            }
+        }
+
+        if missing_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let count = missing_ids.len();
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut del_stmt = tx.prepare_cached("DELETE FROM tracks WHERE file_id = ?1")?;
+            for id in &missing_ids {
+                del_stmt.execute(params![id])?;
+            }
+        }
+        tx.commit()?;
+
+        self.rebuild_albums_summary()?;
+        Ok(count)
+    }
+
+    /// Batched tag update within a single transaction, updating both `tracks`
+    /// and `albums_summary` atomically.
+    pub fn batch_update_tags(&mut self, updates: &[TrackTagUpdate]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut track_stmt = tx.prepare_cached(
+                "UPDATE tracks SET
+                    title = ?2, artist = ?3, album = ?4, album_artist = ?5,
+                    genre = ?6, year = ?7, track_number = ?8, disc_number = ?9,
+                    duration_ms = ?10, sample_rate = ?11, channels = ?12,
+                    bits_per_sample = ?13, artwork_path = ?14,
+                    artwork_checked = CASE WHEN ?14 IS NOT NULL AND ?14 != '' THEN 1 ELSE tracks.artwork_checked END,
+                    tags_read = 1
+                 WHERE file_id = ?1",
+            )?;
+
+            let mut album_stmt = tx.prepare_cached(
+                "INSERT INTO albums_summary (
+                    album_key, album, album_artist, year, artwork_path,
+                    track_count, max_sample_rate, max_bit_depth
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7)
+                 ON CONFLICT(album_key) DO UPDATE SET
+                    track_count = albums_summary.track_count + 1,
+                    max_sample_rate = MAX(COALESCE(albums_summary.max_sample_rate, 0), excluded.max_sample_rate),
+                    max_bit_depth = MAX(COALESCE(albums_summary.max_bit_depth, 0), excluded.max_bit_depth),
+                    artwork_path = CASE WHEN albums_summary.artwork_path IS NULL OR albums_summary.artwork_path = ''
+                                        THEN excluded.artwork_path ELSE albums_summary.artwork_path END,
+                    year = CASE WHEN albums_summary.year IS NULL OR albums_summary.year = 0
+                                THEN excluded.year ELSE albums_summary.year END",
+            )?;
+
+            for u in updates {
+                track_stmt.execute(params![
+                    u.file_id,
+                    u.title,
+                    u.artist,
+                    u.album,
+                    u.album_artist,
+                    u.genre,
+                    u.year,
+                    u.track_number,
+                    u.disc_number,
+                    u.duration_ms,
+                    u.sample_rate,
+                    u.channels,
+                    u.bits_per_sample,
+                    u.artwork_path,
+                ])?;
+
+                let album_clean = if u.album.is_empty() {
+                    "Unknown Album"
+                } else {
+                    &u.album
+                };
+                let artist_clean = if !u.album_artist.is_empty() {
+                    &u.album_artist
+                } else if !u.artist.is_empty() {
+                    &u.artist
+                } else {
+                    "Unknown Artist"
+                };
+                let album_key = format!(
+                    "{}::{}",
+                    artist_clean.to_lowercase(),
+                    album_clean.to_lowercase()
+                );
+
+                album_stmt.execute(params![
+                    album_key,
+                    album_clean,
+                    artist_clean,
+                    u.year,
+                    u.artwork_path,
+                    u.sample_rate,
+                    u.bits_per_sample,
+                ])?;
+            }
+
+            // Propagate album artwork to any tracks that lack it (primary: artist::album)
+            let _ = tx.execute(
+                "UPDATE tracks SET artwork_path = (
+                    SELECT a.artwork_path FROM albums_summary a
+                    WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+                )
+                WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '' OR tracks.artwork_path LIKE '%unknown_artist__unknown_album%')
+                  AND EXISTS (
+                    SELECT 1 FROM albums_summary a
+                    WHERE a.album_key = lower(trim(CASE WHEN tracks.album_artist != '' THEN tracks.album_artist ELSE tracks.artist END)) || '::' || lower(trim(CASE WHEN tracks.album != '' THEN tracks.album ELSE 'unknown album' END))
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+                  )",
+                [],
+            );
+
+            // Secondary propagation by album title (e.g. soundtracks like Rockstar where different songs have different artists)
+            let _ = tx.execute(
+                "UPDATE tracks SET artwork_path = (
+                    SELECT a.artwork_path FROM albums_summary a
+                    WHERE lower(trim(a.album)) = lower(trim(tracks.album))
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+                    LIMIT 1
+                )
+                WHERE (tracks.artwork_path IS NULL OR tracks.artwork_path = '' OR tracks.artwork_path LIKE '%unknown_artist__unknown_album%')
+                  AND tracks.album IS NOT NULL AND trim(tracks.album) != '' AND lower(trim(tracks.album)) != 'unknown album'
+                  AND EXISTS (
+                    SELECT 1 FROM albums_summary a
+                    WHERE lower(trim(a.album)) = lower(trim(tracks.album))
+                      AND a.artwork_path IS NOT NULL AND a.artwork_path != '' AND a.artwork_path NOT LIKE '%unknown_artist__unknown_album%'
+                  )",
+                [],
+            );
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Single track tag update (backward compatible wrapper).
+    pub fn update_tags_single(&mut self, update: &TrackTagUpdate) -> Result<()> {
+        self.batch_update_tags(std::slice::from_ref(update))
+    }
+
+    pub fn set_artwork(&self, file_id: &str, path: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tracks SET artwork_path = ?2, artwork_checked = 1 WHERE file_id = ?1",
+            params![file_id, path],
+        )?;
+        Ok(())
+    }
+
+    /// Marks artwork as checked (negative caching) so repeated online searches are avoided.
+    pub fn mark_artwork_checked(&self, file_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tracks SET artwork_checked = 1 WHERE file_id = ?1",
+            params![file_id],
+        )?;
+        Ok(())
+    }
+
+    /// Returns whether artwork has already been checked for this track.
+    pub fn is_artwork_checked(&self, file_id: &str) -> Result<bool> {
+        let checked: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT artwork_checked FROM tracks WHERE file_id = ?1",
+                params![file_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(checked.unwrap_or(0) == 1)
+    }
+
+    /// Sub-3ms Ranked Multi-Field Search Query using External Content FTS5 and BM25.
+    pub fn search_tracks_fts(&self, query: &str, limit: u32) -> Result<Vec<CloudTrackRow>> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Sanitize and format terms into FTS5 prefix tokens:
+        // "bill evans waltz" -> "\"bill\"* AND \"evans\"* AND \"waltz\"*"
+        let terms: Vec<String> = trimmed
+            .split_whitespace()
+            .filter(|w| !w.is_empty())
+            .map(|w| {
+                let sanitized: String = w.chars().filter(|c| c.is_alphanumeric()).collect();
+                if sanitized.is_empty() {
+                    String::new()
+                } else {
+                    format!("\"{}\"*", sanitized)
+                }
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let fts_query = terms.join(" AND ");
+
+        let mut stmt = self.conn.prepare(
+            "SELECT t.file_id, t.name, t.folder_path, t.title, t.artist, t.album,
+                    t.album_artist, t.genre, t.year, t.track_number, t.disc_number,
+                    t.duration_ms, t.sample_rate, t.channels, t.bits_per_sample,
+                    t.size_bytes, t.tags_read, t.artwork_path
+             FROM tracks_fts f
+             JOIN tracks t ON t.rowid = f.rowid
+             WHERE tracks_fts MATCH ?1
+             ORDER BY bm25(tracks_fts, 10.0, 6.0, 4.0, 3.0, 1.0, 2.0)
+             LIMIT ?2",
+        )?;
+
+        let rows = stmt.query_map(params![fts_query, limit], Self::row_to_cloud_track)?;
+
+        rows.collect()
+    }
+
+    /// Lists all albums from the materialized `albums_summary` table in <1ms.
+    pub fn list_albums_summary(&self) -> Result<Vec<AlbumSummaryRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT album_key, album, album_artist, year, artwork_path,
+                    track_count, max_sample_rate, max_bit_depth
+             FROM albums_summary
+             ORDER BY album_artist COLLATE NOCASE, album COLLATE NOCASE",
+        )?;
+
+        let rows = stmt.query_map([], |r| {
+            Ok(AlbumSummaryRow {
+                album_key: r.get(0)?,
+                album: r.get(1)?,
+                album_artist: r.get(2)?,
+                year: r.get::<_, Option<u32>>(3)?.unwrap_or(0),
+                artwork_path: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                track_count: r.get::<_, Option<u32>>(5)?.unwrap_or(0),
+                max_sample_rate: r.get::<_, Option<u32>>(6)?.unwrap_or(0),
+                max_bit_depth: r.get::<_, Option<u32>>(7)?.unwrap_or(0),
+            })
+        })?;
+
+        rows.collect()
+    }
+
+    /// Full track listing ordered using covering index `idx_tracks_album_order`.
+    pub fn list_tracks(&self) -> Result<Vec<CloudTrackRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT file_id, name, folder_path, title, artist, album,
+                    album_artist, genre, year, track_number, disc_number,
+                    duration_ms, sample_rate, channels, bits_per_sample,
+                    size_bytes, tags_read, artwork_path
+             FROM tracks
+             ORDER BY album, album_artist, disc_number, track_number, title",
+        )?;
+
+        let rows = stmt.query_map([], Self::row_to_cloud_track)?;
+        rows.collect()
+    }
+
+    /// Retrieve a single track by its file_id.
+    pub fn get_track(&self, file_id: &str) -> Result<Option<CloudTrackRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT file_id, name, folder_path, title, artist, album,
+                    album_artist, genre, year, track_number, disc_number,
+                    duration_ms, sample_rate, channels, bits_per_sample,
+                    size_bytes, tags_read, artwork_path
+             FROM tracks WHERE file_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![file_id], Self::row_to_cloud_track)?;
+        match rows.next() {
+            Some(res) => res.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Aggregates distinct genres across all indexed tracks, grouping empty/null genres
+    /// into "Unknown Genre" and returning track counts and sample artwork.
+    pub fn get_genres(&self) -> Result<Vec<GenreSummary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT
+                COALESCE(NULLIF(TRIM(genre), ''), 'Unknown Genre') AS display_genre,
+                COUNT(*) AS track_count,
+                COALESCE(MAX(CASE WHEN artwork_path IS NOT NULL AND artwork_path != '' AND artwork_path NOT LIKE '%unknown_artist__unknown_album%' THEN artwork_path ELSE '' END), '') AS artwork_path
+             FROM tracks
+             GROUP BY display_genre
+             ORDER BY CASE WHEN display_genre = 'Unknown Genre' THEN 1 ELSE 0 END, display_genre COLLATE NOCASE ASC",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(GenreSummary {
+                genre: row.get(0)?,
+                track_count: row.get(1)?,
+                artwork_path: row.get(2)?,
+            })
+        })?;
+
+        rows.collect()
+    }
+
+    /// Retrieves all tracks matching a given genre, ordered by album, disc number, track number, and title.
+    pub fn get_tracks_by_genre(&self, genre: &str) -> Result<Vec<CloudTrackRow>> {
+        let trimmed = genre.trim();
+        let is_unknown = trimmed.is_empty()
+            || trimmed.eq_ignore_ascii_case("Unknown Genre")
+            || trimmed.eq_ignore_ascii_case("unknown");
+
+        let mut stmt = if is_unknown {
+            self.conn.prepare(
+                "SELECT file_id, name, folder_path, title, artist, album,
+                        album_artist, genre, year, track_number, disc_number,
+                        duration_ms, sample_rate, channels, bits_per_sample,
+                        size_bytes, tags_read, artwork_path
+                 FROM tracks
+                 WHERE genre IS NULL OR TRIM(genre) = ''
+                 ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+            )?
+        } else {
+            self.conn.prepare(
+                "SELECT file_id, name, folder_path, title, artist, album,
+                        album_artist, genre, year, track_number, disc_number,
+                        duration_ms, sample_rate, channels, bits_per_sample,
+                        size_bytes, tags_read, artwork_path
+                 FROM tracks
+                 WHERE LOWER(TRIM(genre)) = LOWER(TRIM(?1))
+                 ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+            )?
+        };
+
+        let rows = if is_unknown {
+            stmt.query_map([], Self::row_to_cloud_track)?
+        } else {
+            stmt.query_map(params![trimmed], Self::row_to_cloud_track)?
+        };
+
+        rows.collect()
+    }
+
+    /// Aggregates immediate subfolders under `parent_path` from indexed tracks.
+    ///
+    /// If `parent_path` is None, empty, "/", or "root", queries the root directories.
+    /// Returns each immediate subfolder with cumulative track count, immediate subfolder count,
+    /// and total byte size.
+    pub fn get_folders(&self, parent_path: Option<&str>) -> Result<Vec<FolderSummary>> {
+        use std::collections::{BTreeMap, HashSet};
+
+        let parent_norm: Vec<String> = match parent_path {
+            Some(p) => {
+                let s = p.trim();
+                if s.is_empty() || s == "/" || s.eq_ignore_ascii_case("root") {
+                    Vec::new()
+                } else {
+                    s.split('/')
+                        .map(|seg| seg.trim().to_string())
+                        .filter(|seg| !seg.is_empty())
+                        .collect()
+                }
+            }
+            None => Vec::new(),
+        };
+
+        let mut stmt = self.conn.prepare(
+            "SELECT folder_path, COUNT(*), COALESCE(SUM(size_bytes), 0)
+             FROM tracks
+             WHERE folder_path IS NOT NULL AND TRIM(folder_path) != ''
+             GROUP BY folder_path",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let path: String = row.get(0)?;
+            let count: u32 = row.get(1)?;
+            let size: i64 = row.get(2)?;
+            Ok((path, count, size as u64))
+        })?;
+
+        // child_name -> (full_path, cumulative_tracks, cumulative_size, Set<immediate_subfolder_names>)
+        let mut children: BTreeMap<String, (String, u32, u64, HashSet<String>)> = BTreeMap::new();
+
+        for r in rows.flatten() {
+            let (raw_path, count, size) = r;
+            let segments: Vec<String> = raw_path
+                .split('/')
+                .map(|seg| seg.trim().to_string())
+                .filter(|seg| !seg.is_empty())
+                .collect();
+
+            if segments.len() <= parent_norm.len() {
+                continue;
+            }
+
+            let mut matches_parent = true;
+            for (i, p_seg) in parent_norm.iter().enumerate() {
+                if !segments[i].eq_ignore_ascii_case(p_seg) {
+                    matches_parent = false;
+                    break;
+                }
+            }
+
+            if !matches_parent {
+                continue;
+            }
+
+            let child_idx = parent_norm.len();
+            let child_name = segments[child_idx].clone();
+
+            let child_full_path = if parent_norm.is_empty() {
+                child_name.clone()
+            } else {
+                let mut path_segs = parent_norm.clone();
+                path_segs.push(child_name.clone());
+                path_segs.join("/")
+            };
+
+            let entry = children
+                .entry(child_name)
+                .or_insert_with(|| (child_full_path, 0, 0, HashSet::new()));
+
+            entry.1 += count;
+            entry.2 += size;
+
+            if segments.len() > child_idx + 1 {
+                entry.3.insert(segments[child_idx + 1].clone());
+            }
+        }
+
+        let mut result = Vec::new();
+        for (name, (full_path, track_count, total_size, subfolders)) in children {
+            result.push(FolderSummary {
+                folder_id: full_path.clone(),
+                name,
+                path: full_path,
+                track_count,
+                subfolder_count: subfolders.len() as u32,
+                total_size_bytes: total_size,
+            });
+        }
+
+        result.sort_by_key(|a| a.name.to_lowercase());
+        Ok(result)
+    }
+
+    /// Retrieves all tracks located in `folder_path`.
+    ///
+    /// If `recursive` is false, only returns tracks directly within `folder_path`.
+    /// If `recursive` is true, returns all tracks within `folder_path` and all its nested subdirectories.
+    pub fn get_tracks_in_folder(
+        &self,
+        folder_path: &str,
+        recursive: bool,
+    ) -> Result<Vec<CloudTrackRow>> {
+        let trimmed = folder_path.trim();
+        let is_root = trimmed.is_empty() || trimmed == "/" || trimmed.eq_ignore_ascii_case("root");
+
+        let segments: Vec<&str> = trimmed
+            .split('/')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let slash_path = segments.join("/");
+        let space_slash_path = segments.join(" / ");
+
+        let mut stmt = if is_root {
+            if recursive {
+                self.conn.prepare(
+                    "SELECT file_id, name, folder_path, title, artist, album,
+                            album_artist, genre, year, track_number, disc_number,
+                            duration_ms, sample_rate, channels, bits_per_sample,
+                            size_bytes, tags_read, artwork_path
+                     FROM tracks
+                     ORDER BY folder_path, album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+                )?
+            } else {
+                self.conn.prepare(
+                    "SELECT file_id, name, folder_path, title, artist, album,
+                            album_artist, genre, year, track_number, disc_number,
+                            duration_ms, sample_rate, channels, bits_per_sample,
+                            size_bytes, tags_read, artwork_path
+                     FROM tracks
+                     WHERE folder_path = '' OR folder_path = '/'
+                     ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+                )?
+            }
+        } else if recursive {
+            let slash_prefix = format!("{}/%", slash_path);
+            let space_prefix = format!("{} / %", space_slash_path);
+            let mut s = self.conn.prepare(
+                "SELECT file_id, name, folder_path, title, artist, album,
+                        album_artist, genre, year, track_number, disc_number,
+                        duration_ms, sample_rate, channels, bits_per_sample,
+                        size_bytes, tags_read, artwork_path
+                 FROM tracks
+                 WHERE folder_path = ?1 OR folder_path = ?2 OR folder_path LIKE ?3 OR folder_path LIKE ?4
+                 ORDER BY folder_path, album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+            )?;
+            let rows = s.query_map(
+                params![slash_path, space_slash_path, slash_prefix, space_prefix],
+                Self::row_to_cloud_track,
+            )?;
+            return rows.collect();
+        } else {
+            let mut s = self.conn.prepare(
+                "SELECT file_id, name, folder_path, title, artist, album,
+                        album_artist, genre, year, track_number, disc_number,
+                        duration_ms, sample_rate, channels, bits_per_sample,
+                        size_bytes, tags_read, artwork_path
+                 FROM tracks
+                 WHERE folder_path = ?1 OR folder_path = ?2
+                 ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
+            )?;
+            let rows = s.query_map(
+                params![slash_path, space_slash_path],
+                Self::row_to_cloud_track,
+            )?;
+            return rows.collect();
+        };
+
+        let rows = stmt.query_map([], Self::row_to_cloud_track)?;
+        rows.collect()
+    }
+
+    /// Pending unscanned files.
+    pub fn pending_tag_reads(&self, limit: u32) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT file_id FROM tracks WHERE tags_read = 0 LIMIT ?1")?;
+        let rows = stmt.query_map(params![limit], |r| r.get::<_, String>(0))?;
+        rows.collect()
+    }
+
+    pub fn count(&self) -> Result<(u32, u32)> {
+        let total: u32 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))?;
+        let tagged: u32 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM tracks WHERE tags_read = 1", [], |r| {
+                    r.get(0)
+                })?;
+        Ok((total, tagged))
+    }
+
+    pub fn mark_tags_attempted(&self, file_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tracks SET tags_read = 1 WHERE file_id = ?",
+            [file_id],
+        )?;
+        Ok(())
+    }
+
+    /// Prunes tracks under `folder_prefixes` whose file_id is NOT in `valid_file_ids`.
+    /// If `folder_prefixes` is empty, prunes any track in the entire library whose file_id
+    /// is NOT in `valid_file_ids`.
+    ///
+    /// Returns the list of deleted file_ids.
+    pub fn prune_missing_files(
+        &mut self,
+        folder_prefixes: &[String],
+        valid_file_ids: &[String],
+    ) -> Result<Vec<String>> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS temp_valid_ids (file_id TEXT PRIMARY KEY)",
+            [],
+        )?;
+        tx.execute("DELETE FROM temp_valid_ids", [])?;
+
+        {
+            let mut insert_temp =
+                tx.prepare_cached("INSERT OR IGNORE INTO temp_valid_ids (file_id) VALUES (?1)")?;
+            for id in valid_file_ids {
+                insert_temp.execute(params![id])?;
+            }
+        }
+
+        let mut to_delete = Vec::new();
+        if folder_prefixes.is_empty() {
+            let mut stmt = tx.prepare(
+                "SELECT file_id FROM tracks WHERE file_id NOT IN (SELECT file_id FROM temp_valid_ids)",
+            )?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            for id in rows.flatten() {
+                to_delete.push(id);
+            }
+        } else {
+            for prefix in folder_prefixes {
+                let mut stmt = tx.prepare(
+                    "SELECT file_id FROM tracks
+                     WHERE (folder_path = ?1 OR folder_path LIKE ?2)
+                       AND file_id NOT IN (SELECT file_id FROM temp_valid_ids)",
+                )?;
+                let like_pattern = format!("{} / %", prefix);
+                let rows =
+                    stmt.query_map(params![prefix, like_pattern], |r| r.get::<_, String>(0))?;
+                for id in rows.flatten() {
+                    to_delete.push(id);
+                }
+            }
+        }
+
+        to_delete.sort();
+        to_delete.dedup();
+
+        {
+            let mut del_stmt = tx.prepare_cached("DELETE FROM tracks WHERE file_id = ?1")?;
+            for id in &to_delete {
+                del_stmt.execute(params![id])?;
+            }
+        }
+
+        tx.execute("DELETE FROM temp_valid_ids", [])?;
+        tx.commit()?;
+
+        if !to_delete.is_empty() {
+            self.rebuild_albums_summary()?;
+        }
+
+        Ok(to_delete)
+    }
+
+    /// Recomputes `albums_summary` from scratch based on current `tracks` rows with `tags_read = 1`.
+    pub fn rebuild_albums_summary(&mut self) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM albums_summary", [])?;
+        tx.execute(
+            "INSERT INTO albums_summary (
+                album_key, album, album_artist, year, artwork_path,
+                track_count, max_sample_rate, max_bit_depth
+            )
+            SELECT
+                LOWER(COALESCE(NULLIF(album_artist, ''), NULLIF(artist, ''), 'Unknown Artist')) || '::' || LOWER(COALESCE(NULLIF(album, ''), 'Unknown Album')) AS album_key,
+                COALESCE(NULLIF(album, ''), 'Unknown Album') AS album,
+                COALESCE(NULLIF(album_artist, ''), NULLIF(artist, ''), 'Unknown Artist') AS album_artist,
+                MAX(COALESCE(year, 0)) AS year,
+                MAX(COALESCE(artwork_path, '')) AS artwork_path,
+                COUNT(*) AS track_count,
+                MAX(COALESCE(sample_rate, 0)) AS max_sample_rate,
+                MAX(COALESCE(bits_per_sample, 0)) AS max_bit_depth
+            FROM tracks
+            WHERE tags_read = 1
+            GROUP BY album_key",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+    pub fn clear_library_tables(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM tracks", [])?;
+        self.conn.execute("DELETE FROM albums_summary", [])?;
+        Ok(())
+    }
+}
