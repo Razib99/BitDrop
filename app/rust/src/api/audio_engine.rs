@@ -2093,6 +2093,11 @@ pub fn engine_set_hardware_sample_rate(rate: u32) {
 }
 
 #[flutter_rust_bridge::frb(sync)]
+pub fn engine_set_dop_mode(active: bool) {
+    crate::dsp::DOP_BYPASS_LOCKOUT.store(active, Ordering::Release);
+}
+
+#[flutter_rust_bridge::frb(sync)]
 pub fn engine_buffer_state() -> EngineBufferState {
     let state = PLAYER_STATE.lock().unwrap();
     EngineBufferState {

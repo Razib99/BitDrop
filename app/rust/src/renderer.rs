@@ -65,6 +65,8 @@ impl OutputRenderer {
             .as_mut()
             .and_then(|reader| reader.read_new())
         {
+            self.dsp.dop_active =
+                snap.dop_active || crate::dsp::DOP_BYPASS_LOCKOUT.load(Ordering::Relaxed);
             self.dsp.eq_enabled = snap.eq_enabled;
             if snap.sample_rate > 0.0 && (self.dsp.sample_rate - snap.sample_rate).abs() > 0.5 {
                 self.dsp.set_sample_rate(snap.sample_rate);
@@ -160,19 +162,30 @@ impl OutputRenderer {
                     };
                     read_idx += 2;
 
-                    let (out_l, out_r) = self.dsp.process_stereo(l as f64, r as f64);
+                    let is_dop = self.dsp.dop_active
+                        || crate::dsp::DOP_BYPASS_LOCKOUT.load(Ordering::Relaxed);
+
+                    let (out_l, out_r) = if is_dop {
+                        (l as f64, r as f64)
+                    } else {
+                        self.dsp.process_stereo(l as f64, r as f64)
+                    };
                     l = out_l as f32;
                     r = out_r as f32;
 
-                    if self.fade_gain < want {
-                        self.fade_gain = (self.fade_gain + step).min(want);
-                    } else if self.fade_gain > want {
-                        self.fade_gain = (self.fade_gain - step).max(want);
-                    }
-                    self.duck = (self.duck + duck_step).min(1.0);
+                    let g = if is_dop {
+                        1.0
+                    } else {
+                        if self.fade_gain < want {
+                            self.fade_gain = (self.fade_gain + step).min(want);
+                        } else if self.fade_gain > want {
+                            self.fade_gain = (self.fade_gain - step).max(want);
+                        }
+                        self.duck = (self.duck + duck_step).min(1.0);
+                        self.fade_gain * self.duck
+                    };
 
                     self.last = (l, r);
-                    let g = self.fade_gain * self.duck;
                     let rendered_l = l * g;
                     let rendered_r = r * g;
 

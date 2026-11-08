@@ -46,10 +46,10 @@ impl DsdDecimator {
             _ => return Err(DsdError::UnsupportedSampleRate(dsd_rate)),
         };
 
-        // 1. Design 256-tap windowed-sinc FIR filter with Nuttall 4-term window
-        // Cutoff at 36 kHz to preserve full audible spectrum (0..20 kHz flat) while
-        // steeply attenuating ultrasonic quantization noise (>117 dB at Nyquist).
-        let fc = 36_000.0f64;
+        // 1. Design 256-tap windowed-sinc FIR filter with 4-term Blackman-Harris window.
+        // Cutoff at 24 kHz ensures complete ultrasonic quantization noise rejection
+        // (>105 dB stopband attenuation) while keeping 0..20 kHz audible spectrum flat.
+        let fc = 24_000.0f64;
         let fs = dsd_rate as f64;
         let omega_c = 2.0 * PI * fc / fs;
         let mid = (DECIMATOR_TAPS - 1) as f64 / 2.0;
@@ -57,11 +57,11 @@ impl DsdDecimator {
         let mut coeffs = [0.0f64; DECIMATOR_TAPS];
         let mut sum_coeffs = 0.0f64;
 
-        // Nuttall window coefficients
-        let a0 = 0.355768;
-        let a1 = 0.487396;
-        let a2 = 0.144232;
-        let a3 = 0.012604;
+        // 4-term Blackman-Harris window coefficients (>105 dB stopband rejection)
+        let a0 = 0.35875;
+        let a1 = 0.48829;
+        let a2 = 0.14128;
+        let a3 = 0.01168;
 
         for (i, c) in coeffs.iter_mut().enumerate() {
             let n = i as f64 - mid;

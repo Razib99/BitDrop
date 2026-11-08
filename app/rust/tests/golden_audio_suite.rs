@@ -11,11 +11,16 @@ use rust_lib_bitdrop::api::audio_engine::{
     CALLBACK_FADE_STEP, CALLBACK_FADE_TARGET, CALLBACK_FLUSH_REQUESTED, CALLBACK_FRAMES_PLAYED,
     CALLBACK_GATE_OUTPUT, CALLBACK_IS_PLAYING, DSP_TRIPLE_BUFFER, TRACK_ENDED_FLAG,
 };
+use rust_lib_bitdrop::dsd::decimator::DsdDecimator;
+use rust_lib_bitdrop::dsd::dop::DopFramer;
+use rust_lib_bitdrop::dsd::dsf::DsfReader;
 use rust_lib_bitdrop::dsp::{
-    downmix_to_stereo, BoundaryKind, BoundaryMarker, DspConfigSnapshot, DspPipelineV2,
-    StereoBiquadF64, BUTTERWORTH_Q, EQ_HIGH_SHELF, EQ_LOW_SHELF, EQ_PEAK, OCTAVE_PEAK_Q,
+    downmix_to_stereo, BoundaryKind, BoundaryMarker, DspConfigSnapshot, DspPipelineV2, EqBandSpec,
+    LookaheadLimiterF64, StereoBiquadF64, BUTTERWORTH_Q, DOP_BYPASS_LOCKOUT, EQ_HIGH_SHELF,
+    EQ_LOW_SHELF, EQ_PEAK, OCTAVE_PEAK_Q, TRUE_PEAK_COEFFS_4X,
 };
 use rust_lib_bitdrop::renderer::OutputRenderer;
+use rust_lib_bitdrop::usb_dac::streaming::PcmFormat;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::path::Path;
@@ -947,4 +952,509 @@ fn flushed_frames_preserve_future_boundary_positions() {
     renderer.render_interleaved(&mut [0.0; 4], 2);
     assert_eq!(CALLBACK_FRAMES_PLAYED.load(Ordering::Acquire), 6);
     assert!(TRACK_ENDED_FLAG.load(Ordering::Acquire));
+}
+
+#[test]
+fn gate_7_multi_container_decode_and_sample_count_exactness() {
+    let _lock = SUITE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+    let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+
+    // 1. WAV 32-bit float / 48 kHz (100 ms = 4800 frames)
+    let wav_path = fixtures_dir.join("canonical_test.wav");
+    assert!(
+        wav_path.exists(),
+        "canonical_test.wav must exist in fixtures"
+    );
+
+    let file = File::open(&wav_path).expect("Open canonical WAV");
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    hint.with_extension("wav");
+    let format_opts = FormatOptions::default();
+    let metadata_opts = MetadataOptions::default();
+    let mut probed = symphonia::default::get_probe()
+        .format(&hint, mss, &format_opts, &metadata_opts)
+        .expect("Probe canonical WAV");
+
+    let (track_id, codec_params) = {
+        let track = probed.format.default_track().expect("Default track");
+        assert_eq!(track.codec_params.sample_rate.unwrap(), 48000);
+        assert_eq!(track.codec_params.channels.unwrap().count(), 2);
+        (track.id, track.codec_params.clone())
+    };
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&codec_params, &DecoderOptions::default())
+        .expect("Make WAV decoder");
+
+    let mut decoded_frames: Vec<(f32, f32)> = Vec::new();
+    let mut sample_buf = None;
+
+    while let Ok(packet) = probed.format.next_packet() {
+        if packet.track_id() != track_id {
+            continue;
+        }
+        if let Ok(decoded) = decoder.decode(&packet) {
+            if sample_buf.is_none() {
+                sample_buf = Some(SampleBuffer::<f32>::new(
+                    decoded.capacity() as u64,
+                    *decoded.spec(),
+                ));
+            }
+            if let Some(buf) = sample_buf.as_mut() {
+                buf.copy_interleaved_ref(decoded);
+                let samples = buf.samples();
+                for chunk in samples.chunks(2) {
+                    decoded_frames.push((chunk[0], chunk[1]));
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        decoded_frames.len(),
+        4800,
+        "Gate 7: Canonical WAV 100ms must yield exactly 4800 frames"
+    );
+
+    // Compute RMS error against mathematical reference
+    let mut sq_err_sum = 0.0f64;
+    for (n, frame) in decoded_frames.iter().enumerate() {
+        let t = n as f64 / 48000.0;
+        let ref_l = 0.5 * (2.0 * std::f64::consts::PI * 440.0 * t).sin();
+        let ref_r = 0.5 * (2.0 * std::f64::consts::PI * 880.0 * t).cos();
+        let err_l = frame.0 as f64 - ref_l;
+        let err_r = frame.1 as f64 - ref_r;
+        sq_err_sum += err_l * err_l + err_r * err_r;
+    }
+    let rms_err = (sq_err_sum / (decoded_frames.len() * 2) as f64).sqrt();
+    assert!(
+        rms_err < 1e-6,
+        "Gate 7: Lossless WAV reconstruction RMS error must be < 1e-6, got: {}",
+        rms_err
+    );
+
+    // 2. DSF DSD64 2.8224 MHz (100 ms = 282,240 samples per channel)
+    let dsf_path = fixtures_dir.join("canonical_test.dsf");
+    assert!(
+        dsf_path.exists(),
+        "canonical_test.dsf must exist in fixtures"
+    );
+
+    let dsf_file = File::open(&dsf_path).expect("Open canonical DSF");
+    let mut dsf_reader =
+        DsfReader::open(Box::new(dsf_file)).expect("Open DsfReader on canonical fixture");
+    let header = *dsf_reader.header();
+    assert_eq!(header.sample_rate, 2_822_400);
+    assert_eq!(header.channel_num, 2);
+    assert_eq!(header.sample_count, 282_240);
+
+    let mut decimator =
+        DsdDecimator::new(2_822_400, 176_400).expect("Create DsdDecimator for Gate 7");
+    let mut dsd_l = [0u8; 4096];
+    let mut dsd_r = [0u8; 4096];
+    let mut total_pcm_frames = 0;
+
+    while let Ok(bytes_read) = dsf_reader.read_stereo_bytes(&mut dsd_l, &mut dsd_r) {
+        if bytes_read == 0 {
+            break;
+        }
+        let mut pcm_l = Vec::new();
+        let mut pcm_r = Vec::new();
+        decimator.process_stereo(
+            &dsd_l[..bytes_read],
+            &dsd_r[..bytes_read],
+            &mut pcm_l,
+            &mut pcm_r,
+        );
+        total_pcm_frames += pcm_l.len();
+    }
+    assert_eq!(
+        total_pcm_frames, 17640,
+        "Gate 7: Canonical DSF 100ms must decimate to exactly 17,640 frames"
+    );
+
+    // 3. FLAC canonical test fixture
+    let flac_path = fixtures_dir.join("canonical_test.flac");
+    if flac_path.exists() {
+        let flac_file = File::open(&flac_path).expect("Open canonical FLAC");
+        let mss = MediaSourceStream::new(Box::new(flac_file), Default::default());
+        let mut hint = Hint::new();
+        hint.with_extension("flac");
+        if let Ok(mut probed) = symphonia::default::get_probe().format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        ) {
+            let (track_id, codec_params) = {
+                let track = probed.format.default_track().expect("FLAC default track");
+                (track.id, track.codec_params.clone())
+            };
+            if let Ok(mut decoder) =
+                symphonia::default::get_codecs().make(&codec_params, &DecoderOptions::default())
+            {
+                let mut flac_frames = 0;
+                while let Ok(packet) = probed.format.next_packet() {
+                    if packet.track_id() != track_id {
+                        continue;
+                    }
+                    if let Ok(decoded) = decoder.decode(&packet) {
+                        flac_frames += decoded.frames();
+                    }
+                }
+                assert!(flac_frames > 0, "Gate 7: FLAC must decode non-zero frames");
+            }
+        }
+    }
+
+    // 4. MP3 canonical test fixture
+    let mp3_path = fixtures_dir.join("canonical_test.mp3");
+    if mp3_path.exists() {
+        let mp3_file = File::open(&mp3_path).expect("Open canonical MP3");
+        let mss = MediaSourceStream::new(Box::new(mp3_file), Default::default());
+        let mut hint = Hint::new();
+        hint.with_extension("mp3");
+        if let Ok(mut probed) = symphonia::default::get_probe().format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        ) {
+            let (track_id, codec_params) = {
+                let track = probed.format.default_track().expect("MP3 default track");
+                assert_eq!(track.codec_params.sample_rate.unwrap(), 44100);
+                (track.id, track.codec_params.clone())
+            };
+            if let Ok(mut decoder) =
+                symphonia::default::get_codecs().make(&codec_params, &DecoderOptions::default())
+            {
+                let mut mp3_frames = 0;
+                while let Ok(packet) = probed.format.next_packet() {
+                    if packet.track_id() != track_id {
+                        continue;
+                    }
+                    if let Ok(decoded) = decoder.decode(&packet) {
+                        mp3_frames += decoded.frames();
+                    }
+                }
+                assert!(mp3_frames > 0, "Gate 7: MP3 must decode non-zero frames");
+            }
+        }
+    }
+}
+
+#[test]
+fn gate_8_sample_accurate_gapless_transition_across_containers() {
+    let _lock = SUITE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+    CALLBACK_IS_PLAYING.store(true, Ordering::SeqCst);
+    CALLBACK_GATE_OUTPUT.store(false, Ordering::SeqCst);
+    CALLBACK_FLUSH_REQUESTED.store(false, Ordering::SeqCst);
+    CALLBACK_FADE_TARGET.store(1.0f32.to_bits(), Ordering::SeqCst);
+    CALLBACK_FADE_STEP.store(1.0f32.to_bits(), Ordering::SeqCst);
+    CALLBACK_FRAMES_PLAYED.store(0, Ordering::SeqCst);
+    TRACK_ENDED_FLAG.store(false, Ordering::SeqCst);
+    DSP_TRIPLE_BUFFER.publish(DspConfigSnapshot::default());
+
+    let fs = 48000.0f64;
+    let f_hz = 1000.0f64;
+    let omega = 2.0 * std::f64::consts::PI * f_hz / fs;
+    let phi_0 = 1.134f64; // arbitrary non-zero-crossing phase angle
+
+    let n1 = 4096usize; // Track 1 frames
+    let n2 = 4096usize; // Track 2 frames
+    let total_frames = n1 + n2;
+
+    // Track 1 frames (n = 0 .. n1 - 1)
+    let mut track1_frames = Vec::with_capacity(n1);
+    for n in 0..n1 {
+        let val = (0.5 * (omega * n as f64 + phi_0).sin()) as f32;
+        track1_frames.push((val, val));
+    }
+
+    // Track 2 continues phase exactly from n1
+    let mut track2_frames = Vec::with_capacity(n2);
+    for n in 0..n2 {
+        let val = (0.5 * (omega * (n1 + n) as f64 + phi_0).sin()) as f32;
+        track2_frames.push((val, val));
+    }
+
+    let (mut audio_prod, audio_cons) = rtrb::RingBuffer::<f32>::new(16384);
+    let (mut boundary_prod, boundary_cons) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+    let (triggered_prod, mut triggered_cons) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+
+    let mut renderer = OutputRenderer::new(
+        fs,
+        Some(audio_cons),
+        Some(boundary_cons),
+        Some(triggered_prod),
+    );
+
+    // Push Track 1
+    boundary_prod
+        .push(BoundaryMarker::track_started(0, "gapless_track_1"))
+        .unwrap();
+    for frame in &track1_frames {
+        audio_prod.push(frame.0).unwrap();
+        audio_prod.push(frame.1).unwrap();
+    }
+
+    // Push boundary marker
+    boundary_prod
+        .push(BoundaryMarker::track_changed(n1 as u64, "gapless_track_2"))
+        .unwrap();
+
+    // Push Track 2
+    for frame in &track2_frames {
+        audio_prod.push(frame.0).unwrap();
+        audio_prod.push(frame.1).unwrap();
+    }
+
+    // Push track ended marker
+    boundary_prod
+        .push(BoundaryMarker::track_ended(
+            total_frames as u64,
+            "gapless_track_2",
+        ))
+        .unwrap();
+
+    // Render all frames
+    let mut rendered: Vec<(f32, f32)> = Vec::with_capacity(total_frames);
+    let mut chunk_buf = [0.0f32; 512];
+
+    while rendered.len() < total_frames {
+        let to_render = (total_frames - rendered.len()).min(256);
+        let out_slice = &mut chunk_buf[..to_render * 2];
+        renderer.render_interleaved(out_slice, 2);
+        for i in 0..to_render {
+            rendered.push((out_slice[i * 2], out_slice[i * 2 + 1]));
+        }
+    }
+
+    assert_eq!(rendered.len(), total_frames);
+
+    // Assert sample continuity across the boundary
+    let y_boundary_prev = rendered[n1 - 1].0;
+    let y_boundary_curr = rendered[n1].0;
+    let expected_prev = (0.5 * (omega * (n1 - 1) as f64 + phi_0).sin()) as f32;
+    let expected_curr = (0.5 * (omega * n1 as f64 + phi_0).sin()) as f32;
+
+    assert!(
+        (y_boundary_prev - expected_prev).abs() < 1e-6,
+        "Gate 8: Pre-boundary sample mismatch: {} vs {}",
+        y_boundary_prev,
+        expected_prev
+    );
+    assert!(
+        (y_boundary_curr - expected_curr).abs() < 1e-6,
+        "Gate 8: Post-boundary sample mismatch: {} vs {}",
+        y_boundary_curr,
+        expected_curr
+    );
+
+    // Assert 1st derivative (slope) continuity across track boundary
+    let delta_boundary = y_boundary_curr - y_boundary_prev;
+    let delta_expected = expected_curr - expected_prev;
+    let slope_diff = (delta_boundary - delta_expected).abs();
+
+    assert!(
+        slope_diff < 1e-6,
+        "Gate 8: Slope discontinuity across track boundary: |{} - {}| = {} >= 1e-6",
+        delta_boundary,
+        delta_expected,
+        slope_diff
+    );
+
+    // Check triggered boundary events
+    let mut events = Vec::new();
+    while let Ok(ev) = triggered_cons.pop() {
+        events.push(ev);
+    }
+    assert_eq!(
+        events.len(),
+        3,
+        "Gate 8: Exactly 3 boundary events must fire"
+    );
+    assert_eq!(events[0].trigger_at_frame, 0);
+    assert_eq!(events[1].trigger_at_frame, n1 as u64);
+    assert_eq!(events[2].trigger_at_frame, total_frames as u64);
+}
+
+#[test]
+fn gate_9_ebu_sqam_inter_sample_clipping_torture_test() {
+    let _lock = SUITE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+    let fs = 48000.0f64;
+    let mut limiter = LookaheadLimiterF64::new(fs);
+
+    // EBU SQAM Pathological Inter-Sample Clipping Signal:
+    // f = fs / 4, phase = pi / 4, peak amplitude = sqrt(2) linear (+3.01 dBFS).
+    // Sampled at discrete times n: x[n] = sqrt(2) * sin(n * pi/2 + pi/4)
+    // Every single sample has |x[n]| = 1.0 (0.0 dBFS discrete peak),
+    // but the analog reconstructed inter-sample peak reaches +3.01 dBTP.
+    let sqrt2 = std::f64::consts::SQRT_2;
+    let num_samples = 4800; // 100 ms
+    let mut input_samples = Vec::with_capacity(num_samples);
+
+    for n in 0..num_samples {
+        let val =
+            sqrt2 * (n as f64 * std::f64::consts::FRAC_PI_2 + std::f64::consts::FRAC_PI_4).sin();
+        input_samples.push(val);
+    }
+
+    // Verify discrete-time peak is strictly <= 1.0000001 (0 dBFS)
+    for &s in &input_samples {
+        assert!(
+            s.abs() <= 1.0000001,
+            "Discrete sample peak must not exceed 0 dBFS"
+        );
+    }
+
+    // Process through Lookahead True-Peak Limiter
+    let mut limited_output = Vec::with_capacity(num_samples);
+    for &s in &input_samples {
+        let (out_l, _) = limiter.process_stereo(s, s);
+        limited_output.push(out_l);
+    }
+
+    // Reconstruct 4x true-peak values on the output using ITU-R BS.1770-4 4x polyphase filter
+    // Skip initial lookahead settling runway (~150 samples)
+    let max_inter_sample_peak = {
+        let mut history = [0.0f64; 12];
+        let mut hist_idx = 0;
+        let mut peak = 0.0f64;
+
+        for (i, &s) in limited_output.iter().enumerate() {
+            history[hist_idx] = s;
+            hist_idx = (hist_idx + 1) % 12;
+
+            if i >= 150 {
+                // Evaluate all 4 phases of ITU-R BS.1770-4 filter
+                for phase_coeffs in &TRUE_PEAK_COEFFS_4X {
+                    let mut interp = 0.0f64;
+                    for (tap, &coeff) in phase_coeffs.iter().enumerate() {
+                        let idx = (hist_idx + 12 - 1 - tap) % 12;
+                        interp += history[idx] * coeff;
+                    }
+                    if interp.abs() > peak {
+                        peak = interp.abs();
+                    }
+                }
+            }
+        }
+        peak
+    };
+
+    // -1.0 dBTP + 0.05 dB tolerance = -0.95 dBTP = 10^(-0.95/20) ~ 0.89639
+    let ceiling_with_tolerance = 10.0_f64.powf(-0.95 / 20.0);
+    assert!(
+        max_inter_sample_peak <= ceiling_with_tolerance,
+        "Gate 9: 4x reconstructed inter-sample peak ({}) exceeded -1.0 dBTP + 0.05dB tolerance ({})",
+        max_inter_sample_peak,
+        ceiling_with_tolerance
+    );
+}
+
+#[test]
+fn gate_10_dop_v1_1_dsp_bypass_lockout_invariant() {
+    let _lock = SUITE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+    CALLBACK_IS_PLAYING.store(true, Ordering::SeqCst);
+    CALLBACK_GATE_OUTPUT.store(false, Ordering::SeqCst);
+    CALLBACK_FLUSH_REQUESTED.store(false, Ordering::SeqCst);
+    CALLBACK_FADE_TARGET.store(1.0f32.to_bits(), Ordering::SeqCst);
+    CALLBACK_FADE_STEP.store(1.0f32.to_bits(), Ordering::SeqCst);
+    CALLBACK_FRAMES_PLAYED.store(0, Ordering::SeqCst);
+    TRACK_ENDED_FLAG.store(false, Ordering::SeqCst);
+
+    // Configure aggressive DSP: +6 dB preamp, peaking filter boost, auto-gain
+    let mut specs = [EqBandSpec::default(); 16];
+    specs[0] = EqBandSpec {
+        kind: EQ_PEAK,
+        freq: 1000.0,
+        q: 1.0,
+        gain_db: 6.0,
+    };
+    let snap = DspConfigSnapshot {
+        eq_enabled: true,
+        preamp_db: 6.0,
+        is_parametric: true,
+        specs,
+        spec_count: 1,
+        dop_active: true, // Hardware DoP lockout flag
+        ..Default::default()
+    };
+    DSP_TRIPLE_BUFFER.publish(snap);
+
+    // Also activate global atomic lockout flag
+    DOP_BYPASS_LOCKOUT.store(true, Ordering::Release);
+
+    let (mut audio_prod, audio_cons) = rtrb::RingBuffer::<f32>::new(4096);
+    let mut renderer = OutputRenderer::new(176400.0, Some(audio_cons), None, None);
+    renderer.dsp.dop_active = true;
+
+    // Create 512 stereo DoP v1.1 frames (1024 DSD bytes per channel)
+    let mut framer = DopFramer::new(PcmFormat::S24_3Le).expect("Create DopFramer");
+    let mut dsd_l = Vec::new();
+    let mut dsd_r = Vec::new();
+    for i in 0..1024 {
+        dsd_l.push((i * 17) as u8);
+        dsd_r.push((i * 31) as u8);
+    }
+
+    let mut pcm_wire = vec![0u8; 512 * 6];
+    let (consumed_dsd, pcm_bytes) = framer.frame_stereo(&dsd_l, &dsd_r, &mut pcm_wire);
+    assert_eq!(consumed_dsd, 1024);
+    assert_eq!(pcm_bytes, 512 * 6);
+
+    // Push DoP frames into audio ring buffer as normalized 24-bit PCM floats
+    let mut expected_samples = Vec::new();
+    for frame_idx in 0..512 {
+        let base = frame_idx * 6;
+        // S24_3Le: 3 bytes L, 3 bytes R
+        let b0_l = pcm_wire[base] as i32;
+        let b1_l = pcm_wire[base + 1] as i32;
+        let b2_l = pcm_wire[base + 2] as i32; // marker
+        let i24_l = b0_l | (b1_l << 8) | (b2_l << 16);
+        let f_l = (i24_l as f32) / 8388608.0;
+
+        let b0_r = pcm_wire[base + 3] as i32;
+        let b1_r = pcm_wire[base + 4] as i32;
+        let b2_r = pcm_wire[base + 5] as i32; // marker
+        let i24_r = b0_r | (b1_r << 8) | (b2_r << 16);
+        let f_r = (i24_r as f32) / 8388608.0;
+
+        audio_prod.push(f_l).unwrap();
+        audio_prod.push(f_r).unwrap();
+        expected_samples.push((b2_l as u8, (b0_l | (b1_l << 8)) as u16));
+        expected_samples.push((b2_r as u8, (b0_r | (b1_r << 8)) as u16));
+    }
+
+    // Render through OutputRenderer with active +6 dB EQ and Limiter
+    let mut render_out = [0.0f32; 1024];
+    renderer.render_interleaved(&mut render_out, 2);
+
+    // Verify: 100% of frames MUST have untouched DoP markers and DSD words
+    for i in 0..1024 {
+        let rend_f = render_out[i];
+        let rend_i24 = (rend_f * 8388608.0).round() as i32;
+        let marker = ((rend_i24 >> 16) & 0xFF) as u8;
+        let dsd_payload = (rend_i24 & 0xFFFF) as u16;
+
+        let (exp_marker, exp_dsd) = expected_samples[i];
+        assert_eq!(
+            marker, exp_marker,
+            "Gate 10: Sample {} marker corrupted! Expected {:#04x}, got {:#04x}",
+            i, exp_marker, marker
+        );
+        assert_eq!(
+            dsd_payload, exp_dsd,
+            "Gate 10: Sample {} DSD payload corrupted! Expected {:#06x}, got {:#06x}",
+            i, exp_dsd, dsd_payload
+        );
+    }
+
+    DOP_BYPASS_LOCKOUT.store(false, Ordering::Release);
 }

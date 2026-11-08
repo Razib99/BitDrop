@@ -75,6 +75,7 @@ pub struct DspConfigSnapshot {
     pub spec_count: usize,
     pub is_parametric: bool,
     pub graphic_gains: [f32; 10],
+    pub dop_active: bool,
     pub version: u64,
 }
 
@@ -91,10 +92,16 @@ impl Default for DspConfigSnapshot {
             spec_count: 0,
             is_parametric: false,
             graphic_gains: [0.0; 10],
+            dop_active: false,
             version: 0,
         }
     }
 }
+
+/// Hardware-locked DoP v1.1 bit-transparency bypass flag.
+/// When active, guarantees 100% bypass of biquads, preamp, true-peak limiting, and dither.
+pub static DOP_BYPASS_LOCKOUT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoundaryKind {
@@ -874,6 +881,7 @@ pub struct DspPipelineV2 {
     pub mono: bool,
     pub software_volume: f64,
     pub eq_enabled: bool,
+    pub dop_active: bool,
 }
 
 impl DspPipelineV2 {
@@ -914,6 +922,7 @@ impl DspPipelineV2 {
             mono: false,
             software_volume: 1.0,
             eq_enabled: false,
+            dop_active: false,
         }
     }
 
@@ -1031,6 +1040,14 @@ impl DspPipelineV2 {
     /// Process a stereo frame through the complete f64 chain.
     #[inline(always)]
     pub fn process_stereo(&mut self, in_l: f64, in_r: f64) -> (f64, f64) {
+        // 0. DoP v1.1 Bit-Corruption Lockout Invariant:
+        // When streaming DoP v1.1 frames, upper 8 bits carry alternating 0x05/0xFA markers.
+        // DSP processing (EQ biquads, preamp gain, true-peak limiter, dither) is hardware-locked
+        // to complete bypass to guarantee bit-exact transmission.
+        if self.dop_active {
+            return (in_l, in_r);
+        }
+
         // 1. Bit-Exact Bypass check
         if self.is_bit_exact_neutral() {
             return (in_l, in_r);
