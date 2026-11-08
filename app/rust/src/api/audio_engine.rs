@@ -172,7 +172,6 @@ lazy_static::lazy_static! {
 /// Frames the output has asked for. The watchdog watches this and nothing
 /// else: a stream that has silently died still reports itself as open, but it
 /// stops pulling, and that is the only reliable symptom.
-#[cfg(target_os = "android")]
 static CONSUMED_FRAMES: AtomicU64 = AtomicU64::new(0);
 
 /// Set from Oboe's error callback. An exclusive low-latency stream is torn
@@ -570,13 +569,14 @@ fn initialize_engine() {
     #[cfg(target_os = "android")]
     {
         open_output_stream(None);
-        start_stream_watchdog();
     }
 
     #[cfg(not(target_os = "android"))]
     {
         open_cpal_output_stream(None);
     }
+
+    start_stream_watchdog();
 
     // Control Thread: drains triggered boundaries and pushes reactive EngineEvents to Dart via StreamSink
     thread::spawn(move || {
@@ -1688,6 +1688,7 @@ fn open_cpal_output_stream(sample_rate: Option<u32>) {
             &stream_config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 let _ = renderer.render_interleaved(data, channels);
+                CONSUMED_FRAMES.fetch_add((data.len() / channels.max(1)) as u64, Ordering::Relaxed);
             },
             err_fn,
             None,
@@ -1704,6 +1705,8 @@ fn open_cpal_output_stream(sample_rate: Option<u32>) {
                     for (dest, &src) in data.iter_mut().zip(buf.iter()) {
                         *dest = (src.clamp(-1.0, 1.0) * 32767.0) as i16;
                     }
+                    CONSUMED_FRAMES
+                        .fetch_add((data.len() / channels.max(1)) as u64, Ordering::Relaxed);
                 },
                 err_fn,
                 None,
@@ -1740,7 +1743,6 @@ fn open_cpal_output_stream(sample_rate: Option<u32>) {
 /// and simply stops calling back for the rest, so the frame counter is the
 /// authority — if the output has not asked for a sample in a second while
 /// playback is live, the stream is gone whatever it claims.
-#[cfg(target_os = "android")]
 fn start_stream_watchdog() {
     thread::spawn(|| {
         let mut last_frames = CONSUMED_FRAMES.load(Ordering::Relaxed);
@@ -1751,14 +1753,19 @@ fn start_stream_watchdog() {
             // Automatic failover bridge: if DirectUsb was active and the stream died, fall back to standard stream
             if crate::usb_dac::get_active_stream_backend()
                 == crate::usb_dac::StreamBackend::DirectUsb
-            {
-                if crate::usb_dac::check_and_execute_failover(|| {
+                && crate::usb_dac::check_and_execute_failover(|was_hot_disconnected| {
+                    if was_hot_disconnected {
+                        engine_pause();
+                    }
+                    #[cfg(target_os = "android")]
                     open_output_stream(None);
-                }) {
-                    last_frames = CONSUMED_FRAMES.load(Ordering::Relaxed);
-                    stalled_ticks = 0;
-                    continue;
-                }
+                    #[cfg(not(target_os = "android"))]
+                    open_cpal_output_stream(None);
+                })
+            {
+                last_frames = CONSUMED_FRAMES.load(Ordering::Relaxed);
+                stalled_ticks = 0;
+                continue;
             }
 
             let current_sr = {
@@ -1770,6 +1777,7 @@ fn start_stream_watchdog() {
                 }
             };
 
+            #[cfg(target_os = "android")]
             if STREAM_LOST.load(Ordering::SeqCst) {
                 eprintln!(
                     "[bitdrop] reopening output stream after loss (rate={:?})",
@@ -1793,7 +1801,10 @@ fn start_stream_watchdog() {
                         "[bitdrop] output stalled; reopening stream (rate={:?})",
                         current_sr
                     );
+                    #[cfg(target_os = "android")]
                     open_output_stream(current_sr);
+                    #[cfg(not(target_os = "android"))]
+                    open_cpal_output_stream(current_sr);
                     stalled_ticks = 0;
                 }
             } else {

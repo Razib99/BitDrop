@@ -12,7 +12,8 @@ use parking_lot::Mutex;
 use crate::usb_dac::controls::negotiate_device_sample_rate;
 use crate::usb_dac::descriptors::{AudioClassProtocol, ParsedAudioDevice};
 use crate::usb_dac::streaming::{
-    AudioPacer, AudioSampleSource, PcmFormat, UsbStreamConfig, UsbStreamHandle, UsbStreamingEngine,
+    AudioPacer, AudioSampleSource, PacerMode, PcmFormat, UsbStreamConfig, UsbStreamHandle,
+    UsbStreamingEngine,
 };
 use crate::usb_dac::usbfs::{UsbDeviceHandle, UsbFsError};
 
@@ -88,6 +89,17 @@ lazy_static::lazy_static! {
 
 static STREAM_BACKEND: AtomicU32 = AtomicU32::new(0); // 0 = Standard, 1 = DirectUsb
 static FAILOVER_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+static HOT_DISCONNECTED: AtomicBool = AtomicBool::new(false);
+
+/// Returns whether a physical hot-disconnect occurred.
+pub fn is_hot_disconnected() -> bool {
+    HOT_DISCONNECTED.load(Ordering::Acquire)
+}
+
+/// Sets the hot-disconnect status.
+pub fn set_hot_disconnected(val: bool) {
+    HOT_DISCONNECTED.store(val, Ordering::Release);
+}
 
 /// Returns the currently active stream backend.
 pub fn get_active_stream_backend() -> StreamBackend {
@@ -253,6 +265,17 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
         AudioClassProtocol::Uac2 => "UAC2",
     };
 
+    let pacer_mode_str = match pacer_mode {
+        PacerMode::AdaptiveNominal => "Implicit/Nominal Pacing".to_string(),
+        PacerMode::AsynchronousFeedback => {
+            if parsed.protocol == AudioClassProtocol::Uac2 {
+                "Explicit Feedback 16.16".to_string()
+            } else {
+                "Explicit Feedback 10.14".to_string()
+            }
+        }
+    };
+
     let diagnostics = UsbDacDiagnostics {
         is_active: true,
         device_name: format!("Direct USB DAC ({proto_str})"),
@@ -260,7 +283,7 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
         bit_depth: format_info.bit_resolution,
         channels: format_info.channels,
         format_name: format!("{:?}", pcm_format),
-        pacer_mode: format!("{:?}", pacer_mode),
+        pacer_mode: pacer_mode_str,
         frames_played: 0,
         underruns: 0,
         feedback_rate_q16: 0,
@@ -300,13 +323,14 @@ pub fn detach_direct_usb_device() -> Result<(), UsbFsError> {
 /// Checks whether failover is needed and executes it safely if the USB stream worker failed.
 ///
 /// Returns `true` if failover was triggered.
-pub fn check_and_execute_failover<F: FnOnce()>(on_fallback_needed: F) -> bool {
-    let needs_failover = {
+pub fn check_and_execute_failover<F: FnOnce(bool)>(on_fallback_needed: F) -> bool {
+    let (needs_failover, was_hot) = {
+        let hot = is_hot_disconnected();
         let guard = ACTIVE_USB_SESSION.lock();
         if let Some(ref session) = *guard {
-            !session.stream_handle.is_running()
+            (hot || !session.stream_handle.is_running(), hot)
         } else {
-            false
+            (hot, hot)
         }
     };
 
@@ -315,11 +339,12 @@ pub fn check_and_execute_failover<F: FnOnce()>(on_fallback_needed: F) -> bool {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
     {
+        set_hot_disconnected(false);
         eprintln!(
-            "[bitdrop] USB DAC stream terminated; executing automatic failover to standard output"
+            "[bitdrop] USB DAC stream terminated (hot_disconnect={was_hot}); executing automatic failover to standard output"
         );
         let _ = detach_direct_usb_device();
-        on_fallback_needed();
+        on_fallback_needed(was_hot);
         FAILOVER_IN_PROGRESS.store(false, Ordering::Release);
         return true;
     }
@@ -378,10 +403,23 @@ mod tests {
     #[test]
     fn test_failover_when_inactive_does_nothing() {
         let mut called = false;
-        let triggered = check_and_execute_failover(|| {
+        let triggered = check_and_execute_failover(|_| {
             called = true;
         });
         assert!(!triggered);
         assert!(!called);
+    }
+
+    #[test]
+    fn test_hot_disconnect_triggers_failover() {
+        set_hot_disconnected(true);
+        assert!(is_hot_disconnected());
+        let mut fallback_hot = None;
+        let triggered = check_and_execute_failover(|hot| {
+            fallback_hot = Some(hot);
+        });
+        assert!(triggered);
+        assert_eq!(fallback_hot, Some(true));
+        assert!(!is_hot_disconnected());
     }
 }

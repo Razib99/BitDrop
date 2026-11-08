@@ -515,6 +515,7 @@ class OutputDevice {
     this.connectionLabel,
     this.apiLevel,
     this.supportsBitPerfect = false,
+    this.bitPerfectRates = const [],
     this.tierExplanation,
     this.systemSampleRate,
   });
@@ -537,6 +538,9 @@ class OutputDevice {
 
   /// Whether the platform verified Android 14+ MIXER_BEHAVIOR_BIT_PERFECT.
   final bool supportsBitPerfect;
+
+  /// Explicit sample rates supported with Android 14+ MIXER_BEHAVIOR_BIT_PERFECT.
+  final List<int> bitPerfectRates;
 
   /// Human-readable explanation of why this tier was assigned.
   final String? tierExplanation;

@@ -100,6 +100,7 @@ class BitDropOutputCoordinator {
     };
 
     _outputProbe.onUsbDeviceDetached = (devId) {
+      onBecomingNoisy?.call();
       recomputeSignalPath();
     };
   }

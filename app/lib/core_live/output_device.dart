@@ -185,6 +185,8 @@ class OutputDeviceProbe {
       final rates = (raw['sampleRates'] as List?)?.cast<int>() ?? const <int>[];
       final encodings =
           (raw['encodings'] as List?)?.cast<int>() ?? const <int>[];
+      final bitPerfectRates =
+          (raw['bitPerfectRates'] as List?)?.cast<int>() ?? const <int>[];
 
       final name = (raw['name'] as String? ?? '').trim();
       final apiLevel = raw['apiLevel'] as int?;
@@ -226,6 +228,7 @@ class OutputDeviceProbe {
         },
         apiLevel: apiLevel,
         supportsBitPerfect: supportsBitPerfect,
+        bitPerfectRates: bitPerfectRates,
         tierExplanation: tierExplanation,
         systemSampleRate: systemSampleRate,
       );

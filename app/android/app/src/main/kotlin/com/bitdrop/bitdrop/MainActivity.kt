@@ -252,11 +252,14 @@ class MainActivity : AudioServiceActivity() {
         }
         var tierExplanation = ""
 
+        var bitPerfectRates = emptyList<Int>()
         if (isUsb) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 try {
                     val attrs = am.getSupportedMixerAttributes(active)
-                    val hasBp = attrs.any { it.mixerBehavior == AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT }
+                    val bpAttrs = attrs.filter { it.mixerBehavior == AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT }
+                    bitPerfectRates = bpAttrs.map { it.format.sampleRate }.filter { it > 0 }.distinct().sorted()
+                    val hasBp = bpAttrs.isNotEmpty()
                     supportsBitPerfect = hasBp
                     if (hasBp) {
                         maxTier = "bitPerfect"
@@ -291,6 +294,7 @@ class MainActivity : AudioServiceActivity() {
             "apiLevel" to Build.VERSION.SDK_INT,
             "isUsb" to isUsb,
             "supportsBitPerfect" to supportsBitPerfect,
+            "bitPerfectRates" to bitPerfectRates,
             "maxTier" to maxTier,
             "tierExplanation" to tierExplanation,
             "systemSampleRate" to systemSampleRate,

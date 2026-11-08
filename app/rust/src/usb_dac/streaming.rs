@@ -203,11 +203,27 @@ impl AudioPacer {
     }
 
     /// Auto-detects the pacer mode based on endpoint synchronization type and feedback endpoint.
+    ///
+    /// When `bSynchAddress == 0`, or endpoint reports Synchronous / Adaptive attributes,
+    /// or usage type is ImplicitFeedback, or no valid feedback endpoint exists,
+    /// it falls back to `AdaptiveNominal` (fractional Q16.16 microframe accumulator pacer)
+    /// to guarantee smooth isochronous streaming without requiring explicit IN feedback URBs.
     pub fn auto_detect_mode(
         data_ep: &EndpointInfo,
         feedback_ep: &Option<EndpointInfo>,
     ) -> PacerMode {
-        if data_ep.sync_type == EndpointSyncType::Asynchronous && feedback_ep.is_some() {
+        let has_valid_feedback_endpoint = feedback_ep
+            .as_ref()
+            .is_some_and(|ep| ep.address != 0 && ep.max_packet_size >= 3);
+
+        let has_explicit_sync_link = data_ep.synch_address != 0;
+
+        let is_explicit_async = data_ep.sync_type == EndpointSyncType::Asynchronous
+            && data_ep.usage_type
+                != crate::usb_dac::descriptors::EndpointUsageType::ImplicitFeedback
+            && (has_explicit_sync_link || has_valid_feedback_endpoint);
+
+        if is_explicit_async {
             PacerMode::AsynchronousFeedback
         } else {
             PacerMode::AdaptiveNominal
@@ -640,6 +656,8 @@ impl UsbStreamingEngine {
                         }
                         Err(err) => {
                             // Device disconnected or fatal error
+                            crate::usb_dac::backend::set_hot_disconnected(true);
+                            thread_running.store(false, Ordering::Release);
                             ring.discard_all(&handle);
                             ring.drain_reap(&handle, 50);
                             return Err(err);
@@ -679,6 +697,8 @@ impl UsbStreamingEngine {
 
                     ring.finalize_urb_for_submission(urb_idx, total_urb_bytes);
                     if let Err(err) = ring.submit_urb(&handle, urb_idx) {
+                        crate::usb_dac::backend::set_hot_disconnected(true);
+                        thread_running.store(false, Ordering::Release);
                         ring.discard_all(&handle);
                         ring.drain_reap(&handle, 50);
                         return Err(err);
@@ -946,6 +966,20 @@ mod tests {
         let mode_async = AudioPacer::auto_detect_mode(&async_ep, &Some(feedback_ep));
         assert_eq!(mode_async, PacerMode::AsynchronousFeedback);
 
+        // Async endpoint with bSynchAddress == 0 and NO feedback endpoint (implicit fallback)
+        let async_no_fb_ep = EndpointInfo {
+            address: 0x01,
+            direction: EndpointDirection::Out,
+            sync_type: EndpointSyncType::Asynchronous,
+            usage_type: EndpointUsageType::Data,
+            max_packet_size: 512,
+            interval: 1,
+            refresh: 0,
+            synch_address: 0,
+        };
+        let mode_implicit = AudioPacer::auto_detect_mode(&async_no_fb_ep, &None);
+        assert_eq!(mode_implicit, PacerMode::AdaptiveNominal);
+
         // Adaptive endpoint without feedback (DUNU Titan X style)
         let adaptive_ep = EndpointInfo {
             address: 0x01,
@@ -959,5 +993,33 @@ mod tests {
         };
         let mode_adaptive = AudioPacer::auto_detect_mode(&adaptive_ep, &None);
         assert_eq!(mode_adaptive, PacerMode::AdaptiveNominal);
+
+        // Synchronous endpoint
+        let sync_ep = EndpointInfo {
+            address: 0x01,
+            direction: EndpointDirection::Out,
+            sync_type: EndpointSyncType::Synchronous,
+            usage_type: EndpointUsageType::Data,
+            max_packet_size: 512,
+            interval: 1,
+            refresh: 0,
+            synch_address: 0,
+        };
+        let mode_sync = AudioPacer::auto_detect_mode(&sync_ep, &None);
+        assert_eq!(mode_sync, PacerMode::AdaptiveNominal);
+
+        // Endpoint marked as ImplicitFeedback usage
+        let implicit_usage_ep = EndpointInfo {
+            address: 0x01,
+            direction: EndpointDirection::Out,
+            sync_type: EndpointSyncType::Asynchronous,
+            usage_type: EndpointUsageType::ImplicitFeedback,
+            max_packet_size: 512,
+            interval: 1,
+            refresh: 0,
+            synch_address: 0,
+        };
+        let mode_implicit_usage = AudioPacer::auto_detect_mode(&implicit_usage_ep, &None);
+        assert_eq!(mode_implicit_usage, PacerMode::AdaptiveNominal);
     }
 }

@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core_api/enums.dart';
 import '../core_api/models.dart';
+import '../src/rust/api/audio_engine.dart' as rust;
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import '../util/format.dart';
@@ -282,6 +284,10 @@ class SignalPathDiagram extends StatelessWidget {
         ),
         const SizedBox(height: Spacing.md),
         _RequestedVsActual(path: path),
+        if (path.device != null) ...[
+          const SizedBox(height: Spacing.md),
+          _HardwareTelemetryInspector(device: path.device!, path: path),
+        ],
         if (showActions) ...[
           const SizedBox(height: Spacing.md),
           Padding(
@@ -560,6 +566,245 @@ class _RequestedVsActualState extends State<_RequestedVsActual> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _HardwareTelemetryInspector extends StatelessWidget {
+  const _HardwareTelemetryInspector({
+    required this.device,
+    required this.path,
+  });
+
+  final OutputDevice device;
+  final SignalPath path;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+    rust.EngineUsbDacDiagnostics? usbDiag;
+    if (!kIsWeb) {
+      try {
+        usbDiag = rust.engineGetUsbDacDiagnostics();
+      } catch (_) {}
+    }
+
+    final isDirectUsb =
+        usbDiag?.isActive == true || path.explanation.contains('Tier D');
+    final actualSr = path.actual.sampleRate;
+    final requestedSr = path.requested.sampleRate;
+    final rateMatched = actualSr == requestedSr;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: Spacing.md),
+      padding: const EdgeInsets.all(Spacing.md),
+      decoration: BoxDecoration(
+        color: c.surface2,
+        borderRadius: Radii.cardR,
+        border: Border.all(color: c.outline),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isDirectUsb ? Icons.developer_board : Icons.phonelink_setup,
+                size: 16,
+                color: isDirectUsb ? c.tierBitPerfect : c.textSecondary,
+              ),
+              const SizedBox(width: Spacing.xs),
+              Text(
+                'HARDWARE TELEMETRY INSPECTOR',
+                style: context.t.monoLabel.copyWith(
+                  color: isDirectUsb ? c.tierBitPerfect : c.textSecondary,
+                  letterSpacing: 1.1,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: (isDirectUsb || device.supportsBitPerfect)
+                      ? c.success.withOpacity(0.15)
+                      : c.outline,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  isDirectUsb
+                      ? 'TIER D USBFS'
+                      : (device.supportsBitPerfect
+                          ? 'API 34 BIT-PERFECT'
+                          : 'SYSTEM MIXER'),
+                  style: context.t.monoLabel.copyWith(
+                    fontSize: 9,
+                    color: (isDirectUsb || device.supportsBitPerfect)
+                        ? c.success
+                        : c.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Spacing.sm),
+          Divider(color: c.outline, height: 1),
+          const SizedBox(height: Spacing.sm),
+          _telemetryRow(
+            context,
+            'Physical Endpoint',
+            device.name,
+            icon: Icons.speaker,
+          ),
+          _telemetryRow(
+            context,
+            'Connection Bus',
+            device.connectionLabel ?? device.typeLabel,
+            icon: Icons.cable,
+          ),
+          if (isDirectUsb) ...[
+            _telemetryRow(
+              context,
+              'Endpoint Pacing Mode',
+              (usbDiag != null && usbDiag.pacerMode.isNotEmpty)
+                  ? usbDiag.pacerMode
+                  : 'Implicit/Nominal Pacing',
+              highlight: true,
+            ),
+            _telemetryRow(
+              context,
+              'Live URB Underruns',
+              'urb_underruns: ${usbDiag?.underruns ?? 0}',
+              highlight: (usbDiag?.underruns ?? 0) > 0,
+              highlightColor: c.tierResampled,
+            ),
+            _telemetryRow(
+              context,
+              'Frames Delivered',
+              '${usbDiag?.framesPlayed ?? 0} frames',
+            ),
+          ] else if (device.supportsBitPerfect) ...[
+            _telemetryRow(
+              context,
+              'OS Mixer Behavior',
+              'MIXER_BEHAVIOR_BIT_PERFECT',
+              highlight: true,
+            ),
+            if (device.bitPerfectRates.isNotEmpty)
+              _telemetryRow(
+                context,
+                'Bit-Perfect Rates',
+                '${device.bitPerfectRates.map(Fmt.kHzBare).join(', ')} kHz',
+              ),
+          ] else ...[
+            _telemetryRow(
+              context,
+              'OS Mixer Pipeline',
+              device.apiLevel != null
+                  ? 'Android ${device.apiLevel} AudioFlinger (${device.systemSampleRate ?? 48000} Hz)'
+                  : 'Operating System Audio Engine',
+            ),
+          ],
+          _telemetryRow(
+            context,
+            'Latched vs Requested Rate',
+            '${Fmt.kHz(actualSr)} latched vs ${Fmt.kHz(requestedSr)} req',
+            highlight: !rateMatched,
+            highlightColor: rateMatched ? c.success : c.tierResampled,
+            badge: rateMatched ? 'MATCH' : 'MISMATCH',
+          ),
+          if (device.supportedRates.isNotEmpty)
+            _telemetryRow(
+              context,
+              'Advertised Rates',
+              '${device.supportedRates.map(Fmt.kHzBare).join(', ')} kHz',
+            ),
+          if (device.bitDepths.isNotEmpty)
+            _telemetryRow(
+              context,
+              'Advertised Bit Depths',
+              device.bitDepths.map((b) => '$b-bit').join(', '),
+            ),
+          _telemetryRow(
+            context,
+            'Volume Attenuation',
+            switch (path.volume) {
+              VolumeMode.dacHardware => 'DAC Hardware Register (Lossless)',
+              VolumeMode.softwareDithered =>
+                'Double-Precision f64 TPDF Dithered',
+              VolumeMode.system => 'OS FastMixer Digital Gain',
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _telemetryRow(
+    BuildContext context,
+    String label,
+    String value, {
+    IconData? icon,
+    bool highlight = false,
+    Color? highlightColor,
+    String? badge,
+  }) {
+    final c = context.c;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            flex: 4,
+            child: Text(
+              label,
+              style: context.t.bodySmall.copyWith(
+                color: c.textSecondary,
+                fontSize: 11,
+              ),
+            ),
+          ),
+          const SizedBox(width: Spacing.xs),
+          Expanded(
+            flex: 6,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Flexible(
+                  child: Text(
+                    value,
+                    textAlign: TextAlign.end,
+                    style: context.t.monoReadout.copyWith(
+                      fontSize: 11,
+                      color: highlightColor ??
+                          (highlight ? c.tierBitPerfect : c.textPrimary),
+                    ),
+                  ),
+                ),
+                if (badge != null) ...[
+                  const SizedBox(width: 4),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: (badge == 'MATCH' ? c.success : c.tierResampled)
+                          .withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Text(
+                      badge,
+                      style: context.t.monoLabel.copyWith(
+                        fontSize: 8,
+                        color: badge == 'MATCH' ? c.success : c.tierResampled,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
