@@ -1130,21 +1130,27 @@ impl CloudStorageProvider for OneDriveProvider {
         run_async(async move {
             // 1. If cached pre-signed CDN URL is available, attempt direct range fetch (1 RTT)
             if let Some(ref cdn_url) = cached_direct {
-                if let Ok(res) = client
+                match client
                     .get(cdn_url)
                     .header(reqwest::header::RANGE, &range_val)
                     .send()
                     .await
                 {
-                    let status = res.status();
-                    if status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT {
-                        if let Ok(bytes) = res.bytes().await {
-                            return Ok(bytes.to_vec());
+                    Ok(res) => {
+                        let status = res.status();
+                        if status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT {
+                            if let Ok(bytes) = res.bytes().await {
+                                return Ok(bytes.to_vec());
+                            }
                         }
+                        // Early CDN expiry: 401 Unauthorized or 403 Forbidden indicates pre-signed
+                        // token invalidation. Evict immediately and fall through to /content 302 retry.
+                        self.clear_cached_url(&file_id_str);
+                    }
+                    Err(_) => {
+                        self.clear_cached_url(&file_id_str);
                     }
                 }
-                // If direct CDN request was rejected (e.g. revoked/expired), fall through to /content
-                self.clear_cached_url(&file_id_str);
             }
 
             // 2. Fallback to /content endpoint (follows 302 redirect and caches the target)
@@ -1951,5 +1957,70 @@ mod tests {
             ProviderRegistry::split_namespaced_id("raw_file_without_colon"),
             None
         );
+    }
+
+    #[test]
+    fn test_onedrive_url_cache_eviction_on_401_403() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let handle = std::thread::spawn(move || {
+            let mut request_count = 0;
+            // Handle requests:
+            // 1. GET /expired_cdn -> 401 Unauthorized
+            // 2. GET /me/drive/items/file_999/content -> 302 Found (Location: /fresh_cdn)
+            // 3. GET /fresh_cdn -> 206 Partial Content (Body: "WAVE")
+            while request_count < 3 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+
+                    if req.contains("GET /expired_cdn") {
+                        let resp = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                        let _ = stream.write_all(resp.as_bytes());
+                    } else if req.contains("GET /me/drive/items/file_999/content") {
+                        let resp = format!(
+                            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/fresh_cdn\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            port
+                        );
+                        let _ = stream.write_all(resp.as_bytes());
+                    } else if req.contains("GET /fresh_cdn") {
+                        let resp = "HTTP/1.1 206 Partial Content\r\nContent-Length: 4\r\nContent-Range: bytes 0-3/4\r\nConnection: close\r\n\r\nWAVE";
+                        let _ = stream.write_all(resp.as_bytes());
+                    }
+                    request_count += 1;
+                }
+            }
+        });
+
+        let provider = OneDriveProvider::new("client-id", Some("access-tok".into()), None)
+            .with_base_url(format!("http://127.0.0.1:{}", port));
+
+        // Seed with expired CDN URL
+        let expired_url = format!("http://127.0.0.1:{}/expired_cdn", port);
+        provider.seed_download_url("file_999", &expired_url);
+        assert_eq!(
+            provider.cached_url("file_999").as_deref(),
+            Some(expired_url.as_str())
+        );
+
+        // Fetch range: hits /expired_cdn (401), evicts it, retries /content, follows 302 to /fresh_cdn, and gets bytes
+        let data = provider
+            .fetch_byte_range("file_999", 0, 3)
+            .expect("successful fetch");
+        assert_eq!(&data, b"WAVE");
+
+        // Verify that the fresh CDN URL is now cached in place of the expired one
+        let fresh_url = format!("http://127.0.0.1:{}/fresh_cdn", port);
+        assert_eq!(
+            provider.cached_url("file_999").as_deref(),
+            Some(fresh_url.as_str())
+        );
+
+        let _ = handle.join();
     }
 }
