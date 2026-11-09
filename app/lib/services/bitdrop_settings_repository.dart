@@ -127,11 +127,15 @@ class BitDropSettingsRepository {
     }
   }
 
-  /// Exports app preferences, EQ presets, device profiles, and optional listening recap
-  /// to a portable, human-readable JSON string formatted for 1-tap backup.
-  Future<String> exportBackupJson({ListeningRecap? recap}) async {
+  /// Exports app preferences, EQ presets, device profiles, non-secret cloud configurations,
+  /// and optional listening recap to a portable, human-readable JSON string formatted for 1-tap backup.
+  Future<String> exportBackupJson({
+    ListeningRecap? recap,
+    List<Map<String, dynamic>>? cloudProviderConfigs,
+  }) async {
     final payload = <String, dynamic>{
       'version': 1,
+      'schemaVersion': 1,
       'app': 'BitDrop',
       'exportedAt': DateTime.now().toUtc().toIso8601String(),
       'app_settings':
@@ -140,9 +144,21 @@ class BitDropSettingsRepository {
       'device_profiles': jsonDecode(
           PersistenceCodec.serializeDeviceProfiles(_deviceProfiles.value)),
     };
+    if (cloudProviderConfigs != null && cloudProviderConfigs.isNotEmpty) {
+      // Export non-secret metadata (provider_id, name, base_url, root_folder) excluding secrets/tokens
+      payload['cloud_providers'] = cloudProviderConfigs
+          .map((c) => {
+                'provider_id': c['provider_id'] ?? c['id'] ?? '',
+                'name': c['name'] ?? '',
+                'base_url': c['base_url'] ?? '',
+                'root_folder': c['root_folder'] ?? '',
+              })
+          .toList();
+    }
     if (recap != null) {
       payload['listening_recap'] = {
         'totalMinutesListened': recap.totalMinutesListened,
+        'totalPlays': recap.totalPlays,
         'losslessPlaybackPercent': recap.losslessPercentage,
         'hiResPlaybackPercent': recap.hiResPercentage,
         'topGenre': recap.topGenre,
@@ -168,11 +184,24 @@ class BitDropSettingsRepository {
   }
 
   /// Restores app settings, EQ preset state, and device profile mappings from
-  /// a backup JSON string, persisting to SQLite and updating DSP engine state.
+  /// a backup JSON string with full schema version validation, persisting to SQLite
+  /// and updating DSP engine state.
   Future<bool> importBackupJson(String jsonStr) async {
     try {
       final decoded = jsonDecode(jsonStr);
       if (decoded is! Map) return false;
+
+      // Full schema version validation:
+      final version = decoded['schemaVersion'] ?? decoded['version'];
+      if (version == null || version is! int || version < 1 || version > 1) {
+        debugPrint('[persistence] unsupported backup schema version: $version');
+        return false;
+      }
+
+      if (decoded['app'] != null && decoded['app'] != 'BitDrop') {
+        debugPrint('[persistence] invalid app identifier in backup: ${decoded['app']}');
+        return false;
+      }
 
       if (decoded.containsKey('app_settings')) {
         final sJson = jsonEncode(decoded['app_settings']);

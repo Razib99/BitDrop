@@ -259,5 +259,59 @@ Filter 2: ON LSC Fc 80 Hz Gain 2.0 dB Q 0.71
       expect(repo.currentEq.bands.first.frequencyHz, equals(120.0));
       expect(repo.currentDeviceProfiles.any((p) => p.deviceId == 'custom-dac'), isTrue);
     });
+
+    test('exportBackupJson includes schemaVersion, cloud_providers and recap', () async {
+      const providers = [
+        {
+          'provider_id': 'webdav-nas',
+          'name': 'Synology NAS',
+          'base_url': 'https://nas.local:5006',
+          'root_folder': '/Music/FLAC',
+        }
+      ];
+
+      final jsonStr = await repo.exportBackupJson(cloudProviderConfigs: providers);
+      expect(jsonStr, contains('"schemaVersion": 1'));
+      expect(jsonStr, contains('"provider_id": "webdav-nas"'));
+      expect(jsonStr, contains('"Synology NAS"'));
+      expect(jsonStr, contains('"https://nas.local:5006"'));
+    });
+
+    test('importBackupJson rejects unsupported schemaVersion and invalid app', () async {
+      const futureVersionJson = '''
+{
+  "schemaVersion": 99,
+  "app": "BitDrop",
+  "app_settings": {}
+}
+''';
+      expect(await repo.importBackupJson(futureVersionJson), isFalse);
+
+      const invalidAppJson = '''
+{
+  "schemaVersion": 1,
+  "app": "OtherPlayer",
+  "app_settings": {}
+}
+''';
+      expect(await repo.importBackupJson(invalidAppJson), isFalse);
+    });
+
+    test('importBackupJson rejects malformed JSON cleanly without exception', () async {
+      expect(await repo.importBackupJson('not valid json {[[['), isFalse);
+      expect(await repo.importBackupJson('["array", "not", "map"]'), isFalse);
+    });
+
+    test('export and import roundtrip preserves app settings and eq state', () async {
+      await repo.handleSetSetting(const SetSetting(key: 'gapless', value: false));
+      await repo.handleSetSetting(const SetSetting(key: 'directUsbDriver', value: true));
+
+      final exported = await repo.exportBackupJson();
+      final newRepo = BitDropSettingsRepository();
+      final success = await newRepo.importBackupJson(exported);
+      expect(success, isTrue);
+      expect(newRepo.currentSettings.gapless, isFalse);
+      expect(newRepo.currentSettings.directUsbDriver, isTrue);
+    });
   });
 }

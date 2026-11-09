@@ -2279,9 +2279,9 @@ class LiveBitDropCore implements BitDropCore {
     if (_playbackRecorded) return;
     final currentTrack = _nowPlaying.valueOrNull?.track;
     if (currentTrack == null) return;
-    final thresholdMs =
-        durationMs > 0 && durationMs < 60000 ? durationMs ~/ 2 : 30000;
-    if (posMs >= thresholdMs) {
+    final qualified =
+        posMs >= 30000 || (durationMs > 0 && posMs >= durationMs ~/ 2);
+    if (qualified) {
       _playbackRecorded = true;
       _libraryService.recordPlayback(
         fileId: currentTrack.id,
