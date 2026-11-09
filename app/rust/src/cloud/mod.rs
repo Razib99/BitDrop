@@ -9,7 +9,9 @@ pub mod provider;
 pub mod range_fetcher;
 pub mod tag_parser;
 
-pub use lyrics::{fetch_lrclib, parse_lrc, LyricLine, TrackLyrics};
+pub use lyrics::{
+    fetch_lrclib, format_lrc, parse_lrc, parse_lrc_payload, LyricLine, LyricsPayload, TrackLyrics,
+};
 pub use provider::{
     build_range_header, is_audio_file, CloudDeltaPage, CloudError, CloudErrorKind, CloudItem,
     CloudStorageProvider, DropboxProvider, GoogleDriveProvider, OneDriveProvider, ProviderRegistry,

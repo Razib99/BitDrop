@@ -513,13 +513,29 @@ impl MetadataDb {
         )?;
 
         // 10. Time-synced and plain-text lyrics cache (Phase 3.1)
+        let has_is_synced: bool = {
+            let mut stmt = conn.prepare("PRAGMA table_info(track_lyrics)")?;
+            let mut rows = stmt.query([])?;
+            let mut found = false;
+            while let Some(row) = rows.next()? {
+                let name: String = row.get(1)?;
+                if name == "is_synced" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        if !has_is_synced {
+            let _ = conn.execute("DROP TABLE IF EXISTS track_lyrics", []);
+        }
         conn.execute(
             "CREATE TABLE IF NOT EXISTS track_lyrics (
                 file_id          TEXT PRIMARY KEY,
-                synced           INTEGER NOT NULL DEFAULT 0,
-                plain_text       TEXT NOT NULL DEFAULT '',
-                synced_json      TEXT NOT NULL DEFAULT '[]',
-                fetched_at       INTEGER NOT NULL DEFAULT 0
+                is_synced        INTEGER NOT NULL DEFAULT 0,
+                content          TEXT NOT NULL DEFAULT '',
+                source           TEXT NOT NULL DEFAULT 'none',
+                updated_at       INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )?;

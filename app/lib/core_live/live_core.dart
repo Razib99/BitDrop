@@ -1422,6 +1422,7 @@ class LiveBitDropCore implements BitDropCore {
               ))
           .toList(),
       plainLyrics: rustLyrics.plainLyrics,
+      source: rustLyrics.source,
     );
   }
 

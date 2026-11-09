@@ -2642,12 +2642,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   CloudTrackLyrics dco_decode_cloud_track_lyrics(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return CloudTrackLyrics(
       synced: dco_decode_bool(arr[0]),
       lines: dco_decode_list_cloud_lyric_line(arr[1]),
       plainLyrics: dco_decode_String(arr[2]),
+      source: dco_decode_String(arr[3]),
     );
   }
 
@@ -3447,8 +3448,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_synced = sse_decode_bool(deserializer);
     var var_lines = sse_decode_list_cloud_lyric_line(deserializer);
     var var_plainLyrics = sse_decode_String(deserializer);
+    var var_source = sse_decode_String(deserializer);
     return CloudTrackLyrics(
-        synced: var_synced, lines: var_lines, plainLyrics: var_plainLyrics);
+        synced: var_synced,
+        lines: var_lines,
+        plainLyrics: var_plainLyrics,
+        source: var_source);
   }
 
   @protected
@@ -4363,6 +4368,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.synced, serializer);
     sse_encode_list_cloud_lyric_line(self.lines, serializer);
     sse_encode_String(self.plainLyrics, serializer);
+    sse_encode_String(self.source, serializer);
   }
 
   @protected

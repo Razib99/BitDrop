@@ -1171,11 +1171,13 @@ class TrackLyrics {
     required this.synced,
     required this.lines,
     required this.plainLyrics,
+    this.source = 'unknown',
   });
 
   final bool synced;
   final List<LyricLine> lines;
   final String plainLyrics;
+  final String source;
 
   @override
   bool operator ==(Object other) =>
@@ -1183,10 +1185,12 @@ class TrackLyrics {
       other is TrackLyrics &&
           runtimeType == other.runtimeType &&
           synced == other.synced &&
-          plainLyrics == other.plainLyrics;
+          plainLyrics == other.plainLyrics &&
+          source == other.source;
 
   @override
-  int get hashCode => synced.hashCode ^ lines.hashCode ^ plainLyrics.hashCode;
+  int get hashCode =>
+      synced.hashCode ^ lines.hashCode ^ plainLyrics.hashCode ^ source.hashCode;
 }
 
 @immutable

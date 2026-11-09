@@ -181,6 +181,7 @@ pub struct CloudTrackLyrics {
     pub synced: bool,
     pub lines: Vec<CloudLyricLine>,
     pub plain_lyrics: String,
+    pub source: String,
 }
 
 impl From<crate::cloud::lyrics::TrackLyrics> for CloudTrackLyrics {
@@ -196,6 +197,7 @@ impl From<crate::cloud::lyrics::TrackLyrics> for CloudTrackLyrics {
                 })
                 .collect(),
             plain_lyrics: l.plain_lyrics,
+            source: l.source,
         }
     }
 }
@@ -213,6 +215,7 @@ impl From<CloudTrackLyrics> for crate::cloud::lyrics::TrackLyrics {
                 })
                 .collect(),
             plain_lyrics: l.plain_lyrics,
+            source: l.source,
         }
     }
 }
@@ -495,8 +498,20 @@ pub fn cloud_library_read_tags(
     let mut track_number: Option<u32> = None;
     let mut disc_number: Option<u32> = None;
 
+    let mut embedded_lyrics: Option<String> = None;
+
     if let Some(metadata) = format.metadata().current() {
         for tag in metadata.tags() {
+            if tag.key.eq_ignore_ascii_case("lyrics")
+                || tag.key.eq_ignore_ascii_case("unsyncedlyrics")
+                || tag.key.eq_ignore_ascii_case("uslt")
+                || tag.key.eq_ignore_ascii_case("sylt")
+            {
+                let val = tag.value.to_string();
+                if !val.trim().is_empty() {
+                    embedded_lyrics = Some(val);
+                }
+            }
             match tag.std_key {
                 Some(symphonia::core::meta::StandardTagKey::TrackTitle) => {
                     title = tag.value.to_string()
@@ -507,6 +522,12 @@ pub fn cloud_library_read_tags(
                 Some(symphonia::core::meta::StandardTagKey::Album) => album = tag.value.to_string(),
                 Some(symphonia::core::meta::StandardTagKey::AlbumArtist) => {
                     album_artist = tag.value.to_string()
+                }
+                Some(symphonia::core::meta::StandardTagKey::Lyrics) => {
+                    let val = tag.value.to_string();
+                    if !val.trim().is_empty() {
+                        embedded_lyrics = Some(val);
+                    }
                 }
                 Some(symphonia::core::meta::StandardTagKey::Genre) => {
                     let val = tag.value.to_string();
@@ -563,6 +584,15 @@ pub fn cloud_library_read_tags(
         )?;
         Ok(())
     });
+
+    if let Some(raw_lrc) = embedded_lyrics {
+        let mut parsed = crate::cloud::lyrics::parse_lrc(&raw_lrc);
+        parsed.source = "embedded".to_string();
+        let _ = with_db(|db| {
+            db.save_lyrics(&file_id, &parsed)
+                .map_err(|e| anyhow::anyhow!(e))
+        });
+    }
 
     Ok(true)
 }
@@ -1168,6 +1198,24 @@ pub fn cloud_library_scan_tags_batch(
                                     if std::fs::write(&art_target, &online_b).is_ok() {
                                         artwork_path = art_target.to_string_lossy().to_string();
                                     }
+                                }
+                            }
+
+                            // Extract embedded lyrics if present in Vorbis comments
+                            if let Some(raw_lrc) = meta
+                                .tags
+                                .get("LYRICS")
+                                .or_else(|| meta.tags.get("UNSYNCEDLYRICS"))
+                                .or_else(|| meta.tags.get("USLT"))
+                                .or_else(|| meta.tags.get("SYLT"))
+                            {
+                                if !raw_lrc.trim().is_empty() {
+                                    let mut parsed = crate::cloud::lyrics::parse_lrc(raw_lrc);
+                                    parsed.source = "embedded".to_string();
+                                    let _ = with_db(|db| {
+                                        db.save_lyrics(&file_id, &parsed)
+                                            .map_err(|e| anyhow::anyhow!(e))
+                                    });
                                 }
                             }
 
@@ -2299,6 +2347,10 @@ pub fn cloud_library_get_lyrics(
     let cached = with_db(|db| db.get_lyrics(&file_id).map_err(|e| anyhow::anyhow!(e)))?;
 
     if let Some(lyrics) = cached {
+        if lyrics.source == "none" {
+            // Negative cache hit: track was already queried and has no lyrics
+            return Ok(None);
+        }
         return Ok(Some(lyrics.into()));
     }
 
@@ -2314,9 +2366,21 @@ pub fn cloud_library_get_lyrics(
             db.save_lyrics(&file_id, lyrics)
                 .map_err(|e| anyhow::anyhow!(e))
         })?;
+        Ok(Some(lyrics.clone().into()))
+    } else {
+        // Negative cache: store source = 'none' so we don't query LRCLIB again on every play
+        let negative = crate::cloud::lyrics::TrackLyrics {
+            synced: false,
+            lines: Vec::new(),
+            plain_lyrics: String::new(),
+            source: "none".to_string(),
+        };
+        let _ = with_db(|db| {
+            db.save_lyrics(&file_id, &negative)
+                .map_err(|e| anyhow::anyhow!(e))
+        });
+        Ok(None)
     }
-
-    Ok(fetched.map(Into::into))
 }
 
 /// Manually saves or overrides lyrics for `file_id`.

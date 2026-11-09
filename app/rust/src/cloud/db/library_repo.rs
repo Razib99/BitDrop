@@ -991,46 +991,89 @@ impl<'a> LibraryRepository<'a> {
     }
 
     /// Retrieves cached lyrics for `file_id` if present in the SQLite database.
+    /// Handles negative caching (`source == "none"`).
     pub fn get_lyrics(&self, file_id: &str) -> Result<Option<TrackLyrics>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT synced, plain_text, synced_json FROM track_lyrics WHERE file_id = ?1",
+            "SELECT is_synced, content, source, updated_at FROM track_lyrics WHERE file_id = ?1",
         )?;
         let mut rows = stmt.query(params![file_id])?;
         if let Some(row) = rows.next()? {
-            let synced: i64 = row.get(0)?;
-            let plain_text: String = row.get(1)?;
-            let synced_json: String = row.get(2)?;
-            let lines: Vec<LyricLine> = serde_json::from_str(&synced_json).unwrap_or_default();
-            Ok(Some(TrackLyrics {
-                synced: synced != 0,
-                lines,
-                plain_lyrics: plain_text,
-            }))
+            let is_synced: i64 = row.get(0)?;
+            let content: String = row.get(1)?;
+            let source: String = row.get(2)?;
+
+            if source == "none" {
+                return Ok(Some(TrackLyrics {
+                    synced: false,
+                    lines: Vec::new(),
+                    plain_lyrics: String::new(),
+                    source: "none".to_string(),
+                }));
+            }
+
+            if is_synced != 0 {
+                let mut parsed = if content.trim_start().starts_with('[')
+                    && content.contains("\"timestamp_ms\"")
+                {
+                    let lines: Vec<LyricLine> = serde_json::from_str(&content).unwrap_or_default();
+                    let plain = lines
+                        .iter()
+                        .map(|l| l.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    TrackLyrics {
+                        synced: true,
+                        lines,
+                        plain_lyrics: plain,
+                        source: source.clone(),
+                    }
+                } else {
+                    crate::cloud::lyrics::parse_lrc(&content)
+                };
+                parsed.source = source;
+                Ok(Some(parsed))
+            } else {
+                Ok(Some(TrackLyrics {
+                    synced: false,
+                    lines: Vec::new(),
+                    plain_lyrics: content,
+                    source,
+                }))
+            }
         } else {
             Ok(None)
         }
     }
 
     /// Persists lyrics for `file_id` into the `track_lyrics` cache.
+    /// Supports negative caching (`lyrics.source == "none"`).
     pub fn save_lyrics(&self, file_id: &str, lyrics: &TrackLyrics) -> Result<()> {
         let now_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        let synced_json = serde_json::to_string(&lyrics.lines).unwrap_or_else(|_| "[]".to_string());
+
+        let content = if lyrics.source == "none" {
+            String::new()
+        } else if lyrics.synced {
+            crate::cloud::lyrics::format_lrc(lyrics)
+        } else {
+            lyrics.plain_lyrics.clone()
+        };
+
         self.conn.execute(
-            "INSERT INTO track_lyrics (file_id, synced, plain_text, synced_json, fetched_at)
+            "INSERT INTO track_lyrics (file_id, is_synced, content, source, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(file_id) DO UPDATE SET
-                synced = excluded.synced,
-                plain_text = excluded.plain_text,
-                synced_json = excluded.synced_json,
-                fetched_at = excluded.fetched_at",
+                is_synced = excluded.is_synced,
+                content = excluded.content,
+                source = excluded.source,
+                updated_at = excluded.updated_at",
             params![
                 file_id,
                 if lyrics.synced { 1 } else { 0 },
-                lyrics.plain_lyrics,
-                synced_json,
+                content,
+                lyrics.source,
                 now_ts
             ],
         )?;
@@ -1408,17 +1451,35 @@ mod tests {
                 },
             ],
             plain_lyrics: "First line of lyric\nSecond line of lyric".into(),
+            source: "lrclib".into(),
         };
 
         db.save_lyrics("track-1", &lyrics).unwrap();
 
         let cached = db.get_lyrics("track-1").unwrap().expect("cached lyrics");
         assert!(cached.synced);
+        assert_eq!(cached.source, "lrclib");
         assert_eq!(cached.lines.len(), 2);
         assert_eq!(cached.lines[0].timestamp_ms, 12_500);
         assert_eq!(cached.lines[0].text, "First line of lyric");
         assert_eq!(cached.lines[1].timestamp_ms, 18_000);
         assert_eq!(cached.plain_lyrics, lyrics.plain_lyrics);
+
+        // Verify negative caching (source = 'none')
+        let negative = TrackLyrics {
+            synced: false,
+            lines: Vec::new(),
+            plain_lyrics: String::new(),
+            source: "none".into(),
+        };
+        db.save_lyrics("track-2", &negative).unwrap();
+        let cached_none = db
+            .get_lyrics("track-2")
+            .unwrap()
+            .expect("negative cache hit");
+        assert_eq!(cached_none.source, "none");
+        assert!(!cached_none.synced);
+        assert!(cached_none.lines.is_empty());
     }
 
     #[test]

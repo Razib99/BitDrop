@@ -754,15 +754,18 @@ class CloudTrackLyrics {
   final bool synced;
   final List<CloudLyricLine> lines;
   final String plainLyrics;
+  final String source;
 
   const CloudTrackLyrics({
     required this.synced,
     required this.lines,
     required this.plainLyrics,
+    required this.source,
   });
 
   @override
-  int get hashCode => synced.hashCode ^ lines.hashCode ^ plainLyrics.hashCode;
+  int get hashCode =>
+      synced.hashCode ^ lines.hashCode ^ plainLyrics.hashCode ^ source.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -771,7 +774,8 @@ class CloudTrackLyrics {
           runtimeType == other.runtimeType &&
           synced == other.synced &&
           lines == other.lines &&
-          plainLyrics == other.plainLyrics;
+          plainLyrics == other.plainLyrics &&
+          source == other.source;
 }
 
 class KeyValuePair {

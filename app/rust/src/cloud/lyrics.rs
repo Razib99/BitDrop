@@ -24,6 +24,76 @@ pub struct TrackLyrics {
     pub lines: Vec<LyricLine>,
     /// Full plain-text representation (useful for clipboard copy or search).
     pub plain_lyrics: String,
+    /// Origin source: "embedded", "lrclib", "manual", "lrc", or "none" (negative cache).
+    pub source: String,
+}
+
+/// Detailed lyrics payload representing parsed synced lines and/or plain text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LyricsPayload {
+    pub synced_lines: Vec<LyricLine>,
+    pub plain_text: Option<String>,
+    pub source: String,
+}
+
+impl From<LyricsPayload> for TrackLyrics {
+    fn from(p: LyricsPayload) -> Self {
+        let synced = !p.synced_lines.is_empty();
+        let plain = p.plain_text.clone().unwrap_or_else(|| {
+            p.synced_lines
+                .iter()
+                .map(|l| l.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+        Self {
+            synced,
+            lines: p.synced_lines,
+            plain_lyrics: plain,
+            source: p.source,
+        }
+    }
+}
+
+impl From<TrackLyrics> for LyricsPayload {
+    fn from(t: TrackLyrics) -> Self {
+        Self {
+            synced_lines: if t.synced { t.lines } else { Vec::new() },
+            plain_text: if t.plain_lyrics.is_empty() {
+                None
+            } else {
+                Some(t.plain_lyrics)
+            },
+            source: t.source,
+        }
+    }
+}
+
+/// Serializes structured lyric lines into standard LRC text format.
+pub fn format_lrc(lyrics: &TrackLyrics) -> String {
+    if !lyrics.synced {
+        return lyrics.plain_lyrics.clone();
+    }
+    let mut out = String::new();
+    for line in &lyrics.lines {
+        let total_ms = line.timestamp_ms;
+        let total_sec = total_ms / 1000;
+        let mins = total_sec / 60;
+        let secs = total_sec % 60;
+        let hundredths = (total_ms % 1000) / 10;
+        out.push_str(&format!(
+            "[{:02}:{:02}.{:02}]{}\n",
+            mins, secs, hundredths, line.text
+        ));
+    }
+    out
+}
+
+/// Parses raw text into `LyricsPayload` with an explicit source tag.
+pub fn parse_lrc_payload(raw: &str, source: &str) -> LyricsPayload {
+    let mut lyrics = parse_lrc(raw);
+    lyrics.source = source.to_string();
+    lyrics.into()
 }
 
 /// Parses an LRC formatted string (or raw unsynced lyrics) into structured `TrackLyrics`.
@@ -117,6 +187,7 @@ pub fn parse_lrc(raw: &str) -> TrackLyrics {
             synced: true,
             lines: parsed_lines,
             plain_lyrics: plain,
+            source: "lrc".to_string(),
         }
     } else {
         // Unsynced plain-text fallback: split by line
@@ -134,6 +205,7 @@ pub fn parse_lrc(raw: &str) -> TrackLyrics {
             synced: false,
             lines,
             plain_lyrics: raw.trim().to_string(),
+            source: "lrc".to_string(),
         }
     }
 }
@@ -210,7 +282,8 @@ pub async fn fetch_lrclib(
 
     if let Some(synced) = data.synced_lyrics {
         if !synced.trim().is_empty() {
-            let parsed = parse_lrc(&synced);
+            let mut parsed = parse_lrc(&synced);
+            parsed.source = "lrclib".to_string();
             if !parsed.lines.is_empty() {
                 return Ok(Some(parsed));
             }
@@ -219,7 +292,9 @@ pub async fn fetch_lrclib(
 
     if let Some(plain) = data.plain_lyrics {
         if !plain.trim().is_empty() {
-            return Ok(Some(parse_lrc(&plain)));
+            let mut parsed = parse_lrc(&plain);
+            parsed.source = "lrclib".to_string();
+            return Ok(Some(parsed));
         }
     }
 
@@ -304,5 +379,36 @@ Third line ends it.
             "First verse of a song without any time markers."
         );
         assert_eq!(parsed.plain_lyrics, raw.trim());
+    }
+
+    #[test]
+    fn test_parse_lrc_payload_and_source() {
+        let raw = "[00:05.50]Opening intro line\n[00:12.00]Second verse";
+        let payload = parse_lrc_payload(raw, "embedded");
+        assert_eq!(payload.source, "embedded");
+        assert_eq!(payload.synced_lines.len(), 2);
+        assert_eq!(payload.synced_lines[0].timestamp_ms, 5_500);
+
+        let lyrics: TrackLyrics = payload.into();
+        assert!(lyrics.synced);
+        assert_eq!(lyrics.source, "embedded");
+
+        let back: LyricsPayload = lyrics.into();
+        assert_eq!(back.source, "embedded");
+        assert_eq!(back.synced_lines.len(), 2);
+    }
+
+    #[test]
+    fn test_format_lrc_roundtrip() {
+        let lrc = "\
+[00:15.30]Karma police, arrest this man
+[00:22.50]He talks in maths
+[00:27.10]He buzzes like a fridge
+";
+        let parsed = parse_lrc(lrc);
+        let formatted = format_lrc(&parsed);
+        let reparsed = parse_lrc(&formatted);
+        assert_eq!(reparsed.lines, parsed.lines);
+        assert!(reparsed.synced);
     }
 }

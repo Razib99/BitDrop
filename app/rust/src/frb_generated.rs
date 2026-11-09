@@ -3051,10 +3051,12 @@ impl SseDecode for crate::api::cloud_library::CloudTrackLyrics {
         let mut var_lines =
             <Vec<crate::api::cloud_library::CloudLyricLine>>::sse_decode(deserializer);
         let mut var_plainLyrics = <String>::sse_decode(deserializer);
+        let mut var_source = <String>::sse_decode(deserializer);
         return crate::api::cloud_library::CloudTrackLyrics {
             synced: var_synced,
             lines: var_lines,
             plain_lyrics: var_plainLyrics,
+            source: var_source,
         };
     }
 }
@@ -4497,6 +4499,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudTrackLyri
             self.synced.into_into_dart().into_dart(),
             self.lines.into_into_dart().into_dart(),
             self.plain_lyrics.into_into_dart().into_dart(),
+            self.source.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5135,6 +5138,7 @@ impl SseEncode for crate::api::cloud_library::CloudTrackLyrics {
         <bool>::sse_encode(self.synced, serializer);
         <Vec<crate::api::cloud_library::CloudLyricLine>>::sse_encode(self.lines, serializer);
         <String>::sse_encode(self.plain_lyrics, serializer);
+        <String>::sse_encode(self.source, serializer);
     }
 }
 
