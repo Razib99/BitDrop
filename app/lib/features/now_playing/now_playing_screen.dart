@@ -788,20 +788,36 @@ class NowPlayingSignalChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDsd = signal.source.isDsd ||
+        signal.actual.isDsd ||
+        (signal.decoderLabel?.contains('DoP') ?? false);
     final isResampled = signal.tier == OutputTier.resampled ||
         signal.source.sampleRate != signal.actual.sampleRate;
     final isBitPerfect = signal.tier == OutputTier.bitPerfect;
     final isDspNative = !isResampled && signal.dspActive;
-    final isAndroidMixed = !isResampled && !signal.dspActive && !isBitPerfect;
+    final isAndroidMixed =
+        !isResampled && !signal.dspActive && !isBitPerfect && !isDsd;
 
     final Color statusColor;
+    final Color dotColor;
     final IconData statusIcon;
     final String statusLabel;
     final String subText;
     final device = signal.device?.name;
 
-    if (isBitPerfect) {
+    if (isDsd) {
+      statusColor = const Color(0xFF8B5CF6);
+      dotColor = const Color(0xFF8B5CF6);
+      statusIcon = Icons.waves;
+      statusLabel = signal.source.shortLabel;
+      final dopDesc = signal.decoderLabel?.contains('DoP') == true ||
+              signal.device?.type == DeviceType.usb
+          ? 'DoP v1.1 · Direct USB'
+          : 'Decimated PCM';
+      subText = device == null ? ' · $dopDesc' : ' · $dopDesc → $device';
+    } else if (isBitPerfect) {
       statusColor = context.c.tierBitPerfect;
+      dotColor = const Color(0xFF10B981);
       statusIcon = Icons.diamond_outlined;
       statusLabel = 'BIT-PERFECT';
       final detail =
@@ -809,12 +825,14 @@ class NowPlayingSignalChip extends StatelessWidget {
       subText = device == null ? ' · $detail' : ' · $detail → $device';
     } else if (isDspNative) {
       statusColor = context.c.dspActive;
+      dotColor = const Color(0xFF06B6D4);
       statusIcon = Icons.graphic_eq;
       statusLabel = '64-BIT DSP';
       final detail = 'Native ${Fmt.kHz(signal.source.sampleRate)}';
       subText = device == null ? ' · $detail' : ' · $detail → $device';
     } else if (isAndroidMixed) {
       statusColor = context.c.tierNativeRate;
+      dotColor = const Color(0xFF38BDF8);
       statusIcon = Icons.check_circle_outline;
       statusLabel = 'NATIVE RATE (${Fmt.kHz(signal.source.sampleRate)})';
       subText = device == null
@@ -822,6 +840,7 @@ class NowPlayingSignalChip extends StatelessWidget {
           : ' · Android Mixed → $device';
     } else if (isResampled) {
       statusColor = context.c.tierResampled;
+      dotColor = const Color(0xFFF59E0B);
       statusIcon = Icons.change_history;
       statusLabel = 'RESAMPLED';
       final detail =
@@ -829,6 +848,7 @@ class NowPlayingSignalChip extends StatelessWidget {
       subText = device == null ? ' · $detail' : ' · $detail → $device';
     } else {
       statusColor = const Color(0xFF9E9E9E);
+      dotColor = const Color(0xFF9E9E9E);
       statusIcon = Icons.info_outline;
       statusLabel = 'STANDARD';
       subText = device == null ? '' : ' · $device';
@@ -866,6 +886,23 @@ class NowPlayingSignalChip extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      Container(
+                        key: const Key('signal_pill_status_dot'),
+                        width: 7,
+                        height: 7,
+                        margin: const EdgeInsets.only(right: 6),
+                        decoration: BoxDecoration(
+                          color: dotColor,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: dotColor.withOpacity(0.65),
+                              blurRadius: 4,
+                              spreadRadius: 0.5,
+                            ),
+                          ],
+                        ),
+                      ),
                       Icon(
                         statusIcon,
                         size: 13,

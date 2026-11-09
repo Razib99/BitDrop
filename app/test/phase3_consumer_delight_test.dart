@@ -225,6 +225,71 @@ void main() {
       expect(find.text('BIT-PERFECT'), findsOneWidget);
       expect(find.textContaining('96 kHz / 24-bit'), findsOneWidget);
       expect(find.byType(BackdropFilter), findsOneWidget);
+
+      final dot = tester.widget<Container>(
+        find.byKey(const Key('signal_pill_status_dot')),
+      );
+      final decoration = dot.decoration as BoxDecoration;
+      expect(decoration.color, const Color(0xFF10B981));
+    });
+
+    testWidgets('Renders purple status dot for DSD64 DoP v1.1 Direct USB',
+        (tester) async {
+      const signal = SignalPath(
+        tier: OutputTier.bitPerfect,
+        source: AudioFormat(codec: Codec.dsf, bitDepth: 1, sampleRate: 2822400),
+        requested: AudioFormat(codec: Codec.dsf, bitDepth: 1, sampleRate: 2822400),
+        actual: AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 176400),
+        dspActive: false,
+        volume: VolumeMode.dacHardware,
+        decoderLabel: 'DSD64 Bitstream -> DoP v1.1 Framing',
+        explanation: 'Direct USB DSD bitstream over DoP v1.1.',
+      );
+
+      await tester.pumpWidget(
+        wrapWithProviders(
+          const NowPlayingSignalChip(signal: signal),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('DSD64'), findsOneWidget);
+      expect(find.textContaining('DoP v1.1 · Direct USB'), findsOneWidget);
+
+      final dot = tester.widget<Container>(
+        find.byKey(const Key('signal_pill_status_dot')),
+      );
+      final decoration = dot.decoration as BoxDecoration;
+      expect(decoration.color, const Color(0xFF8B5CF6));
+    });
+
+    testWidgets('Renders cyan status dot for 64-Bit DSP', (tester) async {
+      const signal = SignalPath(
+        tier: OutputTier.nativeRate,
+        source: AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 48000),
+        requested: AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 48000),
+        actual: AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 48000),
+        dspActive: true,
+        volume: VolumeMode.softwareDithered,
+        explanation: '64-Bit floating point DSP pipeline active.',
+      );
+
+      await tester.pumpWidget(
+        wrapWithProviders(
+          const NowPlayingSignalChip(signal: signal),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('64-BIT DSP'), findsOneWidget);
+      expect(find.textContaining('Native 48 kHz'), findsOneWidget);
+
+      final dot = tester.widget<Container>(
+        find.byKey(const Key('signal_pill_status_dot')),
+      );
+      final decoration = dot.decoration as BoxDecoration;
+      expect(decoration.color, const Color(0xFF06B6D4));
     });
   });
 }
+
