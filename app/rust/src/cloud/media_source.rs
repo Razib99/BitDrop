@@ -365,7 +365,7 @@ pub fn bytes_fetched() -> usize {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChunkState {
     Idle,
     Fetching,
@@ -798,6 +798,10 @@ impl SparseTrackCache {
             let result = cache.fetch_chunk(chunk_idx, generation, &ctx).await;
             {
                 let _guard = cache.sync_mutex.lock();
+                let chunk_start = chunk_idx as u64 * CHUNK_SIZE;
+                let full_chunk_len = ((cache.total_size - chunk_start).min(CHUNK_SIZE)) as u32;
+                let written = cache.chunk_written_bytes[chunk_idx].load(Ordering::Acquire);
+
                 let state = if generation != cache.active_generation.load(Ordering::Acquire) {
                     ChunkState::Idle
                 } else if let Err(ref error) = result {
@@ -806,6 +810,10 @@ impl SparseTrackCache {
                         chunk_idx, cache.file_id, error
                     );
                     ChunkState::Failed
+                } else if written < full_chunk_len {
+                    // Partially fetched chunk (e.g. metered cellular pre-buffering clamped to header probe).
+                    // Return state to Idle so subsequent read-ahead or playback requests can complete the rest of the chunk.
+                    ChunkState::Idle
                 } else {
                     ChunkState::Ready
                 };
@@ -921,31 +929,37 @@ impl SparseTrackCache {
             }
         }
 
-        let mut bytes = vec![0; len as usize];
-        read_exact_at(&self.file, &mut bytes, start)?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-        self.record_chunk(&crate::cloud::db::CachedChunkRecord {
-            file_id: self.file_id.clone(),
-            chunk_idx: idx as u32,
-            byte_offset: start,
-            byte_len: len,
-            crc32: crc32fast::hash(&bytes),
-            file_mtime: now,
-            last_accessed_ts: now,
-        });
-        {
-            let mut cached = CACHED.lock();
-            if let Some((_, chunks)) = cached.get_mut(&self.file_id) {
-                if !chunks.contains(&(idx as u64)) {
-                    chunks.push(idx as u64);
+        let chunk_start = idx as u64 * CHUNK_SIZE;
+        let full_chunk_len = ((self.total_size - chunk_start).min(CHUNK_SIZE)) as u32;
+
+        // Only persist chunk completion to SQLite and UI cached chunks if the full chunk has arrived
+        if written >= full_chunk_len {
+            let mut bytes = vec![0; full_chunk_len as usize];
+            read_exact_at(&self.file, &mut bytes, start)?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            self.record_chunk(&crate::cloud::db::CachedChunkRecord {
+                file_id: self.file_id.clone(),
+                chunk_idx: idx as u32,
+                byte_offset: start,
+                byte_len: full_chunk_len,
+                crc32: crc32fast::hash(&bytes),
+                file_mtime: now,
+                last_accessed_ts: now,
+            });
+            {
+                let mut cached = CACHED.lock();
+                if let Some((_, chunks)) = cached.get_mut(&self.file_id) {
+                    if !chunks.contains(&(idx as u64)) {
+                        chunks.push(idx as u64);
+                    }
                 }
             }
+            // Legacy indexes are read during migration only. SQLite owns completion state.
+            self.prune_cache(ctx);
         }
-        // Legacy indexes are read during migration only. SQLite owns completion state.
-        self.prune_cache(ctx);
         Ok(())
     }
 
@@ -1757,6 +1771,92 @@ mod tests {
         set_network_transport_mode(NetworkTransportMode::UnmeteredWifi);
         assert_eq!(current_concurrency_limit(), 4);
 
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_cellular_prebuffer_chunk_lifecycle_and_transition_to_full() {
+        set_network_transport_mode(NetworkTransportMode::MeteredCellular);
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("bitdrop_test_cell_trans_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let db = Arc::new(parking_lot::Mutex::new(
+            MetadataDb::new_in_memory().unwrap(),
+        ));
+        let file_id = "test_trans_track";
+        let sparse_path = temp_dir.join(format!("{}.sparse", file_id));
+        let index_path = temp_dir.join(format!("{}.idx", file_id));
+        let total_size = 10 * 1024 * 1024; // 10 MB
+
+        let cache = SparseTrackCache::new_with_db(
+            file_id,
+            &sparse_path,
+            &index_path,
+            total_size,
+            Some(Arc::clone(&db)),
+        )
+        .unwrap();
+
+        // 1. Chunk starts Idle with 0 bytes
+        assert_eq!(
+            cache.chunk_states[0].load(Ordering::Relaxed),
+            ChunkState::Idle as u8
+        );
+        assert_eq!(cache.chunk_written_bytes[0].load(Ordering::Relaxed), 0);
+
+        // 2. Simulate prebuffered probe completing 512 KB
+        cache.is_prebuffer.store(true, Ordering::Release);
+        cache.chunk_written_bytes[0].store(CELLULAR_HEADER_PROBE_BYTES as u32, Ordering::Release);
+
+        let chunk_start = 0u64;
+        let full_chunk_len = ((total_size - chunk_start).min(CHUNK_SIZE)) as u32;
+        let written = cache.chunk_written_bytes[0].load(Ordering::Acquire);
+
+        // Clamped probe has written < full_chunk_len (512 KB < 2 MB)
+        assert!(written < full_chunk_len);
+
+        // State remains Idle so it doesn't lock up future fetches
+        let state = if written < full_chunk_len {
+            ChunkState::Idle
+        } else {
+            ChunkState::Ready
+        };
+        assert_eq!(state, ChunkState::Idle);
+        cache.chunk_states[0].store(state as u8, Ordering::Release);
+
+        // 3. Track transitions to active playback: is_prebuffer = false
+        cache.is_prebuffer.store(false, Ordering::Release);
+
+        // Verify compare_exchange from Idle to Fetching succeeds (would have failed if locked in Ready)
+        let acquire_res = cache.chunk_states[0].compare_exchange(
+            ChunkState::Idle as u8,
+            ChunkState::Fetching as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        assert!(
+            acquire_res.is_ok(),
+            "Must be able to fetch rest of chunk 0 upon transition"
+        );
+
+        // 4. Simulate remaining 1.5 MB arriving: written = full_chunk_len
+        cache.chunk_written_bytes[0].store(full_chunk_len, Ordering::Release);
+        let written_full = cache.chunk_written_bytes[0].load(Ordering::Acquire);
+        assert_eq!(written_full, full_chunk_len);
+
+        let final_state = if written_full < full_chunk_len {
+            ChunkState::Idle
+        } else {
+            ChunkState::Ready
+        };
+        assert_eq!(final_state, ChunkState::Ready);
+        cache.chunk_states[0].store(final_state as u8, Ordering::Release);
+
+        // Reset transport mode for other parallel tests
+        set_network_transport_mode(NetworkTransportMode::UnmeteredWifi);
         let _ = fs::remove_dir_all(&temp_dir);
     }
 }
