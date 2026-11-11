@@ -99,6 +99,7 @@ class LiveBitDropCore implements BitDropCore {
   Timer? _diagnosticsTimer;
   final List<double> _throughputHistory = [];
   final List<double> _bufferHistory = [];
+  bool _disposed = false;
 
   LiveBitDropCore(
     this._audioHandler, {
@@ -125,12 +126,30 @@ class LiveBitDropCore implements BitDropCore {
     _settingsRepo = settingsRepository ??
         BitDropSettingsRepository(
           currentTrackProvider: () => _nowPlaying.value?.track,
-          onSettingsChanged: (s) => _settings.add(s),
-          onEqChanged: (e) {
-            _eq.add(e);
-            _recomputeSignalPath();
-          },
         );
+    _settingsRepo.currentTrackProvider ??= () => _nowPlaying.value?.track;
+    final prevOnSettings = _settingsRepo.onSettingsChanged;
+    _settingsRepo.onSettingsChanged = (s) {
+      if (!_disposed && !_settings.isClosed) {
+        _settings.add(s);
+      }
+      prevOnSettings?.call(s);
+    };
+    final prevOnEq = _settingsRepo.onEqChanged;
+    _settingsRepo.onEqChanged = (e) {
+      if (!_disposed && !_eq.isClosed) {
+        _eq.add(e);
+        _recomputeSignalPath();
+      }
+      prevOnEq?.call(e);
+    };
+    final prevOnProfiles = _settingsRepo.onDeviceProfilesChanged;
+    _settingsRepo.onDeviceProfilesChanged = (p) {
+      if (!_disposed && !_deviceProfiles.isClosed) {
+        _deviceProfiles.add(p);
+      }
+      prevOnProfiles?.call(p);
+    };
     _outputCoord = outputCoordinator ??
         BitDropOutputCoordinator(
           outputProbe: _outputProbe,
@@ -734,10 +753,13 @@ class LiveBitDropCore implements BitDropCore {
   Future<void> _loadSettingsAndEq() async {
     try {
       final eqJson = await rust_cache.cloudDbGetKv(key: 'eq_state');
+      if (_disposed) return;
       if (eqJson != null && eqJson.isNotEmpty) {
         final loadedEq = PersistenceCodec.deserializeEqState(eqJson);
-        _eq.add(loadedEq);
-        _pushEqToEngine(loadedEq);
+        if (!_eq.isClosed) {
+          _eq.add(loadedEq);
+          _pushEqToEngine(loadedEq);
+        }
       }
     } catch (e) {
       debugPrint('[persistence] failed to restore eq state: $e');
@@ -745,10 +767,13 @@ class LiveBitDropCore implements BitDropCore {
 
     try {
       final settingsJson = await rust_cache.cloudDbGetKv(key: 'app_settings');
+      if (_disposed) return;
       if (settingsJson != null && settingsJson.isNotEmpty) {
         final loadedSettings =
             PersistenceCodec.deserializeAppSettings(settingsJson);
-        _settings.add(loadedSettings);
+        if (!_settings.isClosed) {
+          _settings.add(loadedSettings);
+        }
       }
     } catch (e) {
       debugPrint('[persistence] failed to restore app settings: $e');
@@ -757,15 +782,24 @@ class LiveBitDropCore implements BitDropCore {
     try {
       final profilesJson =
           await rust_cache.cloudDbGetKv(key: 'device_profiles');
+      if (_disposed) return;
       if (profilesJson != null && profilesJson.isNotEmpty) {
         final loadedProfiles =
             PersistenceCodec.deserializeDeviceProfiles(profilesJson);
-        if (loadedProfiles.isNotEmpty) {
+        if (loadedProfiles.isNotEmpty && !_deviceProfiles.isClosed) {
           _deviceProfiles.add(loadedProfiles);
         }
       }
     } catch (e) {
       debugPrint('[persistence] failed to restore device profiles: $e');
+    }
+
+    if (!_disposed) {
+      _settingsRepo.syncFromLiveState(
+        settings: _settings.value,
+        eq: _eq.value,
+        deviceProfiles: _deviceProfiles.value,
+      );
     }
   }
 
@@ -1458,12 +1492,26 @@ class LiveBitDropCore implements BitDropCore {
   @override
   Future<String> exportBackup() async {
     final recap = await listeningRecap();
+    _settingsRepo.syncFromLiveState(
+      settings: _settings.value,
+      eq: _eq.value,
+      deviceProfiles: _deviceProfiles.value,
+    );
     return _settingsRepo.exportBackupJson(recap: recap);
   }
 
   @override
   Future<bool> importBackup(String jsonStr) async {
-    return _settingsRepo.importBackupJson(jsonStr);
+    final ok = await _settingsRepo.importBackupJson(jsonStr);
+    if (ok) {
+      _settings.add(_settingsRepo.currentSettings);
+      _eq.add(_settingsRepo.currentEq);
+      _deviceProfiles.add(_settingsRepo.currentDeviceProfiles);
+      _settingsRepo.syncNetworkTransportMode(
+          _settingsRepo.currentSettings.networkTransportMode);
+      _pushEqToEngine(_settingsRepo.currentEq);
+    }
+    return ok;
   }
 
   String _currentContextLabel = '';
@@ -1870,49 +1918,72 @@ class LiveBitDropCore implements BitDropCore {
       }
       await refreshStorage();
     } else if (cmd is SetSetting) {
-      _settings.add(_settings.value.withKey(cmd.key, cmd.value));
+      final updated = _settings.value.withKey(cmd.key, cmd.value);
+      _settings.add(updated);
+      _settingsRepo.syncFromLiveState(settings: updated);
       unawaited(_saveSettings());
       if (cmd.key == 'directUsbDriver') {
         unawaited(_handleDirectUsbDriverSetting(cmd.value as bool));
       }
     } else if (cmd is SetSafetyAttenuation) {
-      _settings.add(_settings.value.copyWith(
+      final updated = _settings.value.copyWith(
         safetyAttenuationEnabled: cmd.enabled,
         safetyAttenuationDb: cmd.db ?? _settings.value.safetyAttenuationDb,
-      ));
+      );
+      _settings.add(updated);
+      _settingsRepo.syncFromLiveState(settings: updated);
       unawaited(_saveSettings());
     } else if (cmd is SetEqBands) {
-      _eq.add(_eq.value
-          .copyWith(bands: cmd.bands, mode: EqMode.parametric, bypass: false));
+      final updated = _eq.value
+          .copyWith(bands: cmd.bands, mode: EqMode.parametric, bypass: false);
+      _eq.add(updated);
+      _settingsRepo.syncFromLiveState(eq: updated);
       unawaited(_saveEqState());
     } else if (cmd is SetEqMode) {
-      _eq.add(_eq.value.copyWith(mode: cmd.mode));
+      final updated = _eq.value.copyWith(mode: cmd.mode);
+      _eq.add(updated);
+      _settingsRepo.syncFromLiveState(eq: updated);
       unawaited(_saveEqState());
     } else if (cmd is SetGraphicGains) {
-      _eq.add(_eq.value.copyWith(
-          graphicGains: cmd.gains, mode: EqMode.graphic, bypass: false));
+      final updated = _eq.value.copyWith(
+          graphicGains: cmd.gains, mode: EqMode.graphic, bypass: false);
+      _eq.add(updated);
+      _settingsRepo.syncFromLiveState(eq: updated);
       unawaited(_saveEqState());
     } else if (cmd is SetBypass) {
-      _eq.add(_eq.value.copyWith(bypass: cmd.bypass));
+      final updated = _eq.value.copyWith(bypass: cmd.bypass);
+      _eq.add(updated);
+      _settingsRepo.syncFromLiveState(eq: updated);
       unawaited(_saveEqState());
     } else if (cmd is SetPreamp) {
       final clipped = cmd.db > 0 ? (cmd.db * 420).round() : 0;
-      _eq.add(_eq.value.copyWith(preampDb: cmd.db, clippedSamples: clipped));
+      final updated =
+          _eq.value.copyWith(preampDb: cmd.db, clippedSamples: clipped);
+      _eq.add(updated);
+      _settingsRepo.syncFromLiveState(eq: updated);
       unawaited(_saveEqState());
     } else if (cmd is SetTone) {
-      _eq.add(_eq.value.copyWith(
+      final updated = _eq.value.copyWith(
         mode: EqMode.simple,
         bassDb: cmd.bassDb,
         trebleDb: cmd.trebleDb,
         balance: cmd.balance,
         mono: cmd.mono,
         bypass: false,
-      ));
+      );
+      _eq.add(updated);
+      _settingsRepo.syncFromLiveState(eq: updated);
       unawaited(_saveEqState());
     } else if (cmd is SetReplayGain) {
-      _eq.add(_eq.value
-          .copyWith(replayGain: cmd.mode, replayGainPreampDb: cmd.preampDb));
-      _settings.add(_settings.value.copyWith(replayGain: cmd.mode));
+      final updatedEq = _eq.value
+          .copyWith(replayGain: cmd.mode, replayGainPreampDb: cmd.preampDb);
+      final updatedSettings = _settings.value.copyWith(replayGain: cmd.mode);
+      _eq.add(updatedEq);
+      _settings.add(updatedSettings);
+      _settingsRepo.syncFromLiveState(
+        settings: updatedSettings,
+        eq: updatedEq,
+      );
       unawaited(_saveEqState());
       unawaited(_saveSettings());
     } else if (cmd is AssignEqToDevice) {
@@ -1920,9 +1991,10 @@ class LiveBitDropCore implements BitDropCore {
       final devName = currentDev?.id == cmd.deviceId
           ? currentDev?.name
           : (cmd.assign ? 'Headphones' : null);
-      _eq.add(_eq.value.copyWith(
+      final updatedEq = _eq.value.copyWith(
         assignedDeviceName: cmd.assign ? devName : null,
-      ));
+      );
+      _eq.add(updatedEq);
       final updatedProfiles = _deviceProfiles.value.map((p) {
         if (p.deviceId == cmd.deviceId) {
           return DeviceProfile(
@@ -1939,6 +2011,10 @@ class LiveBitDropCore implements BitDropCore {
         return p;
       }).toList();
       _deviceProfiles.add(updatedProfiles);
+      _settingsRepo.syncFromLiveState(
+        eq: updatedEq,
+        deviceProfiles: updatedProfiles,
+      );
       unawaited(_saveDeviceProfiles());
       unawaited(_saveEqState());
     } else if (cmd is ApplyAutoEqProfile) {
@@ -1955,6 +2031,7 @@ class LiveBitDropCore implements BitDropCore {
             presetName: '${profile.model} AutoEQ',
           );
           _eq.add(updated);
+          _settingsRepo.syncFromLiveState(eq: updated);
           unawaited(_saveEqState());
         }
       } catch (e) {
@@ -1971,6 +2048,7 @@ class LiveBitDropCore implements BitDropCore {
           presetName: 'Imported preset',
         );
         _eq.add(updated);
+        _settingsRepo.syncFromLiveState(eq: updated);
         unawaited(_saveEqState());
       }
     } else if (cmd is DismissBanner) {
@@ -2431,6 +2509,7 @@ class LiveBitDropCore implements BitDropCore {
 
   @override
   void dispose() {
+    _disposed = true;
     _uiPositionTimer?.cancel();
     _visualizerTimer?.cancel();
     _diagnosticsTimer?.cancel();

@@ -270,5 +270,55 @@ void main() {
       final titan = profiles.firstWhere((p) => p.deviceId == 'dev-titanx');
       expect(titan.eqPresetName, isNotNull);
     });
+
+    test('SetSetting conserveCellularData synchronizes settingsRepository and network transport mode', () async {
+      // Toggle cellular data saver via player command
+      await liveCore.send(const SetSetting(key: 'conserveCellularData', value: true));
+
+      final liveSettings = await liveCore.settings.first;
+      expect(liveSettings.conserveCellularData, isTrue);
+      expect(liveSettings.networkTransportMode, equals(NetworkTransportMode.meteredCellular));
+
+      // settingsRepository must be in sync (not split-brain)
+      expect(liveCore.settingsRepository.currentSettings.conserveCellularData, isTrue);
+      expect(liveCore.settingsRepository.currentSettings.networkTransportMode, equals(NetworkTransportMode.meteredCellular));
+
+      // Revert back
+      await liveCore.send(const SetSetting(key: 'conserveCellularData', value: false));
+      final reverted = await liveCore.settings.first;
+      expect(reverted.conserveCellularData, isFalse);
+      expect(reverted.networkTransportMode, equals(NetworkTransportMode.unmeteredWifi));
+      expect(liveCore.settingsRepository.currentSettings.conserveCellularData, isFalse);
+      expect(liveCore.settingsRepository.currentSettings.networkTransportMode, equals(NetworkTransportMode.unmeteredWifi));
+    });
+
+    test('LiveBitDropCore exportBackup and importBackup preserves live settings and syncs without split-brain', () async {
+      await liveCore.send(const SetSetting(key: 'oledBlack', value: true));
+      await liveCore.send(const SetSetting(key: 'conserveCellularData', value: true));
+      await liveCore.send(const SetPreamp(-4.5));
+
+      final exportedJson = await liveCore.exportBackup();
+      expect(exportedJson, contains('"oledBlack": true'));
+      expect(exportedJson, contains('"conserveCellularData": true'));
+      expect(exportedJson, contains('"preampDb": -4.5'));
+
+      // Modify current state
+      await liveCore.send(const SetSetting(key: 'oledBlack', value: false));
+      await liveCore.send(const SetSetting(key: 'conserveCellularData', value: false));
+      await liveCore.send(const SetPreamp(0.0));
+
+      // Import the backup
+      final ok = await liveCore.importBackup(exportedJson);
+      expect(ok, isTrue);
+
+      final restoredSettings = await liveCore.settings.first;
+      expect(restoredSettings.oledBlack, isTrue);
+      expect(restoredSettings.conserveCellularData, isTrue);
+      expect(liveCore.settingsRepository.currentSettings.conserveCellularData, isTrue);
+
+      final restoredEq = await liveCore.eq.first;
+      expect(restoredEq.preampDb, equals(-4.5));
+      expect(liveCore.settingsRepository.currentEq.preampDb, equals(-4.5));
+    });
   });
 }

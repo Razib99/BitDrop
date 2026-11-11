@@ -44,11 +44,13 @@ class BitDropSettingsRepository {
 
   void Function(AppSettings settings)? onSettingsChanged;
   void Function(EqState eq)? onEqChanged;
+  void Function(List<DeviceProfile> profiles)? onDeviceProfilesChanged;
   Track? Function()? currentTrackProvider;
 
   BitDropSettingsRepository({
     this.onSettingsChanged,
     this.onEqChanged,
+    this.onDeviceProfilesChanged,
     this.currentTrackProvider,
   });
 
@@ -211,6 +213,7 @@ class BitDropSettingsRepository {
         final sJson = jsonEncode(decoded['app_settings']);
         final loaded = PersistenceCodec.deserializeAppSettings(sJson);
         _settings.add(loaded);
+        syncNetworkTransportMode(loaded.networkTransportMode);
         await saveSettings();
         onSettingsChanged?.call(loaded);
       }
@@ -229,6 +232,7 @@ class BitDropSettingsRepository {
         if (loaded.isNotEmpty) {
           _deviceProfiles.add(loaded);
           await saveDeviceProfiles();
+          onDeviceProfilesChanged?.call(loaded);
         }
       }
 
@@ -317,6 +321,23 @@ class BitDropSettingsRepository {
           : rust_media.NetworkTransportMode.unmeteredWifi;
       rust.engineSetNetworkTransportMode(mode: rustMode);
     } catch (_) {}
+  }
+
+  void syncFromLiveState({
+    AppSettings? settings,
+    EqState? eq,
+    List<DeviceProfile>? deviceProfiles,
+  }) {
+    if (settings != null && !_settings.isClosed) {
+      _settings.add(settings);
+      syncNetworkTransportMode(settings.networkTransportMode);
+    }
+    if (eq != null && !_eq.isClosed) {
+      _eq.add(eq);
+    }
+    if (deviceProfiles != null && !_deviceProfiles.isClosed) {
+      _deviceProfiles.add(deviceProfiles);
+    }
   }
 
   Future<void> handleSetSetting(SetSetting cmd) async {
@@ -444,6 +465,7 @@ class BitDropSettingsRepository {
     _deviceProfiles.add(updatedProfiles);
     await saveEqState();
     await saveDeviceProfiles();
+    onDeviceProfilesChanged?.call(updatedProfiles);
   }
 
   Future<void> handleApplyAutoEqProfile(ApplyAutoEqProfile cmd) async {
