@@ -48,6 +48,10 @@ flutter:
     - assets/autoeq/
     - assets/google_drive.png
     - assets/default_artwork.jpg
+    - assets/icon.png
+    - assets/icon_foreground.png
+    - assets/icon_background.png
+    - assets/splash_icon.png
 
   fonts:
     - family: Inter
@@ -68,17 +72,19 @@ flutter:
 flutter_launcher_icons:
   android: "ic_launcher"
   ios: true
-  image_path: "assets/icon.jpg"
-  min_sdk_android: 21 # android min sdk min:16, default 21
+  image_path: "assets/icon.png"
+  adaptive_icon_background: "assets/icon_background.png"
+  adaptive_icon_foreground: "assets/icon_foreground.png"
+  min_sdk_android: 21
   web:
     generate: true
-    image_path: "assets/icon.jpg"
-    background_color: "#hexcode"
-    theme_color: "#hexcode"
+    image_path: "assets/icon.png"
+    background_color: "#0E0F12"
+    theme_color: "#0E0F12"
   windows:
     generate: true
-    image_path: "assets/icon.jpg"
-    icon_size: 48 # min:48, max:256, default: 48
+    image_path: "assets/icon.png"
+    icon_size: 48
   macos:
     generate: true
-    image_path: "assets/icon.jpg"
+    image_path: "assets/icon.png"
