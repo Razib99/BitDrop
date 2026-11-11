@@ -62,6 +62,10 @@ class LiveBitDropCore implements BitDropCore {
   /// When the current stall began, for escalating the buffering copy.
   DateTime? _bufferingSince;
   bool _playbackRecorded = false;
+  Track? _trackedTrack;
+  int _trackedTrackDurationMs = 0;
+  int _accumulatedListenedMs = 0;
+  int _lastPositionMs = -1;
 
   /// Last seen output-stream open count. An exclusive AAudio stream is torn
   /// down by any routing change and the engine silently rebuilds it; logging
@@ -307,6 +311,10 @@ class LiveBitDropCore implements BitDropCore {
       } else {
         _stopUiPositionTimer();
         _stopVisualizerTimer();
+        if (state.processingState == audio_svc.AudioProcessingState.idle ||
+            state.processingState == audio_svc.AudioProcessingState.completed) {
+          _flushPlaybackRecord();
+        }
       }
 
       _position.add(PositionInfo(
@@ -323,7 +331,11 @@ class LiveBitDropCore implements BitDropCore {
     _audioHandler.queue.listen((_) => _emitQueue());
 
     _audioHandler.mediaItem.listen((item) {
+      _flushPlaybackRecord();
       _playbackRecorded = false;
+      _trackedTrack = null;
+      _accumulatedListenedMs = 0;
+      _lastPositionMs = -1;
       if (item != null) {
         final track = _lookupTrack(item.id);
         if (track != null) {
@@ -428,6 +440,8 @@ class LiveBitDropCore implements BitDropCore {
   final _nowPlaying = BehaviorSubject<NowPlaying?>.seeded(null);
   @override
   Stream<NowPlaying?> get nowPlaying => _nowPlaying.stream;
+  @visibleForTesting
+  BehaviorSubject<NowPlaying?> get nowPlayingSubjectForTesting => _nowPlaying;
 
   // Delegated streams
   @override
@@ -1462,6 +1476,7 @@ class LiveBitDropCore implements BitDropCore {
 
   @override
   Future<ListeningRecap?> listeningRecap() async {
+    _flushPlaybackRecord();
     final rustRecap = await _libraryService.getListeningRecap();
     if (rustRecap == null) return null;
     return ListeningRecap(
@@ -2336,6 +2351,7 @@ class LiveBitDropCore implements BitDropCore {
 
   void _startUiPositionTimer() {
     _uiPositionTimer?.cancel();
+    _lastPositionMs = -1;
     _uiPositionTimer = Timer.periodic(const Duration(milliseconds: 60), (_) {
       try {
         final posMs = rust.engineGetPosition();
@@ -2354,20 +2370,61 @@ class LiveBitDropCore implements BitDropCore {
   }
 
   void _checkAndRecordPlayback(int posMs, int durationMs) {
-    if (_playbackRecorded) return;
     final currentTrack = _nowPlaying.valueOrNull?.track;
     if (currentTrack == null) return;
-    final qualified =
-        posMs >= 30000 || (durationMs > 0 && posMs >= durationMs ~/ 2);
-    if (qualified) {
+
+    if (_trackedTrack != null && _trackedTrack!.id != currentTrack.id) {
+      _flushPlaybackRecord();
+      _trackedTrack = currentTrack;
+      _trackedTrackDurationMs = durationMs;
+      _accumulatedListenedMs = 0;
+      _lastPositionMs = posMs;
+      _playbackRecorded = false;
+      return;
+    }
+
+    _trackedTrack = currentTrack;
+    _trackedTrackDurationMs = durationMs;
+
+    if (_lastPositionMs >= 0) {
+      final delta = posMs - _lastPositionMs;
+      // Normal playback progression at ~60ms intervals (guard against forward/backward seeks and loops)
+      if (delta > 0 && delta <= 1000) {
+        _accumulatedListenedMs += delta;
+      }
+    }
+    _lastPositionMs = posMs;
+  }
+
+  void _flushPlaybackRecord() {
+    final track = _trackedTrack;
+    if (track == null) return;
+    final durationMs = _trackedTrackDurationMs;
+    final qualified = _accumulatedListenedMs >= 30000 ||
+        (durationMs > 0 && _accumulatedListenedMs >= durationMs ~/ 2);
+
+    if (qualified && !_playbackRecorded) {
       _playbackRecorded = true;
       _libraryService.recordPlayback(
-        fileId: currentTrack.id,
-        listenedMs: posMs,
-        sampleRate: currentTrack.format.sampleRate,
-        bitDepth: currentTrack.format.bitDepth,
+        fileId: track.id,
+        listenedMs: _accumulatedListenedMs,
+        sampleRate: track.format.sampleRate,
+        bitDepth: track.format.bitDepth,
       );
     }
+  }
+
+  @visibleForTesting
+  int get accumulatedListenedMs => _accumulatedListenedMs;
+
+  @visibleForTesting
+  void testCheckAndRecordPlayback(int posMs, int durationMs) {
+    _checkAndRecordPlayback(posMs, durationMs);
+  }
+
+  @visibleForTesting
+  void testFlushPlaybackRecord() {
+    _flushPlaybackRecord();
   }
 
   void _stopUiPositionTimer() {
@@ -2510,6 +2567,7 @@ class LiveBitDropCore implements BitDropCore {
   @override
   void dispose() {
     _disposed = true;
+    _flushPlaybackRecord();
     _uiPositionTimer?.cancel();
     _visualizerTimer?.cancel();
     _diagnosticsTimer?.cancel();
