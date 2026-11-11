@@ -3,6 +3,7 @@
 
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
+import '../cloud/media_source.dart';
 import '../dsp.dart';
 import '../frb_generated.dart';
 import '../lib.dart';
@@ -121,6 +122,13 @@ void engineSetHardwareSampleRate({required int rate}) => RustLib.instance.api
 
 void engineSetDopMode({required bool active}) =>
     RustLib.instance.api.crateApiAudioEngineEngineSetDopMode(active: active);
+
+void engineSetNetworkTransportMode({required NetworkTransportMode mode}) =>
+    RustLib.instance.api
+        .crateApiAudioEngineEngineSetNetworkTransportMode(mode: mode);
+
+NetworkTransportMode engineGetNetworkTransportMode() =>
+    RustLib.instance.api.crateApiAudioEngineEngineGetNetworkTransportMode();
 
 EngineBufferState engineBufferState() =>
     RustLib.instance.api.crateApiAudioEngineEngineBufferState();

@@ -10,6 +10,7 @@ import 'api/audio_engine.dart';
 import 'api/cloud_library.dart';
 import 'api/simple.dart';
 import 'cloud/db.dart';
+import 'cloud/media_source.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dsp.dart';
@@ -194,6 +195,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<TrackMetadata> dco_decode_list_track_metadata(dynamic raw);
+
+  @protected
+  NetworkTransportMode dco_decode_network_transport_mode(dynamic raw);
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
@@ -434,6 +438,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<TrackMetadata> sse_decode_list_track_metadata(
+      SseDeserializer deserializer);
+
+  @protected
+  NetworkTransportMode sse_decode_network_transport_mode(
       SseDeserializer deserializer);
 
   @protected
@@ -692,6 +700,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_track_metadata(
       List<TrackMetadata> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_network_transport_mode(
+      NetworkTransportMode self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);

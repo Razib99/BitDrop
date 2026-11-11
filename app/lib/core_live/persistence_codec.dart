@@ -137,6 +137,8 @@ abstract final class PersistenceCodec {
       'sleepTimerDefaultMinutes': s.sleepTimerDefaultMinutes,
       'mobileDataPolicy': s.mobileDataPolicy.name,
       'prefetchPolicy': s.prefetchPolicy.name,
+      'conserveCellularData': s.conserveCellularData,
+      'networkTransportMode': s.networkTransportMode.name,
       'bufferProfile': s.bufferProfile.name,
       'showUnsupportedFiles': s.showUnsupportedFiles,
       'groupCompilations': s.groupCompilations,
@@ -224,6 +226,13 @@ abstract final class PersistenceCodec {
                 .where((e) => e.name == val)
                 .firstOrNull;
             if (v != null) s = s.copyWith(prefetchPolicy: v);
+          case 'conserveCellularData':
+            if (val is bool) s = s.copyWith(conserveCellularData: val);
+          case 'networkTransportMode':
+            s = s.copyWith(
+              conserveCellularData: val == 'meteredCellular' ||
+                  val == NetworkTransportMode.meteredCellular.name,
+            );
           case 'bufferProfile':
             final v = BufferProfile.values
                 .where((e) => e.name == val)

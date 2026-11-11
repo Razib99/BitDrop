@@ -42,4 +42,11 @@ oboe = { version = "0.6.1", features = ["shared-stdcxx"] }
 [target.'cfg(not(target_os = "android"))'.dependencies]
 cpal = "0.15"
 
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+
 

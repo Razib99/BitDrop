@@ -56,6 +56,8 @@ enum MobileDataPolicy { stream, cachedOnly, ask }
 
 enum PrefetchPolicy { wifiOnly, always, never }
 
+enum NetworkTransportMode { unmeteredWifi, meteredCellular }
+
 enum BufferProfile { fast, balanced, safe }
 
 enum BadgeVisibility { always, hiResOnly, never }

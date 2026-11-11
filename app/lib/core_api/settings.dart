@@ -35,6 +35,7 @@ class AppSettings {
     this.sleepTimerDefaultMinutes = 30,
     this.mobileDataPolicy = MobileDataPolicy.ask,
     this.prefetchPolicy = PrefetchPolicy.wifiOnly,
+    this.conserveCellularData = false,
     this.bufferProfile = BufferProfile.balanced,
     this.showUnsupportedFiles = true,
     this.groupCompilations = true,
@@ -72,6 +73,9 @@ class AppSettings {
 
   final MobileDataPolicy mobileDataPolicy;
   final PrefetchPolicy prefetchPolicy;
+  final bool conserveCellularData;
+  NetworkTransportMode get networkTransportMode =>
+      conserveCellularData ? NetworkTransportMode.meteredCellular : NetworkTransportMode.unmeteredWifi;
   final BufferProfile bufferProfile;
 
   final bool showUnsupportedFiles;
@@ -106,6 +110,8 @@ class AppSettings {
     int? sleepTimerDefaultMinutes,
     MobileDataPolicy? mobileDataPolicy,
     PrefetchPolicy? prefetchPolicy,
+    bool? conserveCellularData,
+    NetworkTransportMode? networkTransportMode,
     BufferProfile? bufferProfile,
     bool? showUnsupportedFiles,
     bool? groupCompilations,
@@ -141,6 +147,9 @@ class AppSettings {
             sleepTimerDefaultMinutes ?? this.sleepTimerDefaultMinutes,
         mobileDataPolicy: mobileDataPolicy ?? this.mobileDataPolicy,
         prefetchPolicy: prefetchPolicy ?? this.prefetchPolicy,
+        conserveCellularData: networkTransportMode != null
+            ? (networkTransportMode == NetworkTransportMode.meteredCellular)
+            : (conserveCellularData ?? this.conserveCellularData),
         bufferProfile: bufferProfile ?? this.bufferProfile,
         showUnsupportedFiles: showUnsupportedFiles ?? this.showUnsupportedFiles,
         groupCompilations: groupCompilations ?? this.groupCompilations,
@@ -180,6 +189,12 @@ class AppSettings {
         'mobileDataPolicy' =>
           copyWith(mobileDataPolicy: value as MobileDataPolicy),
         'prefetchPolicy' => copyWith(prefetchPolicy: value as PrefetchPolicy),
+        'conserveCellularData' =>
+          copyWith(conserveCellularData: value as bool),
+        'networkTransportMode' => copyWith(
+            conserveCellularData:
+                value == NetworkTransportMode.meteredCellular ||
+                    value == 'meteredCellular'),
         'bufferProfile' => copyWith(bufferProfile: value as BufferProfile),
         'showUnsupportedFiles' => copyWith(showUnsupportedFiles: value as bool),
         'groupCompilations' => copyWith(groupCompilations: value as bool),

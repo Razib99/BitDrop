@@ -648,6 +648,7 @@ fn initialize_engine() {
                 let clipped = crate::dsp::LIMITER_CLIPPED_SAMPLES.load(Ordering::Relaxed);
 
                 if let Ok(guard) = EVENT_SINK.lock() {
+                    crate::cloud::media_source::set_current_track_playback_progress(pos_ms, dur_ms);
                     if let Some(ref sink) = *guard {
                         if is_playing {
                             let _ = sink.add(EngineEvent::PositionUpdate {
@@ -705,15 +706,34 @@ fn initialize_engine() {
                     total_size,
                     cache_dir,
                     ext,
-                }
-                | DecoderCmd::SetNextCloud {
+                } => match CloudMediaSource::new(
+                    file_id.clone(),
+                    url,
+                    auth_token,
+                    total_size,
+                    PathBuf::from(cache_dir),
+                ) {
+                    Ok(source) => {
+                        let cache = std::sync::Arc::clone(source.cache());
+                        cache.is_prebuffer.store(false, Ordering::Release);
+                        open_media_source(Box::new(source), &ext).map(|mut t| {
+                            t.cache = Some(cache);
+                            (file_id, t)
+                        })
+                    }
+                    Err(e) => {
+                        eprintln!("[bitdrop] could not open cloud track {}: {}", file_id, e);
+                        None
+                    }
+                },
+                DecoderCmd::SetNextCloud {
                     file_id,
                     url,
                     auth_token,
                     total_size,
                     cache_dir,
                     ext,
-                } => match CloudMediaSource::new(
+                } => match CloudMediaSource::new_prebuffer(
                     file_id.clone(),
                     url,
                     auth_token,
@@ -804,6 +824,16 @@ fn initialize_engine() {
                     && stage == STAGE_GENERATION.load(Ordering::Acquire)
                 {
                     next_track = Some((stage, id, opened));
+                }
+            }
+
+            if let Some((_, _, ref next_opened)) = next_track {
+                if let Some(ref c) = next_opened.cache {
+                    if c.is_prebuffer.load(Ordering::Relaxed)
+                        && crate::cloud::media_source::is_current_track_within_eof(15_000)
+                    {
+                        c.schedule_read_ahead();
+                    }
                 }
             }
 
@@ -1266,6 +1296,10 @@ fn initialize_engine() {
                                     &next_id,
                                 ));
 
+                                if let Some(ref cache) = next_opened.cache {
+                                    cache.is_prebuffer.store(false, Ordering::Release);
+                                    cache.schedule_read_ahead();
+                                }
                                 crate::cloud::media_source::set_active_cache(
                                     next_opened.cache.as_ref(),
                                 );
@@ -2106,6 +2140,18 @@ pub fn engine_set_hardware_sample_rate(rate: u32) {
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_set_dop_mode(active: bool) {
     crate::dsp::DOP_BYPASS_LOCKOUT.store(active, Ordering::Release);
+}
+
+pub use crate::cloud::media_source::NetworkTransportMode;
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_set_network_transport_mode(mode: NetworkTransportMode) {
+    crate::cloud::media_source::set_network_transport_mode(mode);
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_get_network_transport_mode() -> NetworkTransportMode {
+    crate::cloud::media_source::get_network_transport_mode()
 }
 
 #[flutter_rust_bridge::frb(sync)]

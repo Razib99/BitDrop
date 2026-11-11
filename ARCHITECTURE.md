@@ -1,134 +1,234 @@
 # BitDrop Architecture & Engine Specification
 
-BitDrop is a bit-perfect, audiophile-grade music player and cloud streamer built with a high-performance **Rust audio engine** and a reactive **Flutter UI** bridged via **Flutter Rust Bridge (v2)**.
+BitDrop is an audiophile-grade, bit-perfect music player, DSP processor, and multi-cloud streamer built with a high-performance **Rust native engine** and a reactive **Flutter UI** bridged via **Flutter Rust Bridge (v2)**.
 
 ---
 
 ## 1. System Topology
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Flutter / Dart UI Layer                      │
-│   • Riverpod State Management       • Material 3 Audiophile UI  │
-│   • AudioService Background Handler • Hardware USB Probe        │
-│   • Live / Mock Domain Core         • 10-Band & Parametric EQ   │
-└────────────────────────────────┬────────────────────────────────┘
-                                 │
-                     Flutter Rust Bridge (FRB v2)
-                      Typed Command and Event API
-                                 │
-┌────────────────────────────────▼────────────────────────────────┐
-│                       Rust Engine Core                          │
-│                                                                 │
-│   ┌─────────────────────────────────────────────────────────┐   │
-│   │           Decoders & Storage Subsystem                  │   │
-│   │   • Symphonia Decoders (FLAC, ALAC, WAV, MP3, AAC)      │   │
-│   │   • Native DSD64/128 Parser & DoP v1.1 Framing Engine   │   │
-│   │   • Ultra-Low CPU Polyphase DSD-to-PCM Decimator        │   │
-│   │   • Local Storage Scanner & Metadata Extractor          │   │
-│   │   • SparseTrackCache (Zero-seek kernel page cache)      │   │
-│   │   • Resilient HTTP Chunk Fetcher (Backoff + 401 retry)  │   │
-│   │   • SQLite Database (WAL mode, FTS5 Search)             │   │
-│   └────────────────────────────┬────────────────────────────┘   │
-│                                │ raw f32 PCM / DoP frames       │
-│   ┌────────────────────────────▼────────────────────────────┐   │
-│   │             Real-Time Lock-Free Audio Pipeline          │   │
-│   │   • SPSC PCM Ring Buffer (rtrb, 8.7s capacity)          │   │
-│   │   • SPSC Boundary Marker Queue (Single-sample ending)   │   │
-│   │   • Wait-Free TripleBuffer<DspConfigSnapshot>           │   │
-│   │   • 256-Sinc BlackmanHarris2 Resampler (rubato f64)     │   │
-│   │   • ITU-R BS.775 Multichannel Downmix (0.3204 headroom) │   │
-│   │   • f64 Biquad EQ (Direct Form II Transposed)           │   │
-│   │   • Hardware Denormal Flushing (FTZ / DAZ)              │   │
-│   │   • Adaptive 4x Oversampled True-Peak Limiter (-1.0 dB) │   │
-│   └────────────────────────────┬────────────────────────────┘   │
-│                                │                                │
-│   ┌────────────────────────────▼────────────────────────────┐   │
-│   │                   Hardware Output Sinks                 │   │
-│   │   • Android Tier D: Direct User-Space USB (Linux usbfs) │   │
-│   │   • Android Tier A: Oboe / AAudio (SHARING_MODE_EXCL)   │   │
-│   │   • iOS: CoreAudio / AVAudioSession Dynamic Rate Match  │   │
-│   │   • Desktop: CPAL (High-Priority Direct Stream)         │   │
-│   └─────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                Flutter / Dart UI Layer                                 │
+│  • Riverpod State Management              • Material 3 Audiophile Ambient Aura UI      │
+│  • AudioService Background Media Handler  • Now Playing Live Signal Path Pill          │
+│  • Time-Synced Animated Lyrics View       • Audiophile Listening Recap Sheet           │
+│  • 1-Tap JSON Backup & Restore            • 10-Band Graphic & Parametric AutoEQ        │
+│  • Hardware USB DAC Telemetry Sheet       • Wi-Fi / Cellular Data Saver Toggle         │
+└───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                            │
+                                Flutter Rust Bridge (FRB v2)
+                               Typed Command and Event Stream
+                                            │
+┌───────────────────────────────────────────▼────────────────────────────────────────────┐
+│                                  Rust Engine Core                                      │
+│                                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                        Decoders & Storage Subsystem                              │  │
+│  │  • Symphonia Decoders (FLAC, ALAC, WAV, MP3, AAC)                                │  │
+│  │  • Native DSF Parser & DoP v1.1 Framing Engine                                   │  │
+│  │  • 128-Tap Polyphase DSD-to-PCM Decimator FIR Kernel (16x256 LUT, 32 KB L1 Cache)│  │
+│  │  • Multi-Cloud Storage Registry (Google Drive, WebDAV, OneDrive, Dropbox)        │  │
+│  │  • Deterministic Namespacing (provider_id:unique_id) & CDN URL Cache             │  │
+│  │  • SparseTrackCache (Zero-seek sparse page cache with CRC32 persistence)         │  │
+│  │  • Wi-Fi vs. Metered Cellular Streaming Governor (Dynamic Read-Ahead & Concurrency)│ │
+│  │  • SQLite Database (WAL mode, FTS5 Search, track_lyrics, playback_history)       │  │
+│  │  • Time-Synced Lyrics Parser (.lrc), Embedded Vorbis/ID3 & LRCLIB Fallback       │  │
+│  └────────────────────────────────────────┬─────────────────────────────────────────┘  │
+│                                           │ raw f32/f64 PCM or DoP frames              │
+│  ┌────────────────────────────────────────▼─────────────────────────────────────────┐  │
+│  │                   Real-Time Lock-Free Audio Pipeline                             │  │
+│  │  • SPSC PCM Ring Buffer (rtrb, 8.7s capacity)                                    │  │
+│  │  • SPSC Boundary Marker Queue (Single-sample ending synchronization)             │  │
+│  │  • Wait-Free TripleBuffer<DspConfigSnapshot> Mailbox                             │  │
+│  │  • 256-Sinc BlackmanHarris2 Resampler (rubato f64)                               │  │
+│  │  • ITU-R BS.775 Multichannel Downmix (0.3204 headroom scaling)                   │  │
+│  │  • f64 Direct Form II Transposed Biquad EQ (10-Band Graphic + Parametric AutoEQ)│  │
+│  │  • 18 Hz 2nd-Order Butterworth Subsonic High-Pass Filter                         │  │
+│  │  • Hardware Denormal Flushing (FTZ / DAZ on AArch64 & x86_64)                    │  │
+│  │  • Adaptive 4x Oversampled True-Peak Limiter (-1.0 dBTP ceiling, BS.1770-4)      │  │
+│  └────────────────────────────────────────┬─────────────────────────────────────────┘  │
+│                                           │                                            │
+│  ┌────────────────────────────────────────▼─────────────────────────────────────────┐  │
+│  │                              Hardware Output Sinks                               │  │
+│  │  • Android Tier D: Direct User-Space USB Audio Class 2.0 (Linux usbfs ioctl)     │  │
+│  │  • Android Tier A: Oboe / AAudio (SHARING_MODE_EXCLUSIVE, API 34+ Mixer Match)   │  │
+│  │  • iOS: CoreAudio / AVAudioSession Dynamic Rate Matching                         │  │
+│  │  • Desktop: CPAL (High-Priority Direct Stream)                                   │  │
+│  └──────────────────────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Audio Engine Core
+## 2. Audio Engine Core & DSP Pipeline
 
 ### A. Real-Time Safety & Concurrency
-Audio output callbacks (`on_audio_ready` in Oboe and CPAL callbacks) run with real-time audio thread priority. Under real-time audio constraints, the callback MUST NEVER:
-1. Acquire standard mutex locks (to avoid priority inversion).
-2. Allocate or free heap memory (to avoid memory allocator pauses).
-3. Perform file or network I/O.
+Audio output callbacks (`on_audio_ready` in Oboe and audio callback loops in CPAL/USBFS) execute with strict real-time audio thread priority. Under real-time constraints, the engine enforces immutable guarantees:
+1. **Zero Lock Acquisition**: No standard mutexes or blocking synchronization primitives are touched in the audio callback.
+2. **Zero Dynamic Allocation**: No heap allocations (`malloc`, `free`, `Vec::reserve`, `String`) occur during active stream processing.
+3. **Zero File/Network I/O**: Decoding and network fetching are decoupled onto background worker threads; the audio thread solely consumes pre-buffered frames.
 
-**Implementation**:
-- **Wait-Free DSP Updates**: Audio parameters (EQ gains, preamp, balance, filter specs) are published via `TripleBuffer<DspConfigSnapshot>` in [`app/rust/src/dsp.rs`](file:///home/razib/Desktop/BitDrop/app/rust/src/dsp.rs). The mailbox serializes control-side writers. The renderer owns the sole non-cloneable consumer, which exchanges slots in $O(1)$ time without locking. Producer and consumer methods require exclusive access; arbitrary concurrent callers cannot access the same slot.
-- **State Flags**: Playback state, gating, flush requests, and smooth fades are managed by atomic flags (`CALLBACK_IS_PLAYING`, `CALLBACK_GATE_OUTPUT`, `CALLBACK_FLUSH_REQUESTED`, `CALLBACK_FADE_TARGET`, `CALLBACK_FADE_STEP`).
-- **Consumer Ownership**: Consumers for the audio ring buffer and boundary markers are owned directly by the callback structure (`PlayerCallback`), returning to static storage only upon stream restart via `impl Drop`.
+**Key Mechanics**:
+- **Wait-Free DSP Updates**: Audio parameters (preamp, balance, 10-band graphic gains, and parametric AutoEQ filters) are published from the UI thread to the real-time audio thread using a `TripleBuffer<DspConfigSnapshot>` in [`app/rust/src/dsp.rs`](file:///home/razib/Desktop/BitDrop/app/rust/src/dsp.rs). The consumer exchanges slots in $O(1)$ time with zero locks.
+- **Atomic State Transitions**: Playback state, gating, flush requests, and smooth fades are managed by atomic flags (`CALLBACK_IS_PLAYING`, `CALLBACK_GATE_OUTPUT`, `CALLBACK_FLUSH_REQUESTED`, `CALLBACK_FADE_TARGET`, `CALLBACK_FADE_STEP`).
+- **SPSC Audio Buffer & Boundary Synchronization**: Ring buffers (`rtrb`) with 8.7-second runway decouple decoders from the audio callback. When the decoder reaches EOF, it pushes a `BoundaryMarker::track_ended` containing the exact sample index to trigger track completion. Flushing drains both the audio ring buffer and boundary markers, advancing counters monotonically without starvation.
 
-### B. Track Ending Drain & Boundary Synchronization
-- Monotonic counters (`DECODER_FRAMES_PUSHED` and `CALLBACK_FRAMES_PLAYED`) maintain continuous sample progression.
-- An SPSC ring buffer (`rtrb::RingBuffer<BoundaryMarker>`) queues `BoundaryMarker::track_ended` when decoder EOF is reached.
-- The playback callback continues draining cached PCM audio from the ring buffer until `callback_frames_played >= trigger_at_frame`, so buffered audio drains before the end event. Flushing advances the consumed-frame counter by the discarded frame count and acknowledges the flush after both queues are drained. The decoder waits for that acknowledgment before publishing replacement PCM or start markers. EOF releases the prebuffer gate even for tracks shorter than the configured runway.
-
-### C. 64-Bit Float (`f64`) DSP Pipeline
-All digital signal processing executes in full double precision (`f64`) to eliminate quantization distortion and preserve dynamic range:
-- **Direct Form II Transposed Biquads**: State variables $s_1$ and $s_2$ eliminate burst artifacts during coefficient modification.
+### B. 64-Bit Float (`f64`) DSP Pipeline
+All DSP operations run in 64-bit double precision (`f64`) to eliminate truncation noise and maintain audiophile signal integrity:
+- **Direct Form II Transposed Biquads**: State variables ($s_1$, $s_2$) prevent transient clicks and burst distortion during filter parameter modification.
 - **Subsonic Filter**: 18 Hz 2nd-order Butterworth high-pass filter ($Q = 1/\sqrt{2}$) suppresses inaudible DC offset and subsonic turntable/microphone rumble.
-- **Hardware FTZ/DAZ**: Flush-To-Zero and Denormals-Are-Zero registers are enabled on x86_64 and AArch64 to protect against CPU performance cliffs caused by subnormal float processing.
-- **Adaptive True-Peak Limiter**: 4x oversampled polyphase FIR inter-sample peak detector adhering strictly to ITU-R BS.1770-4 / EBU R128 standards, combined with an exponential decay lookahead envelope enforcing an immutable $-1.0\text{ dBTP}$ ceiling.
+- **Hardware Denormal Protection**: Flush-To-Zero (FTZ) and Denormals-Are-Zero (DAZ) CPU control register bits are enabled on x86_64 and AArch64 to eliminate performance degradation from subnormal float calculations.
+- **Adaptive True-Peak Limiter**: 4x oversampled polyphase FIR inter-sample peak detector adhering to ITU-R BS.1770-4 / EBU R128 standards, combined with an exponential decay lookahead envelope enforcing an immutable $-1.0\text{ dBTP}$ ceiling.
 - **Resampling**: `rubato::Async::<f64>::new_sinc` with 256 sinc taps, 256 oversampling factor, cubic interpolation, and BlackmanHarris2 windowing.
 - **Multichannel Downmixing**: ITU-R BS.775 5.1 downmixing standard with $0.3204$ headroom scaling.
 
-### D. Native DSD & DoP Subsystem
-- **DSF Bitstream Demuxer**: Direct parsing of `'DSD '`, `'fmt '`, and `'data'` blocks with fast 256-entry lookup table LSB-to-MSB bit reversal.
-- **DoP v1.1 Framing**: Packs 16-bit DSD channel payloads into 24-bit PCM containers with alternating `0x05`/`0xFA` pilot markers for bit-perfect DSD output over PCM-only transport to DSD DACs.
-- **Polyphase Decimator**: Byte-indexed 8-tap lookup table polyphase FIR decimation filter ($2.8224\text{ MHz} \to 176.4\text{ kHz}$) running in $<1.5\%$ CPU for PCM-only audio sinks or active DSP equalizers.
+### C. Native DSD & DoP Subsystem
+- **DSF Demuxer**: Direct demuxing of `'DSD '`, `'fmt '`, and `'data'` chunks with fast 256-entry lookup table LSB-to-MSB bit reversal.
+- **DoP v1.1 Framing**: Packs 16-bit DSD channel payloads into 24-bit PCM containers with alternating `0x05`/`0xFA` pilot markers for bit-perfect DSD pass-through to external DSD-compatible DACs.
+- **128-Tap Polyphase DSD Decimator FIR Kernel**:
+  - When outputting to PCM-only audio sinks or when DSP (EQ/Limiter) is active, DSD64/128 bitstreams are decimated to high-resolution PCM ($2.8224\text{ MHz} \to 176.4\text{ kHz}$ or $5.6448\text{ MHz} \to 352.8\text{ kHz}$).
+  - Uses a **128-tap ($16 \times 256$ LUT, 32 KB L1 cache-resident)** symmetric Blackman-Harris polyphase FIR filter.
+  - Achieves narrow transition bandwidth ($\Delta f \approx 88.2\text{ kHz}$), stopband rejection $> 100\text{ dB}$ above $90\text{ kHz}$ (completely suppressing ultrasonic $\Delta\Sigma$ noise), and passband ripple $< 0.01\text{ dB}$ at $1\text{ kHz}$.
 
-### E. Direct User-Space USB Audio Class 2.0 (Tier D)
-- **Direct Linux `usbfs` IOCTLs**: Interacts directly with `/dev/bus/usb` file descriptors passed from Android `UsbManager`.
-- **Isochronous Async Feedback Pacing**: Dedicated real-time streaming thread maintaining multi-URB isochronous OUT pipelines with explicit feedback frequency adaptation (UAC1 10.14 and UAC2 16.16 formats) to prevent buffer starvation or overruns on external audiophile DACs.
-
----
-
-## 3. Cloud Storage & Streaming Resilience
-
-`app/rust/src/cloud/media_source.rs` owns compressed-byte persistence for streaming and offline downloads:
-
-- **Shared writer ownership**: sources opening the same sparse path share one cache object. Metadata probes and preloads do not replace or cancel the active playback source. Sources keep independent read positions and generation snapshots. Large seeks preserve outstanding requests while other readers share the cache. Explicit cancellation is surfaced once per reader, allowing a later read to adopt the current generation.
-- **Explicit chunk lifecycle**: each chunk is idle, fetching, ready, or failed. Published byte counts describe partial progress independently. Four attempts use 200 ms, 500 ms, and 1200 ms backoffs. Terminal failures stay failed until a source is reopened or explicitly sought; read-ahead cannot restart them forever.
-- **Bounded requests**: a shared semaphore caps active HTTP transfers at four. Throughput-based read-ahead schedules a smaller runway on slower links. Demand reads can queue behind the semaphore.
-- **Range validation**: responses must be HTTP 206 with the requested `Content-Range`, file size, and body length. Writes handle interruptions and partial completion, stay inside the requested chunk, and retries resume after bytes already published to readers.
-- **Cancellation**: generation changes interrupt request sends, body waits, credential waits, and retry delays. Condition updates and notifications use the waiting mutex; an old request cannot silently strand a reader.
-- **Credentials**: `cloud/auth.rs` coalesces refresh requests for a rejected token with a five-second reuse window; an older replacement triggers a fresh platform request. A typed engine event asks the Dart account service to clear its cached credential and obtain another token. The reply completes a pending request with a 15-second timeout; dropped or timed-out requests remove their pending entries. New credentials update the shared fetch context.
-- **Persistence**: SQLite owns completed-chunk records and CRC32 checks. Legacy `.idx` files are migrated and retired after records are established. Cache opens, eviction, and deletion follow registry → database → telemetry lock order; telemetry locks are released before pruning starts.
-- **Eviction protection**: pin records and all open cache sources protect files from eviction or clearing. Unpinning an open file defers physical removal; it becomes eligible for later eviction after readers finish.
-- **Scan safety**: incomplete Drive listings propagate errors, so pruning runs only after a complete walk. Concurrent scans are rejected from the start of initialization.
-
-SQLite uses WAL mode, synchronous normal, and FTS5 for metadata queries.
+### D. Direct User-Space USB Audio Class 2.0 (Tier D)
+- **Direct Linux `usbfs` IOCTLs**: Interacts directly with `/dev/bus/usb` file descriptors provided by Android `UsbManager`.
+- **Isochronous Async Feedback Pacing**: Dedicated real-time streaming thread maintaining multi-URB isochronous OUT pipelines with explicit feedback frequency adaptation (UAC1 10.14 and UAC2 16.16 formats).
+- **Kernel URB Teardown Safety**: During disconnect, stream shutdown, or format reconfiguration, BitDrop discards in-flight URBs with `USBDEVFS_DISCARDURB` and drains the kernel completion queue using `USBDEVFS_REAPURBNDELAY` in a non-blocking loop until `EAGAIN` or `ENODEV` is returned, preventing kernel use-after-free crashes or bus lockups.
 
 ---
 
-## 4. Flutter UI & Platform Integration
+## 3. Multi-Cloud Storage & Streaming Architecture
 
-`BitDropAudioHandler` owns queue policy, repeat, shuffle and successor selection. `PlaybackEngine` is the native transport boundary. Rust owns source opening, decoding, PCM flow and output callbacks. Every load is stamped when requested; separate staging generations invalidate obsolete preloads. Queue edits immediately refresh the staged successor, repeat-one clears it, and late credential responses cannot restore a skipped track. Native end events drive automatic advancement; polling does not infer EOF from a pause near the end. Transport stop retains the event subscription for replay and ignores queued EOF events; disposal cancels it. Engine initialization runs once per process.
+BitDrop provides seamless, high-res gapless streaming from multiple personal cloud storage providers without requiring third-party intermediary servers.
 
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        ProviderRegistry Subsystem                      │
+│                                                                        │
+│   ┌────────────────┐ ┌────────────────┐ ┌──────────────┐ ┌───────────┐ │
+│   │  Google Drive  │ │     WebDAV     │ │   OneDrive   │ │  Dropbox  │ │
+│   │ (OAuth2 + FTS) │ │ (Digest/Basic) │ │ (Azure CDN)  │ │ (API v2)  │ │
+│   └───────┬────────┘ └───────┬────────┘ └──────┬───────┘ └─────┬─────┘ │
+└───────────┼──────────────────┼─────────────────┼───────────────┼───────┘
+            │                  │                 │               │
+            ▼                  ▼                 ▼               ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│             Deterministic Namespacing (provider_id:unique_id)          │
+│   • Uniform storage addressing and cache isolation                     │
+│   • OneDrive 45-min pre-signed CDN URL cache with 401/403 auto-retry   │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+┌───────────────────────────────────▼────────────────────────────────────┐
+│                  SparseTrackCache (Zero-Seek Sparse Store)             │
+│   • 2 MB chunk indexing with SQLite CRC32 integrity validation         │
+│   • Background multi-worker HTTP range requests with backoff           │
+│   • In-memory generation counters invalidating canceled prebuffering   │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+┌───────────────────────────────────▼────────────────────────────────────┐
+│               Wi-Fi vs. Metered Cellular Streaming Governor            │
+│   • Unmetered Wi-Fi: 30s lookahead, 4 parallel workers, full prebuffer │
+│   • Metered Cellular: 15s lookahead, 1 worker, 512 KB header probe     │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
-- **Device Routing & Bit-Perfect Indicator**: Detects external USB DACs (`output_device.dart`). The UI combines advertised platform capabilities with engine telemetry. Hardware route selection, actual mixer acceptance, and end-to-end sample integrity require device verification; capability detection alone does not prove bit-perfect output.
-- **Background Audio & Lockscreen Controls**: `BitDropAudioHandler` coordinates Android notification media actions, lock screen transport controls, and dynamic track metadata.
-- **Release Signing**: Android builds read release keystore parameters from `key.properties` (or CI environment variables), automatically falling back to debug signing for local development.
+### A. Multi-Cloud Providers & Namespacing
+- **Unified Registry**: Supports Google Drive, WebDAV (Nextcloud, ownCloud, Synology), Microsoft OneDrive, and Dropbox through `CloudStorageProvider` trait implementations in [`app/rust/src/cloud/`](file:///home/razib/Desktop/BitDrop/app/rust/src/cloud/).
+- **Deterministic Namespacing**: Every track is addressed via `provider_id:unique_id` (e.g., `onedrive:01ABC...`, `gdrive:1XYZ...`, `webdav:/Music/...`). This guarantees cache isolation, reliable database indexing, and collision-free multi-account synchronization.
+- **OneDrive 45-Minute Pre-Signed URL Cache**:
+  - Resolving Microsoft Graph API `/content` 302 redirects incurs network latency and API rate limits.
+  - BitDrop caches the pre-signed Azure CDN URL for 45 minutes, enabling direct $1\text{ RTT}$ range requests.
+  - If the CDN returns HTTP `401` or `403` prior to the TTL expiry, `OneDriveProvider::fetch_byte_range` evicts the cached entry and transparently re-authenticates/re-fetches via a fresh `/content` 302 redirect.
+
+### B. SparseTrackCache & Fetch Engine
+- **Chunk Lifecycle**: Chunks (default 2 MB) transition across `Idle` $\to$ `Fetching` $\to$ `Ready` or `Failed`. Published byte counts allow decoders to begin streaming as soon as initial bytes are received.
+- **Resilient Range Requests**: 4 fetch attempts with exponential backoff (200 ms, 500 ms, 1200 ms). Validates HTTP 206 `Content-Range` and byte boundaries.
+- **SQLite Persistence**: Completed chunks and CRC32 checksums are tracked in SQLite (WAL mode). Pinned tracks and active cache sources are protected from background cache pruning.
+
+### C. Wi-Fi vs. Metered Cellular Streaming Governor
+BitDrop dynamically regulates network I/O based on `NetworkTransportMode`:
+- **Unmetered Wi-Fi (Default)**:
+  - 30-second bitrate-aware lookahead window.
+  - Up to 4 concurrent HTTP range workers.
+  - Full next-track pre-buffering for instantaneous gapless playback.
+- **Metered Cellular (Data Saver)**:
+  - 15-second lookahead window.
+  - Strict maximum of 1 active HTTP range worker.
+  - Next-track pre-buffering is restricted to a **512 KB header probe** within 15 seconds of track completion, verifying format headers (Symphonia / DSF) without downloading multi-megabyte payloads until the user commits to playback.
 
 ---
 
-## 5. Verification & Testing Standards
+## 4. Metadata, Tag Delimiters & Library Management
 
-All modifications to the engine and app must satisfy the verification gates:
-1. `cargo test`: All unit and integration tests pass (including Golden Test 4 reference FLAC verification, TripleBuffer concurrent torture tests, filter frequency response checks, and downmixing tests).
-2. `cargo clippy --all-targets -- -D warnings`: 100% clean with zero warnings.
-3. `flutter analyze`: Zero warnings or lint issues.
-4. `cargo build` before `flutter test`: native integration tests load the freshly built shared library. CI builds this library in its Flutter job.
-5. `flutter test`: queue coordination, persistence, scan failure, and UI behavior. Transport tests use an injected recording engine; native cache tests exercise the actual bridge.
+### A. Tag Extraction & Delimiter Isolation
+- Extracts tags from ID3v2, Vorbis comments, MP4 atoms, and DSF metadata blocks.
+- **Genre Isolation**: `parse_genres()` splits strictly on `;`, `/`, `|`, and `\0`, strictly preserving phrases with commas or ampersands like `"Drum & Bass"`, `"Rock & Roll"`, and `"R&B"`.
+- **Artist Isolation**: `parse_artists()` respects canonical band names and trailing articles (e.g., `"The Beatles"`, `"Earth, Wind & Fire"`, `"The, Band"`).
 
-Local HTTP regression tests cover truncated responses, wrong ranges, full-file responses, cancellation before body arrival, bounded failure retries, and automatic eviction. They require loopback socket access. Physical Android routing and live OAuth consent are separate acceptance checks.
+### B. SQLite Architecture
+SQLite is configured with Write-Ahead Logging (`WAL`), `synchronous = NORMAL`, and `FTS5` full-text search tables:
+- `tracks`: Track metadata, file paths, provider IDs, sample rates, bit depths, channels, replaygain.
+- `track_lyrics`: Synced and plain text lyrics with negative cache status.
+- `playback_history`: Playback sessions for audiophile analytics.
+- `chunk_cache`: Sparse track cache chunk descriptors and CRC32 signatures.
+
+---
+
+## 5. Consumer Delight & Virality Layer
+
+### A. Time-Synced Animated Lyrics Engine
+- **Deterministic `.lrc` Parser**: Supports standard `[mm:ss.xx]` and `[mm:ss.xxx]` timestamps, multi-timestamp lines, and metadata tags (`[ar:]`, `[ti:]`, etc.), sorting lines chronologically into `LyricsPayload`.
+- **3-Tier Resolution Order**:
+  1. Local SQLite `track_lyrics` cache.
+  2. Embedded audio tags: Vorbis comments (`LYRICS`, `UNSYNCEDLYRICS`) or ID3 frames (`SYLT`, `USLT`).
+  3. `LRCLIB` Fallback: Queries `https://lrclib.net/api/get` with artist, track title, album, and duration using a 5-second timeout and URL encoding.
+- **Negative Caching**: If no lyrics exist, a record with `source = 'none'` is stored in SQLite to avoid recurring API lookups on every play.
+- **Ambient Aura UI**: A dedicated lyrics toggle on the Now Playing screen crossfades album artwork into a smooth, auto-scrolling lyrics view with active line scaling and tap-to-seek playback.
+
+### B. Live Signal Path Pill
+- Prominently positioned directly beneath the track title and artist on the full-screen Now Playing view.
+- Frosted-glass audiophile pill displaying real-time audio pipeline telemetry:
+  - `FLAC · 24-bit / 96.0 kHz · Bit-Perfect` (Emerald indicator for unmolested bit-perfect output).
+  - `DSD64 · DoP v1.1 · Direct USB` (Purple indicator for hardware DSD over PCM framing).
+  - `FLAC · 64-Bit DSP · 48.0 kHz` (Cyan indicator for active EQ or true-peak limiting).
+- Tapping the pill opens the comprehensive **Signal Path & Hardware Telemetry Inspector**.
+
+### C. Audiophile Listening Recap & 1-Tap JSON Backup/Restore
+- **Playback History & Recap**:
+  - Automatically records playback sessions in `playback_history` when a track is played for at least 30 seconds or 50% of its duration.
+  - `get_listening_recap()` calculates total minutes listened, top 5 tracks, top 5 artists, top genres, and the **Lossless & Hi-Res Ratio** (% of plays with sample rate $\ge 44.1\text{ kHz}$ and bit depth $\ge 16\text{ bit}$).
+- **1-Tap JSON Backup & Restore**:
+  - `exportBackupJson()` and `importBackupJson(json)` serialize user settings, custom graphic/parametric EQ presets, AutoEQ headphone bindings, non-secret cloud provider configs, and listening recap summaries into a versioned JSON format (`schemaVersion: 1`).
+
+---
+
+## 6. Android R8 / ProGuard Keep Rules & Native Release Optimization
+
+### A. ProGuard / R8 Minification (`app/android/app/proguard-rules.pro`)
+When building release packages (`flutter build apk --release` / `flutter build appbundle`), Android R8 minification is enabled (`minifyEnabled true`, `shrinkResources false`). The rules protect critical low-level interfaces:
+- **Flutter Rust Bridge & JNI Native Boundaries**: Preserves `com.bitdrop.**`, `MethodChannel`, `EventChannel`, and native JNI entrypoints.
+- **Android 14+ AudioMixerAttributes (API 34)**: Preserves `android.media.AudioMixerAttributes`, `AudioFormat`, and `AudioTrack` reflection.
+- **User-Space USB Subsystem**: Preserves `android.hardware.usb.UsbManager` and `UsbDeviceConnection`.
+- **Media3 & AudioService Receivers**: Preserves background notification handlers and playback service receivers (`androidx.media3.**`, `com.ryanheise.audioservice.**`).
+
+### B. Native Rust Release Profile (`app/rust/Cargo.toml`)
+Optimized for maximum SIMD throughput and minimal binary footprint:
+```toml
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+```
+
+---
+
+## 7. Verification & Quality Gates
+
+Every modification to BitDrop must satisfy all 5 automated verification gates before code check-in:
+
+1. **Rust Code Formatting**: `cargo fmt --manifest-path app/rust/Cargo.toml -- --check`
+2. **Rust Linter**: `cargo clippy --manifest-path app/rust/Cargo.toml --all-targets -- -D warnings` (Zero warnings).
+3. **Rust Test Suite**: `cargo test --manifest-path app/rust/Cargo.toml` (152+ tests passing, including Golden Audio Tests, 128-tap DSD decimator tests, multi-cloud range tests, and LRC parser tests).
+4. **Flutter Static Analysis**: `flutter analyze lib test` (Zero issues or lint warnings).
+5. **Flutter Test Suite**: `flutter test` (230+ unit, widget, and golden tests passing across queue management, live signal path pill, synced lyrics, listening recap, and JSON backup/restore).

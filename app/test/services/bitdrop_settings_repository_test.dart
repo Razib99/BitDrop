@@ -59,6 +59,14 @@ void main() {
       );
       expect(repo.currentSettings.directUsbDriver, isTrue);
       expect(lastNotifiedSettings?.directUsbDriver, isTrue);
+
+      await repo.handleSetSetting(
+        const SetSetting(key: 'conserveCellularData', value: true),
+      );
+      expect(repo.currentSettings.conserveCellularData, isTrue);
+      expect(repo.currentSettings.networkTransportMode,
+          equals(NetworkTransportMode.meteredCellular));
+      expect(lastNotifiedSettings?.conserveCellularData, isTrue);
     });
 
     test('handleSetSafetyAttenuation updates safety settings', () async {

@@ -11,6 +11,7 @@ import '../core_live/parametric_eq_parser.dart';
 import '../core_live/persistence_codec.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
 import '../src/rust/api/cloud_library.dart' as rust_cache;
+import '../src/rust/cloud/media_source.dart' as rust_media;
 import '../util/biquad.dart';
 
 /// Manages and persists user preferences, EQ presets, AutoEQ profiles,
@@ -78,7 +79,10 @@ class BitDropSettingsRepository {
         final loadedSettings =
             PersistenceCodec.deserializeAppSettings(settingsJson);
         _settings.add(loadedSettings);
+        syncNetworkTransportMode(loadedSettings.networkTransportMode);
         onSettingsChanged?.call(loadedSettings);
+      } else {
+        syncNetworkTransportMode(_settings.value.networkTransportMode);
       }
     } catch (e) {
       debugPrint('[persistence] failed to restore app settings: $e');
@@ -306,9 +310,21 @@ class BitDropSettingsRepository {
     onEqChanged?.call(eqState);
   }
 
+  void syncNetworkTransportMode(NetworkTransportMode mode) {
+    try {
+      final rustMode = mode == NetworkTransportMode.meteredCellular
+          ? rust_media.NetworkTransportMode.meteredCellular
+          : rust_media.NetworkTransportMode.unmeteredWifi;
+      rust.engineSetNetworkTransportMode(mode: rustMode);
+    } catch (_) {}
+  }
+
   Future<void> handleSetSetting(SetSetting cmd) async {
     final updated = _settings.value.withKey(cmd.key, cmd.value);
     _settings.add(updated);
+    if (cmd.key == 'conserveCellularData' || cmd.key == 'networkTransportMode') {
+      syncNetworkTransportMode(updated.networkTransportMode);
+    }
     await saveSettings();
     onSettingsChanged?.call(updated);
   }

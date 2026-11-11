@@ -6,7 +6,7 @@ use std::cmp;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use symphonia::core::io::MediaSource;
 
@@ -104,6 +104,8 @@ fn validate_range_response(
 
 pub const CHUNK_SIZE: u64 = 2 * 1024 * 1024; // 2 MB logical chunk unit
 pub const DEFAULT_LOOKAHEAD_SECS: u64 = 30; // 30-second rolling runway lookahead
+pub const CELLULAR_LOOKAHEAD_SECS: u64 = 15; // 15-second rolling runway on metered cellular
+pub const CELLULAR_HEADER_PROBE_BYTES: u64 = 512 * 1024; // 512 KB header probe
 
 /// How many byte-range fetches are in flight right now.
 pub static FETCHES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
@@ -186,11 +188,56 @@ pub fn set_measured_throughput_bps(bps: u64) {
     MEASURED_THROUGHPUT_BPS.store(bps, Ordering::Relaxed);
 }
 
-/// Dynamic concurrency limit based on network throughput:
-/// - Slow / cellular (< 2 MB/s): 2 concurrent fetches
-/// - Standard broadband (2 - 8 MB/s): 3 concurrent fetches
-/// - High-speed Wi-Fi / gigabit (> 8 MB/s): 4 concurrent fetches
+/// Network transport mode for streaming governor:
+/// - UnmeteredWi-Fi (default): 30s read-ahead window, up to 4 parallel HTTP range workers, full next-track pre-buffering.
+/// - MeteredCellular (data saver): 15s read-ahead window, max 1 HTTP range worker at a time, next-track pre-buffering
+///   restricted to header probe only (512 KB) within 15 seconds of EOF.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NetworkTransportMode {
+    UnmeteredWifi = 0,
+    MeteredCellular = 1,
+}
+
+static NETWORK_TRANSPORT_MODE: AtomicU8 = AtomicU8::new(NetworkTransportMode::UnmeteredWifi as u8);
+static CURRENT_PLAYBACK_POS_MS: AtomicU32 = AtomicU32::new(0);
+static CURRENT_PLAYBACK_DUR_MS: AtomicU32 = AtomicU32::new(0);
+
+pub fn set_network_transport_mode(mode: NetworkTransportMode) {
+    NETWORK_TRANSPORT_MODE.store(mode as u8, Ordering::Release);
+}
+
+pub fn get_network_transport_mode() -> NetworkTransportMode {
+    match NETWORK_TRANSPORT_MODE.load(Ordering::Acquire) {
+        1 => NetworkTransportMode::MeteredCellular,
+        _ => NetworkTransportMode::UnmeteredWifi,
+    }
+}
+
+pub fn set_current_track_playback_progress(position_ms: u32, duration_ms: u32) {
+    CURRENT_PLAYBACK_POS_MS.store(position_ms, Ordering::Relaxed);
+    CURRENT_PLAYBACK_DUR_MS.store(duration_ms, Ordering::Relaxed);
+}
+
+pub fn is_current_track_within_eof(within_ms: u32) -> bool {
+    let dur = CURRENT_PLAYBACK_DUR_MS.load(Ordering::Relaxed);
+    let pos = CURRENT_PLAYBACK_POS_MS.load(Ordering::Relaxed);
+    if dur == 0 {
+        return false;
+    }
+    pos.saturating_add(within_ms) >= dur
+}
+
+/// Dynamic concurrency limit based on network transport mode and throughput:
+/// - Metered Cellular: 1 worker max
+/// - Unmetered Wi-Fi:
+///   - Slow (< 2 MB/s): 2 concurrent fetches
+///   - Standard broadband (2 - 8 MB/s): 3 concurrent fetches
+///   - High-speed Wi-Fi / gigabit (> 8 MB/s): 4 concurrent fetches
 pub fn current_concurrency_limit() -> usize {
+    if get_network_transport_mode() == NetworkTransportMode::MeteredCellular {
+        return 1;
+    }
     let bps = MEASURED_THROUGHPUT_BPS.load(Ordering::Relaxed);
     if bps < 2_000_000 {
         2
@@ -431,6 +478,7 @@ pub struct SparseTrackCache {
     pub lookahead_secs: AtomicU64,
     pub current_position: AtomicU64,
     pub fetch_ctx: parking_lot::Mutex<Option<FetchContext>>,
+    pub is_prebuffer: AtomicBool,
 }
 
 impl SparseTrackCache {
@@ -488,6 +536,7 @@ impl SparseTrackCache {
             lookahead_secs: AtomicU64::new(DEFAULT_LOOKAHEAD_SECS),
             current_position: AtomicU64::new(0),
             fetch_ctx: parking_lot::Mutex::new(None),
+            is_prebuffer: AtomicBool::new(false),
         });
 
         // 1. Query SQLite for cached chunks belonging to this file_id
@@ -633,14 +682,39 @@ impl SparseTrackCache {
             return;
         }
 
+        let mode = get_network_transport_mode();
+
+        // Under MeteredCellular, next-track pre-buffering is restricted to within 15 seconds of EOF
+        if mode == NetworkTransportMode::MeteredCellular
+            && self.is_prebuffer.load(Ordering::Relaxed)
+        {
+            let within_15s_eof = is_current_track_within_eof(15_000);
+            if !within_15s_eof {
+                return;
+            }
+        }
+
         let current_pos = self.current_position.load(Ordering::Relaxed);
         let byte_rate = self.nominal_byte_rate.load(Ordering::Relaxed);
-        let lookahead = self.lookahead_secs.load(Ordering::Relaxed);
+
+        let lookahead = match mode {
+            NetworkTransportMode::UnmeteredWifi => self
+                .lookahead_secs
+                .load(Ordering::Relaxed)
+                .max(DEFAULT_LOOKAHEAD_SECS),
+            NetworkTransportMode::MeteredCellular => CELLULAR_LOOKAHEAD_SECS,
+        };
 
         let runway_bytes = byte_rate.saturating_mul(lookahead).max(2 * CHUNK_SIZE);
-        let target_byte = current_pos
+        let mut target_byte = current_pos
             .saturating_add(runway_bytes)
             .min(self.total_size);
+
+        if mode == NetworkTransportMode::MeteredCellular
+            && self.is_prebuffer.load(Ordering::Relaxed)
+        {
+            target_byte = target_byte.min(CELLULAR_HEADER_PROBE_BYTES);
+        }
 
         let current_chunk = (current_pos / CHUNK_SIZE) as usize;
         let target_chunk = if target_byte > 0 {
@@ -658,7 +732,14 @@ impl SparseTrackCache {
             }
 
             let chunk_start = idx as u64 * CHUNK_SIZE;
-            let chunk_len = ((self.total_size - chunk_start).min(CHUNK_SIZE)) as u32;
+            let mut chunk_len = ((self.total_size - chunk_start).min(CHUNK_SIZE)) as u32;
+
+            if mode == NetworkTransportMode::MeteredCellular
+                && self.is_prebuffer.load(Ordering::Relaxed)
+            {
+                chunk_len = chunk_len.min(CELLULAR_HEADER_PROBE_BYTES as u32);
+            }
+
             let written = self.chunk_written_bytes[idx].load(Ordering::Acquire);
 
             if written < chunk_len {
@@ -769,7 +850,12 @@ impl SparseTrackCache {
 
     async fn fetch_attempt(&self, idx: usize, ctx: &FetchContext) -> Result<()> {
         let start = idx as u64 * CHUNK_SIZE;
-        let len = (self.total_size - start).min(CHUNK_SIZE) as u32;
+        let mut len = (self.total_size - start).min(CHUNK_SIZE) as u32;
+        if get_network_transport_mode() == NetworkTransportMode::MeteredCellular
+            && self.is_prebuffer.load(Ordering::Relaxed)
+        {
+            len = len.min(CELLULAR_HEADER_PROBE_BYTES as u32);
+        }
         // Resume only after bytes that were actually written; retries never overwrite
         // bytes that have already been published to the decoder.
         let mut written = self.chunk_written_bytes[idx].load(Ordering::Acquire);
@@ -902,6 +988,27 @@ impl CloudMediaSource {
         total_size: u64,
         cache_dir: PathBuf,
     ) -> Result<Self> {
+        Self::new_internal(file_id, url, auth_token, total_size, cache_dir, false)
+    }
+
+    pub fn new_prebuffer(
+        file_id: String,
+        url: String,
+        auth_token: Option<String>,
+        total_size: u64,
+        cache_dir: PathBuf,
+    ) -> Result<Self> {
+        Self::new_internal(file_id, url, auth_token, total_size, cache_dir, true)
+    }
+
+    fn new_internal(
+        file_id: String,
+        url: String,
+        auth_token: Option<String>,
+        total_size: u64,
+        cache_dir: PathBuf,
+        is_prebuffer: bool,
+    ) -> Result<Self> {
         fs::create_dir_all(&cache_dir)?;
         let sparse_path = cache_dir.join(format!("{}.sparse", file_id));
         let index_path = cache_dir.join(format!("{}.idx", file_id));
@@ -928,6 +1035,7 @@ impl CloudMediaSource {
                 cache
             }
         };
+        cache.is_prebuffer.store(is_prebuffer, Ordering::Release);
         cache.readers.fetch_add(1, Ordering::Relaxed);
         cache.retry_failed_chunks();
 
@@ -1405,6 +1513,7 @@ mod tests {
 
     #[test]
     fn test_throughput_concurrency_scaling() {
+        set_network_transport_mode(NetworkTransportMode::UnmeteredWifi);
         // Slow throughput: < 2 MB/s
         set_measured_throughput_bps(1_500_000);
         assert_eq!(current_concurrency_limit(), 2);
@@ -1569,6 +1678,84 @@ mod tests {
             use std::os::unix::fs::MetadataExt;
             assert!(meta_after.blocks() <= meta_before.blocks());
         }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_network_transport_mode_scheduler_parameters() {
+        // 1. Default is UnmeteredWifi
+        set_network_transport_mode(NetworkTransportMode::UnmeteredWifi);
+        assert_eq!(
+            get_network_transport_mode(),
+            NetworkTransportMode::UnmeteredWifi
+        );
+
+        // High throughput on Wi-Fi: concurrency limit is 4
+        set_measured_throughput_bps(12_000_000);
+        assert_eq!(current_concurrency_limit(), 4);
+
+        // 2. Switch to MeteredCellular
+        set_network_transport_mode(NetworkTransportMode::MeteredCellular);
+        assert_eq!(
+            get_network_transport_mode(),
+            NetworkTransportMode::MeteredCellular
+        );
+
+        // Concurrency limit is strictly 1 on metered cellular, even with high measured throughput
+        assert_eq!(current_concurrency_limit(), 1);
+
+        // 3. Verify next-track pre-buffering restrictions under MeteredCellular
+        let temp_dir =
+            std::env::temp_dir().join(format!("bitdrop_test_net_sched_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_id = "test_cellular_prebuffer";
+        let sparse_path = temp_dir.join(format!("{}.sparse", file_id));
+        let index_path = temp_dir.join(format!("{}.idx", file_id));
+        let total_size = 20 * 1024 * 1024; // 20 MB
+
+        let cache =
+            SparseTrackCache::new_with_db(file_id, &sparse_path, &index_path, total_size, None)
+                .unwrap();
+
+        // Mark as prebuffer track
+        cache.is_prebuffer.store(true, Ordering::Release);
+
+        // Case A: Playing track is not within 15s of EOF (pos = 10s, dur = 100s)
+        set_current_track_playback_progress(10_000, 100_000);
+        assert!(!is_current_track_within_eof(15_000));
+
+        // Attempt read-ahead: should be blocked by MeteredCellular prebuffer guard
+        cache.schedule_read_ahead();
+        assert_eq!(
+            cache.chunk_states[0].load(Ordering::Acquire),
+            ChunkState::Idle as u8,
+            "Next track prebuffer should not start fetching until within 15s of EOF"
+        );
+
+        // Case B: Playing track reaches within 15s of EOF (pos = 90s, dur = 100s)
+        set_current_track_playback_progress(90_000, 100_000);
+        assert!(is_current_track_within_eof(15_000));
+
+        // Mathematical check on runway under MeteredCellular
+        let byte_rate = cache.nominal_byte_rate.load(Ordering::Relaxed);
+        let lookahead = CELLULAR_LOOKAHEAD_SECS;
+        let runway_bytes = byte_rate.saturating_mul(lookahead).max(2 * CHUNK_SIZE);
+        let mut target_byte = runway_bytes.min(total_size);
+        if cache.is_prebuffer.load(Ordering::Relaxed) {
+            target_byte = target_byte.min(CELLULAR_HEADER_PROBE_BYTES);
+        }
+        assert_eq!(
+            target_byte,
+            512 * 1024,
+            "Prebuffer on cellular must clamp to 512 KB header probe"
+        );
+
+        // 4. Reset mode back to UnmeteredWifi for test suite cleanliness
+        set_network_transport_mode(NetworkTransportMode::UnmeteredWifi);
+        assert_eq!(current_concurrency_limit(), 4);
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

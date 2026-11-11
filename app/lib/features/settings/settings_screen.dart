@@ -249,6 +249,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             },
             onChanged: (v) => _set('mobileDataPolicy', v),
           ),
+          SwitchSettingsTile(
+            title: 'Conserve Data on Cellular Networks',
+            subtitle: s.conserveCellularData
+                ? 'Data saver active: 15s buffer, 1 worker, header-only prefetch'
+                : 'Standard: 30s buffer, up to 4 parallel workers, full prefetch',
+            value: s.conserveCellularData,
+            onChanged: (v) => _set('conserveCellularData', v),
+          ),
           ChoiceSettingsTile<PrefetchPolicy>(
             title: 'Prefetch next tracks',
             subtitle: 'Fetching ahead makes gapless work and hides network '
