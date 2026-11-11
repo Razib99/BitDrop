@@ -36,3 +36,6 @@
 -keep class io.flutter.util.** { *; }
 -keep class io.flutter.view.** { *; }
 -keep class io.flutter.** { *; }
+
+# 6. Google Play Core & Deferred Components (optional dependencies)
+-dontwarn com.google.android.play.core.**
