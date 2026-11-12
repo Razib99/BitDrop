@@ -31,6 +31,64 @@ Uncompressed hi-res music libraries (24-bit/96 kHz to 192 kHz FLAC/WAV and 1-bit
 
 ---
 
+## 📸 App Interface Showcase
+
+<div align="center">
+  <table>
+    <tr>
+      <td width="25%" align="center">
+        <b>Home & Discovery</b><br/>
+        <a href="docs/screenshots/01_home.png"><img src="docs/screenshots/01_home.png" width="100%" alt="Home Screen" /></a>
+        <br/><sub>Format chips & recent vaults</sub>
+      </td>
+      <td width="25%" align="center">
+        <b>Now Playing</b><br/>
+        <a href="docs/screenshots/02_now_playing.png"><img src="docs/screenshots/02_now_playing.png" width="100%" alt="Now Playing" /></a>
+        <br/><sub>Live bitrates & route badges</sub>
+      </td>
+      <td width="25%" align="center">
+        <b>10-Band Graphic EQ</b><br/>
+        <a href="docs/screenshots/03_equalizer_graphic.png"><img src="docs/screenshots/03_equalizer_graphic.png" width="100%" alt="Graphic EQ" /></a>
+        <br/><sub>ISO center faders & true bypass</sub>
+      </td>
+      <td width="25%" align="center">
+        <b>AutoEQ Database</b><br/>
+        <a href="docs/screenshots/04_autoeq_browser.png"><img src="docs/screenshots/04_autoeq_browser.png" width="100%" alt="AutoEQ Browser" /></a>
+        <br/><sub>4,900+ calibrated IEM profiles</sub>
+      </td>
+    </tr>
+    <tr>
+      <td width="25%" align="center">
+        <b>Signal Path Inspector</b><br/>
+        <a href="docs/screenshots/05_signal_path.png"><img src="docs/screenshots/05_signal_path.png" width="100%" alt="Signal Path" /></a>
+        <br/><sub>End-to-end hardware chain</sub>
+      </td>
+      <td width="25%" align="center">
+        <b>Cloud & Sparse Cache</b><br/>
+        <a href="docs/screenshots/06_sources_cloud.png"><img src="docs/screenshots/06_sources_cloud.png" width="100%" alt="Cloud Sources" /></a>
+        <br/><sub>Google Drive & 2 MiB cache</sub>
+      </td>
+      <td width="25%" align="center">
+        <b>Lossless Library</b><br/>
+        <a href="docs/screenshots/07_library_albums.png"><img src="docs/screenshots/07_library_albums.png" width="100%" alt="Lossless Library" /></a>
+        <br/><sub>FLAC 24/192 album grid</sub>
+      </td>
+      <td width="25%" align="center">
+        <b>Direct USB DAC Stream</b><br/>
+        <br/>
+        <p align="center">
+          ⚡ <b>Bit-Exact SHA-256</b><br/>
+          🎛️ <b>f64 Biquads</b><br/>
+          🛡️ <b>True-Peak Limiting</b><br/>
+          ☁️ <b>Zero Middleman</b>
+        </p>
+      </td>
+    </tr>
+  </table>
+</div>
+
+---
+
 ## ✨ Key Features in v1.0.0
 
 ### ☁️ Multi-Cloud & Local Storage Architecture
