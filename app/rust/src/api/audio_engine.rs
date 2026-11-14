@@ -2158,8 +2158,14 @@ pub fn engine_output_state() -> EngineOutputState {
         .as_ref()
         .map_or(false, |specs| specs.iter().any(|s| s.gain_db.abs() > 0.01));
     let has_graphic_gains = state.eq_gains.iter().any(|g| g.abs() > 0.01);
-    let dsp_active =
+    let eq_altering =
         state.eq_enabled && (has_custom_specs || has_graphic_gains || state.eq_preamp.abs() > 0.01);
+    let stage_altering = state.replay_gain_db.abs() > 0.01
+        || state.crossfeed_preset != CROSSFEED_OFF
+        || state.balance.abs() > 0.01
+        || state.mono;
+    let dsp_active =
+        !crate::dsp::DOP_BYPASS_LOCKOUT.load(Ordering::Acquire) && (eq_altering || stage_altering);
 
     EngineOutputState {
         source_codec: state.source_codec.clone(),
@@ -3316,6 +3322,9 @@ mod tests {
             assert_eq!(snap.crossfeed_preset, CROSSFEED_JAN_MEIER);
         }
 
+        // Engine output diagnostics must reflect decoupled stages even while EQ is bypassed
+        assert!(engine_output_state().dsp_active);
+
         // Calling engine_set_eq must preserve ReplayGain and crossfeed settings
         engine_set_eq(vec![0.0; 13]);
         {
@@ -3346,5 +3355,6 @@ mod tests {
             assert_eq!(snap3.track_peak, 1.0);
             assert_eq!(snap3.crossfeed_preset, CROSSFEED_OFF);
         }
+        assert!(!engine_output_state().dsp_active);
     }
 }

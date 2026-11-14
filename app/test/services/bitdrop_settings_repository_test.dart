@@ -3,7 +3,9 @@ import 'package:bitdrop/core_api/commands.dart';
 import 'package:bitdrop/core_api/enums.dart';
 import 'package:bitdrop/core_api/models.dart';
 import 'package:bitdrop/core_api/settings.dart';
+import 'package:bitdrop/core_live/persistence_codec.dart';
 import 'package:bitdrop/services/bitdrop_settings_repository.dart';
+import 'package:bitdrop/src/rust/api/audio_engine.dart' as rust_audio;
 import 'package:bitdrop/src/rust/frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -148,6 +150,32 @@ void main() {
       expect(repo.currentEq.replayGain, equals(ReplayGainMode.album));
       expect(repo.currentEq.replayGainPreampDb, equals(-1.5));
       expect(repo.currentSettings.replayGain, equals(ReplayGainMode.album));
+    });
+
+    test('handleSetCrossfeed updates eq, engine dsp_active, and persists',
+        () async {
+      // Ensure EQ is bypassed and ReplayGain is off before toggling crossfeed.
+      await repo.handleSetBypass(const SetBypass(true));
+      await repo.handleSetReplayGain(
+        const SetReplayGain(mode: ReplayGainMode.off, preampDb: 0.0),
+      );
+      await repo.handleSetCrossfeed(const SetCrossfeed(CrossfeedPreset.chuMoy));
+
+      expect(repo.currentEq.crossfeed, equals(CrossfeedPreset.chuMoy));
+      expect(repo.currentEq.isActive, isTrue);
+      expect(
+        BitDropSettingsRepository.describeDspChain(repo.currentEq),
+        contains('BS2B Crossfeed (Chu Moy)'),
+      );
+      expect(rust_audio.engineOutputState().dspActive, isTrue);
+
+      final roundTripped = PersistenceCodec.deserializeEqState(
+        PersistenceCodec.serializeEqState(repo.currentEq),
+      );
+      expect(roundTripped.crossfeed, equals(CrossfeedPreset.chuMoy));
+
+      await repo.handleSetCrossfeed(const SetCrossfeed(CrossfeedPreset.off));
+      expect(rust_audio.engineOutputState().dspActive, isFalse);
     });
 
     test('handleAssignEqToDevice links profile to device', () async {

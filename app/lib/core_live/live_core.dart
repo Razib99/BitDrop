@@ -23,7 +23,6 @@ import '../services/bitdrop_settings_repository.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
 import '../src/rust/api/cloud_library.dart' as rust_cache;
 import '../src/rust/api/simple.dart' as rust_simple;
-import '../util/biquad.dart';
 
 class LiveBitDropCore implements BitDropCore {
   final BitDropAudioHandler _audioHandler;
@@ -160,6 +159,7 @@ class LiveBitDropCore implements BitDropCore {
           currentTrackProvider: () => _nowPlaying.value?.track,
           cloudProvider: () => _cloud,
           isDirectUsbDriverEnabled: () => _settings.value.directUsbDriver,
+          eqStateProvider: () => _eq.value,
         );
     try {
       rust.initEngine();
@@ -358,73 +358,7 @@ class LiveBitDropCore implements BitDropCore {
 
   void _pushEqToEngine([EqState? state]) {
     final eqState = state ?? _eq.value;
-
-    // Element 11 (index 10): effective preamp including ReplayGain
-    double effectivePreamp = eqState.preampDb;
-    if (eqState.replayGain != ReplayGainMode.off) {
-      final currentTrack = _nowPlaying.value?.track;
-      if (currentTrack?.replayGainDb != null) {
-        effectivePreamp += currentTrack!.replayGainDb!;
-      } else {
-        effectivePreamp += eqState.replayGainPreampDb;
-      }
-    }
-
-    final balance = eqState.balance;
-    final mono = eqState.mono ? 1.0 : 0.0;
-
-    final List<double> enginePayload;
-
-    if (eqState.mode == EqMode.simple) {
-      final toneBands = Biquad.fromTone(eqState.bassDb, eqState.trebleDb);
-      enginePayload = [
-        -999.0,
-        toneBands.length.toDouble(),
-        for (final b in toneBands) ...[
-          b.type.index.toDouble(),
-          b.frequencyHz,
-          b.gainDb,
-          b.q,
-        ],
-        effectivePreamp,
-        balance,
-        mono,
-      ];
-    } else if (eqState.mode == EqMode.parametric) {
-      final activeBands = eqState.bands.where((b) => b.enabled).toList();
-      enginePayload = [
-        -999.0,
-        activeBands.length.toDouble(),
-        for (final b in activeBands) ...[
-          b.type.index.toDouble(),
-          b.frequencyHz,
-          b.gainDb,
-          b.q,
-        ],
-        effectivePreamp,
-        balance,
-        mono,
-      ];
-    } else {
-      // EqMode.graphic
-      final gains = eqState.graphicGains.isNotEmpty
-          ? List<double>.from(eqState.graphicGains.take(10))
-          : List.filled(10, 0.0);
-      while (gains.length < 10) {
-        gains.add(0.0);
-      }
-      enginePayload = [
-        ...gains,
-        effectivePreamp,
-        balance,
-        mono,
-      ];
-    }
-
-    try {
-      rust.engineSetEq(gains: enginePayload);
-      rust.engineSetEqEnabled(enabled: !eqState.bypass);
-    } catch (_) {}
+    _settingsRepo.pushEqSnapshotToEngine(eqState);
     _recomputeSignalPath();
   }
 
@@ -1937,6 +1871,14 @@ class LiveBitDropCore implements BitDropCore {
       _settings.add(updated);
       _settingsRepo.syncFromLiveState(settings: updated);
       unawaited(_saveSettings());
+      if (cmd.key == 'replayGain' && cmd.value is ReplayGainMode) {
+        final updatedEq =
+            _eq.value.copyWith(replayGain: cmd.value as ReplayGainMode);
+        _eq.add(updatedEq);
+        _settingsRepo.syncFromLiveState(eq: updatedEq);
+        unawaited(_saveEqState());
+        _recomputeSignalPath();
+      }
       if (cmd.key == 'directUsbDriver') {
         unawaited(_handleDirectUsbDriverSetting(cmd.value as bool));
       }
@@ -2001,6 +1943,13 @@ class LiveBitDropCore implements BitDropCore {
       );
       unawaited(_saveEqState());
       unawaited(_saveSettings());
+      _recomputeSignalPath();
+    } else if (cmd is SetCrossfeed) {
+      final updatedEq = _eq.value.copyWith(crossfeed: cmd.preset);
+      _eq.add(updatedEq);
+      _settingsRepo.syncFromLiveState(eq: updatedEq);
+      unawaited(_saveEqState());
+      _recomputeSignalPath();
     } else if (cmd is AssignEqToDevice) {
       final currentDev = _outputProbe.current;
       final devName = currentDev?.id == cmd.deviceId
@@ -2192,8 +2141,10 @@ class LiveBitDropCore implements BitDropCore {
       ));
     }
 
-    final dspChain = <String>[];
-    if (dsp) dspChain.add('Equaliser');
+    final dspChain = BitDropSettingsRepository.describeDspChain(
+      _eq.value,
+      engineDspActive: dsp,
+    );
 
     _signalPath.add(SignalPath(
       tier: tier,

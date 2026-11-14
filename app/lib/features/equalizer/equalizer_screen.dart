@@ -539,6 +539,29 @@ class _DspSection extends ConsumerWidget {
             ],
           ),
         ),
+        ListTile(
+          leading: const Icon(Icons.headphones),
+          title: const Text('BS2B Crossfeed'),
+          subtitle: Text(
+            bitPerfectPossible
+                ? 'Reduces extreme headphone stereo fatigue. $note'
+                : '64-bit binaural headphone staging without EQ coloration.',
+          ),
+          trailing: DropdownButton<CrossfeedPreset>(
+            value: eq.crossfeed,
+            underline: const SizedBox.shrink(),
+            onChanged: (v) {
+              if (v != null) sendCommand(ref, SetCrossfeed(v));
+            },
+            items: [
+              for (final preset in CrossfeedPreset.values)
+                DropdownMenuItem(
+                  value: preset,
+                  child: Text(preset.shortLabel),
+                ),
+            ],
+          ),
+        ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
           child: Column(

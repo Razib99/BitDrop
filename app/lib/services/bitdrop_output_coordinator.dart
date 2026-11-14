@@ -7,6 +7,7 @@ import '../core_api/models.dart';
 import '../core_live/cloud_library.dart';
 import '../core_live/output_device.dart';
 import '../src/rust/api/audio_engine.dart' as rust;
+import 'bitdrop_settings_repository.dart';
 
 /// Coordinates hardware output device probing, routing lifecycle changes
 /// (earphone disconnect, noisy audio, interruptions), UAC2 direct USB mode,
@@ -26,6 +27,7 @@ class BitDropOutputCoordinator {
   Track? Function()? currentTrackProvider;
   CloudLibrary? Function()? cloudProvider;
   bool Function()? isDirectUsbDriverEnabled;
+  EqState? Function()? eqStateProvider;
 
   static const _unknownPath = SignalPath(
     tier: OutputTier.unknown,
@@ -47,6 +49,7 @@ class BitDropOutputCoordinator {
     this.currentTrackProvider,
     this.cloudProvider,
     this.isDirectUsbDriverEnabled,
+    this.eqStateProvider,
   }) : _outputProbe = outputProbe ?? OutputDeviceProbe();
 
   Stream<OutputDevice?> get outputDevice => _outputProbe.stream;
@@ -244,8 +247,10 @@ class BitDropOutputCoordinator {
       ));
     }
 
-    final dspChain = <String>[];
-    if (dsp) dspChain.add('Equaliser');
+    final eqState = eqStateProvider?.call();
+    final dspChain = eqState != null
+        ? BitDropSettingsRepository.describeDspChain(eqState, engineDspActive: dsp)
+        : (dsp ? const ['Equaliser'] : const <String>[]);
 
     final cloud = cloudProvider?.call();
     final currentTrackId = track?.id ?? '';

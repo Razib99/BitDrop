@@ -244,6 +244,7 @@ class Track {
     this.tagsPending = false,
     this.unsupportedReason,
     this.replayGainDb,
+    this.trackPeak,
   });
 
   final String id;
@@ -275,6 +276,7 @@ class Track {
   final bool tagsPending;
   final String? unsupportedReason;
   final double? replayGainDb;
+  final double? trackPeak;
 
   bool get isPlayable =>
       availability != Availability.unavailable &&
@@ -312,6 +314,7 @@ class Track {
         tagsPending: tagsPending ?? this.tagsPending,
         unsupportedReason: unsupportedReason,
         replayGainDb: replayGainDb,
+        trackPeak: trackPeak,
       );
 }
 
@@ -828,6 +831,7 @@ class EqState {
     this.mono = false,
     this.replayGain = ReplayGainMode.off,
     this.replayGainPreampDb = 0,
+    this.crossfeed = CrossfeedPreset.off,
     this.targetCurve,
   });
 
@@ -852,21 +856,23 @@ class EqState {
   final bool mono;
   final ReplayGainMode replayGain;
   final double replayGainPreampDb;
+  final CrossfeedPreset crossfeed;
 
   /// AutoEQ target, drawn as an overlay when a profile is applied.
   final List<({double hz, double db})>? targetCurve;
 
   /// True when any stage would alter the samples.
   bool get isActive =>
-      !bypass &&
-      (bands.any((b) => b.enabled && b.gainDb != 0) ||
-          preampDb != 0 ||
-          bassDb != 0 ||
-          trebleDb != 0 ||
-          balance != 0 ||
-          mono ||
-          replayGain != ReplayGainMode.off ||
-          graphicGains.any((g) => g != 0));
+      (!bypass &&
+          (bands.any((b) => b.enabled && b.gainDb != 0) ||
+              preampDb != 0 ||
+              bassDb != 0 ||
+              trebleDb != 0 ||
+              balance != 0 ||
+              mono ||
+              graphicGains.any((g) => g != 0))) ||
+      replayGain != ReplayGainMode.off ||
+      crossfeed != CrossfeedPreset.off;
 
   EqState copyWith({
     EqMode? mode,
@@ -882,6 +888,7 @@ class EqState {
     bool? mono,
     ReplayGainMode? replayGain,
     double? replayGainPreampDb,
+    CrossfeedPreset? crossfeed,
     String? assignedDeviceName,
   }) =>
       EqState(
@@ -900,6 +907,7 @@ class EqState {
         mono: mono ?? this.mono,
         replayGain: replayGain ?? this.replayGain,
         replayGainPreampDb: replayGainPreampDb ?? this.replayGainPreampDb,
+        crossfeed: crossfeed ?? this.crossfeed,
         targetCurve: targetCurve,
       );
 }

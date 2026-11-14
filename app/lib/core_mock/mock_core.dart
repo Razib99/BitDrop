@@ -515,7 +515,14 @@ class MockBitDropCore implements BitDropCore {
     final actual = s.actualFor(source);
 
     final dspStages = <String>[];
-    if (eq.isActive) {
+    if (!eq.bypass &&
+        (eq.bands.any((b) => b.enabled && b.gainDb != 0) ||
+            eq.preampDb != 0 ||
+            eq.bassDb != 0 ||
+            eq.trebleDb != 0 ||
+            eq.balance != 0 ||
+            eq.mono ||
+            eq.graphicGains.any((g) => g != 0))) {
       if (eq.mode == EqMode.graphic) {
         final activeGraphic = eq.graphicGains.where((g) => g != 0).length;
         dspStages.add('EQ: Graphic ($activeGraphic bands)');
@@ -538,9 +545,12 @@ class MockBitDropCore implements BitDropCore {
         final pct = (eq.balance.abs() * 100).round();
         dspStages.add('Balance ${eq.balance < 0 ? 'L' : 'R'} $pct%');
       }
-      if (eq.replayGain != ReplayGainMode.off) {
-        dspStages.add('ReplayGain (${eq.replayGain.name})');
-      }
+    }
+    if (eq.replayGain != ReplayGainMode.off) {
+      dspStages.add('ReplayGain (${eq.replayGain.name})');
+    }
+    if (eq.crossfeed != CrossfeedPreset.off) {
+      dspStages.add('BS2B Crossfeed (${eq.crossfeed.shortLabel})');
     }
     if (s.safetyAttenuationDb != null) {
       dspStages.add('Safety attenuation ${_db(s.safetyAttenuationDb!)}');
@@ -1692,6 +1702,10 @@ class MockBitDropCore implements BitDropCore {
         _eq.emit(
             _eq.value.copyWith(replayGain: mode, replayGainPreampDb: preampDb));
         _settings.emit(_settings.value.copyWith(replayGain: mode));
+        _recomputeSignalPath();
+
+      case SetCrossfeed(:final preset):
+        _eq.emit(_eq.value.copyWith(crossfeed: preset));
         _recomputeSignalPath();
 
       case ApplyAutoEqProfile(:final profileId):

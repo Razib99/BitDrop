@@ -43,6 +43,27 @@ enum NowPlayingStyle { classic, minimal, studio }
 
 enum ReplayGainMode { off, track, album }
 
+enum CrossfeedPreset { off, defaultBs2b, chuMoy, janMeier }
+
+extension CrossfeedPresetInfo on CrossfeedPreset {
+  /// Matches Rust `CROSSFEED_*` constants in `dsp.rs`.
+  int get rustId => index;
+
+  String get shortLabel => switch (this) {
+        CrossfeedPreset.off => 'Off',
+        CrossfeedPreset.defaultBs2b => 'Default',
+        CrossfeedPreset.chuMoy => 'Chu Moy',
+        CrossfeedPreset.janMeier => 'Jan Meier',
+      };
+
+  String get label => switch (this) {
+        CrossfeedPreset.off => 'Off',
+        CrossfeedPreset.defaultBs2b => 'Default (700 Hz / 4.5 dB)',
+        CrossfeedPreset.chuMoy => 'Chu Moy (700 Hz / 6.0 dB)',
+        CrossfeedPreset.janMeier => 'Jan Meier (650 Hz / 9.5 dB)',
+      };
+}
+
 enum PlaybackErrorKind {
   network,
   unsupportedFormat,

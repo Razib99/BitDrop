@@ -152,6 +152,13 @@ void main() {
 
       final bypassed = active.copyWith(bypass: true);
       expect(bypassed.isActive, isFalse);
+
+      final rgWhenBypassed = bypassed.copyWith(replayGain: ReplayGainMode.track);
+      expect(rgWhenBypassed.isActive, isTrue);
+
+      final cfWhenBypassed =
+          bypassed.copyWith(crossfeed: CrossfeedPreset.janMeier);
+      expect(cfWhenBypassed.isActive, isTrue);
     });
 
     test('Parametric bands map to ISO center frequencies with accurate gain',

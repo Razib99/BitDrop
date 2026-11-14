@@ -21,6 +21,7 @@ abstract final class PersistenceCodec {
       'mono': eq.mono,
       'replayGain': eq.replayGain.name,
       'replayGainPreampDb': eq.replayGainPreampDb,
+      'crossfeed': eq.crossfeed.name,
       'presetName': eq.presetName,
       'assignedDeviceName': eq.assignedDeviceName,
       'bands': eq.bands
@@ -61,6 +62,10 @@ abstract final class PersistenceCodec {
               ReplayGainMode.off;
       final replayGainPreampDb =
           (map['replayGainPreampDb'] as num?)?.toDouble() ?? 0.0;
+      final cfName = map['crossfeed'] as String?;
+      final crossfeed =
+          CrossfeedPreset.values.where((e) => e.name == cfName).firstOrNull ??
+              CrossfeedPreset.off;
       final presetName = map['presetName'] as String?;
       final assignedDeviceName = map['assignedDeviceName'] as String?;
 
@@ -97,6 +102,7 @@ abstract final class PersistenceCodec {
         mono: mono,
         replayGain: replayGain,
         replayGainPreampDb: replayGainPreampDb,
+        crossfeed: crossfeed,
         presetName: presetName,
         assignedDeviceName: assignedDeviceName,
       );

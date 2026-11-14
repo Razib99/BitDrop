@@ -126,6 +126,11 @@ class SetReplayGain extends PlayerCommand {
   final double? preampDb;
 }
 
+class SetCrossfeed extends PlayerCommand {
+  const SetCrossfeed(this.preset);
+  final CrossfeedPreset preset;
+}
+
 class ApplyAutoEqProfile extends PlayerCommand {
   const ApplyAutoEqProfile(this.profileId);
   final String profileId;

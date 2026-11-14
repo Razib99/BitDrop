@@ -243,21 +243,44 @@ class BitDropSettingsRepository {
     }
   }
 
-  void pushEqToEngine([EqState? state]) {
-    final eqState = state ?? _eq.value;
-
-    double effectivePreamp = eqState.preampDb;
-    if (eqState.replayGain != ReplayGainMode.off) {
-      final currentTrack = currentTrackProvider?.call();
-      if (currentTrack?.replayGainDb != null) {
-        effectivePreamp += currentTrack!.replayGainDb!;
-      } else {
-        effectivePreamp += eqState.replayGainPreampDb;
-      }
+  /// Builds the human-readable DSP stage labels for Signal Path reporting.
+  static List<String> describeDspChain(EqState eq, {bool? engineDspActive}) {
+    final stages = <String>[];
+    if (!eq.bypass &&
+        (eq.bands.any((b) => b.enabled && b.gainDb != 0) ||
+            eq.preampDb != 0 ||
+            eq.bassDb != 0 ||
+            eq.trebleDb != 0 ||
+            eq.balance != 0 ||
+            eq.mono ||
+            eq.graphicGains.any((g) => g != 0))) {
+      stages.add('Equaliser');
     }
+    if (eq.replayGain != ReplayGainMode.off) {
+      stages.add('ReplayGain (${eq.replayGain.name})');
+    }
+    if (eq.crossfeed != CrossfeedPreset.off) {
+      stages.add('BS2B Crossfeed (${eq.crossfeed.shortLabel})');
+    }
+    if (stages.isEmpty && (engineDspActive ?? false)) {
+      stages.add('Equaliser');
+    }
+    return stages;
+  }
 
+  /// Builds EQ band payload + decoupled ReplayGain/BS2B parameters and pushes
+  /// them into the lock-free Rust engine without mutating reactive streams.
+  void pushEqSnapshotToEngine(EqState eqState) {
     final balance = eqState.balance;
     final mono = eqState.mono ? 1.0 : 0.0;
+    final currentTrack = currentTrackProvider?.call();
+    final double replayGainDb = eqState.replayGain == ReplayGainMode.off
+        ? 0.0
+        : (currentTrack?.replayGainDb ?? eqState.replayGainPreampDb);
+    final double trackPeak =
+        (currentTrack?.trackPeak != null && currentTrack!.trackPeak! > 0)
+            ? currentTrack.trackPeak!
+            : 1.0;
 
     final List<double> enginePayload;
 
@@ -272,7 +295,7 @@ class BitDropSettingsRepository {
           b.gainDb,
           b.q,
         ],
-        effectivePreamp,
+        eqState.preampDb,
         balance,
         mono,
       ];
@@ -287,7 +310,7 @@ class BitDropSettingsRepository {
           b.gainDb,
           b.q,
         ],
-        effectivePreamp,
+        eqState.preampDb,
         balance,
         mono,
       ];
@@ -301,7 +324,7 @@ class BitDropSettingsRepository {
       }
       enginePayload = [
         ...gains,
-        effectivePreamp,
+        eqState.preampDb,
         balance,
         mono,
       ];
@@ -310,7 +333,14 @@ class BitDropSettingsRepository {
     try {
       rust.engineSetEq(gains: enginePayload);
       rust.engineSetEqEnabled(enabled: !eqState.bypass);
+      rust.engineSetReplayGain(gainDb: replayGainDb, trackPeak: trackPeak);
+      rust.engineSetCrossfeed(preset: eqState.crossfeed.rustId);
     } catch (_) {}
+  }
+
+  void pushEqToEngine([EqState? state]) {
+    final eqState = state ?? _eq.value;
+    pushEqSnapshotToEngine(eqState);
     onEqChanged?.call(eqState);
   }
 
@@ -345,6 +375,12 @@ class BitDropSettingsRepository {
     _settings.add(updated);
     if (cmd.key == 'conserveCellularData' || cmd.key == 'networkTransportMode') {
       syncNetworkTransportMode(updated.networkTransportMode);
+    }
+    if (cmd.key == 'replayGain' && cmd.value is ReplayGainMode) {
+      final updatedEq = _eq.value.copyWith(replayGain: cmd.value as ReplayGainMode);
+      _eq.add(updatedEq);
+      pushEqToEngine(updatedEq);
+      await saveEqState();
     }
     await saveSettings();
     onSettingsChanged?.call(updated);
@@ -433,6 +469,14 @@ class BitDropSettingsRepository {
     await saveEqState();
     await saveSettings();
     onSettingsChanged?.call(updatedSettings);
+  }
+
+  Future<void> handleSetCrossfeed(SetCrossfeed cmd) async {
+    final updatedEq = _eq.value.copyWith(crossfeed: cmd.preset);
+    _eq.add(updatedEq);
+
+    pushEqToEngine(updatedEq);
+    await saveEqState();
   }
 
   Future<void> handleAssignEqToDevice(
