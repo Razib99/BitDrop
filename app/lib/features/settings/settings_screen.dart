@@ -556,7 +556,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         tiles: [
           NavigationSettingsTile(
             title: 'Version',
-            trailingText: '1.0.0',
+            trailingText: '1.1.0',
             onTap: () {},
           ),
           NavigationSettingsTile(
@@ -566,7 +566,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onTap: () => showLicensePage(
               context: context,
               applicationName: 'BitDrop',
-              applicationVersion: '1.0.0',
+              applicationVersion: '1.1.0',
             ),
           ),
         ],
