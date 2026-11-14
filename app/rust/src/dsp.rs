@@ -20,6 +20,11 @@ pub const EQ_HIGH_SHELF: u8 = 2;
 pub const EQ_LOW_PASS: u8 = 3;
 pub const EQ_HIGH_PASS: u8 = 4;
 
+pub const CROSSFEED_OFF: u8 = 0;
+pub const CROSSFEED_DEFAULT: u8 = 1; // 700.0 Hz, 4.5 dB
+pub const CROSSFEED_CHU_MOY: u8 = 2; // 700.0 Hz, 6.0 dB
+pub const CROSSFEED_JAN_MEIER: u8 = 3; // 650.0 Hz, 9.5 dB
+
 pub const MAX_EQ_BANDS: usize = 16;
 pub const ISO_10_BAND: [f64; 10] = [
     31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
@@ -69,6 +74,9 @@ pub struct DspConfigSnapshot {
     pub eq_enabled: bool,
     pub preamp_db: f64,
     pub auto_gain: f64,
+    pub replay_gain_db: f64,
+    pub track_peak: f64,
+    pub crossfeed_preset: u8,
     pub balance: f64,
     pub mono: bool,
     pub specs: [EqBandSpec; MAX_EQ_BANDS],
@@ -86,6 +94,9 @@ impl Default for DspConfigSnapshot {
             eq_enabled: false,
             preamp_db: 0.0,
             auto_gain: 0.0,
+            replay_gain_db: 0.0,
+            track_peak: 1.0,
+            crossfeed_preset: CROSSFEED_OFF,
             balance: 0.0,
             mono: false,
             specs: [EqBandSpec::default(); MAX_EQ_BANDS],
@@ -857,6 +868,80 @@ impl TpdfDither {
     }
 }
 
+/// Zero-allocation 64-bit Bauer Stereophonic-to-Binaural (BS2B) headphone crossfeed filter.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct CrossfeedFilterF64 {
+    pub b0_lp: f64,
+    pub b1_lp: f64,
+    pub a1_lp: f64,
+    pub b0_hb: f64,
+    pub b1_hb: f64,
+    pub a1_hb: f64,
+    pub lp_state: [f64; 2],
+    pub hb_state: [f64; 2],
+    pub preset: u8,
+}
+
+impl CrossfeedFilterF64 {
+    pub fn reset_state(&mut self) {
+        self.lp_state = [0.0; 2];
+        self.hb_state = [0.0; 2];
+    }
+
+    pub fn set_preset(&mut self, preset: u8, fs: f64) {
+        let (fc, feed_db): (f64, f64) = match preset {
+            CROSSFEED_DEFAULT => (700.0, 4.5),
+            CROSSFEED_CHU_MOY => (700.0, 6.0),
+            CROSSFEED_JAN_MEIER => (650.0, 9.5),
+            _ => {
+                self.preset = CROSSFEED_OFF;
+                self.reset_state();
+                return;
+            }
+        };
+
+        let g_cross = 10.0_f64.powf(-feed_db / 20.0) * 0.5;
+        let g_dir_dc = 1.0 - g_cross;
+        let g_dir_hf = 1.0;
+        let safe_fs = fs.max(8000.0);
+        let k = (std::f64::consts::PI * fc.clamp(100.0, safe_fs * 0.45) / safe_fs).tan();
+
+        self.b0_lp = (g_cross * k) / (1.0 + k);
+        self.b1_lp = self.b0_lp;
+        self.a1_lp = (k - 1.0) / (1.0 + k);
+
+        self.b0_hb = (g_dir_hf + g_dir_dc * k) / (1.0 + k);
+        self.b1_hb = (g_dir_dc * k - g_dir_hf) / (1.0 + k);
+        self.a1_hb = (k - 1.0) / (1.0 + k);
+
+        if self.preset != preset {
+            self.reset_state();
+        }
+        self.preset = preset;
+    }
+
+    #[inline(always)]
+    pub fn process_stereo(&mut self, l: f64, r: f64) -> (f64, f64) {
+        if self.preset == CROSSFEED_OFF {
+            return (l, r);
+        }
+
+        let hb_l = self.b0_hb * l + self.hb_state[0];
+        self.hb_state[0] = self.b1_hb * l - self.a1_hb * hb_l;
+
+        let hb_r = self.b0_hb * r + self.hb_state[1];
+        self.hb_state[1] = self.b1_hb * r - self.a1_hb * hb_r;
+
+        let lp_l = self.b0_lp * l + self.lp_state[0];
+        self.lp_state[0] = self.b1_lp * l - self.a1_lp * lp_l;
+
+        let lp_r = self.b0_lp * r + self.lp_state[1];
+        self.lp_state[1] = self.b1_lp * r - self.a1_lp * lp_r;
+
+        (hb_l + lp_r, hb_r + lp_l)
+    }
+}
+
 /// The complete Engine v2 DSP Pipeline.
 pub struct DspPipelineV2 {
     pub sample_rate: f64,
@@ -872,9 +957,11 @@ pub struct DspPipelineV2 {
 
     pub limiter: LookaheadLimiterF64,
     pub dither: TpdfDither,
+    pub crossfeed: CrossfeedFilterF64,
 
     pub auto_preamp_enabled: bool,
     pub replay_gain_db: f64,
+    pub replay_gain_linear: f64,
     pub track_peak: f64,
 
     pub balance: f64,
@@ -913,9 +1000,11 @@ impl DspPipelineV2 {
 
             limiter: LookaheadLimiterF64::new(fs),
             dither: TpdfDither::default(),
+            crossfeed: CrossfeedFilterF64::default(),
 
             auto_preamp_enabled: true,
             replay_gain_db: 0.0,
+            replay_gain_linear: 1.0,
             track_peak: 1.0,
 
             balance: 0.0,
@@ -924,6 +1013,10 @@ impl DspPipelineV2 {
             eq_enabled: false,
             dop_active: false,
         }
+    }
+
+    pub fn set_crossfeed_preset(&mut self, preset: u8) {
+        self.crossfeed.set_preset(preset, self.sample_rate);
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f64) {
@@ -940,6 +1033,8 @@ impl DspPipelineV2 {
             );
             self.subsonic_filter.reset_state();
             self.limiter.set_sample_rate(sample_rate);
+            let preset = self.crossfeed.preset;
+            self.crossfeed.set_preset(preset, sample_rate);
 
             // Recompute active and target bank coefficients for new sample rate
             let fs = self.sample_rate;
@@ -975,9 +1070,11 @@ impl DspPipelineV2 {
             return false;
         }
         self.replay_gain_db.abs() < 1e-6
+            && (self.replay_gain_linear - 1.0).abs() < 1e-6
             && self.balance.abs() < 1e-6
             && !self.mono
             && (self.software_volume - 1.0).abs() < 1e-6
+            && self.crossfeed.preset == CROSSFEED_OFF
     }
 
     /// Installs new EQ band parameters, automatically calculating auto-preamp and scheduling a 20ms crossfade.
@@ -1002,6 +1099,11 @@ impl DspPipelineV2 {
             0.0
         };
         let effective_rg = self.replay_gain_db.min(rg_cap);
+        self.replay_gain_linear = if effective_rg.abs() < 1e-6 {
+            1.0
+        } else {
+            10.0_f64.powf(effective_rg / 20.0)
+        };
 
         // Detect if any band < 60 Hz has positive gain to engage 18 Hz subsonic filter
         let has_sub_boost = specs
@@ -1020,7 +1122,7 @@ impl DspPipelineV2 {
             0.0
         };
 
-        let total_preamp_db = user_preamp_db + auto_preamp_db + effective_rg;
+        let total_preamp_db = user_preamp_db + auto_preamp_db;
         self.target_bank
             .set_bands(specs, total_preamp_db, self.sample_rate);
 
@@ -1053,8 +1155,8 @@ impl DspPipelineV2 {
             return (in_l, in_r);
         }
 
-        let mut l = in_l;
-        let mut r = in_r;
+        let mut l = in_l * self.replay_gain_linear;
+        let mut r = in_r * self.replay_gain_linear;
 
         // 2. EQ Filter Banks with 20ms Crossfade
         if self.eq_enabled {
@@ -1090,6 +1192,13 @@ impl DspPipelineV2 {
                 l = (1.0 - self.subsonic_blend) * l + self.subsonic_blend * hpf_l;
                 r = (1.0 - self.subsonic_blend) * r + self.subsonic_blend * hpf_r;
             }
+        }
+
+        // 3b. Headphone BS2B Crossfeed (independent of EQ state)
+        if self.crossfeed.preset != CROSSFEED_OFF {
+            let (cf_l, cf_r) = self.crossfeed.process_stereo(l, r);
+            l = cf_l;
+            r = cf_r;
         }
 
         // 4. Independent Stereo Balance and Mono Stage (applies regardless of EQ state)
@@ -1894,5 +2003,157 @@ mod tests {
             max_burst_tp,
             ceiling
         );
+    }
+
+    #[test]
+    fn test_replay_gain_applies_when_eq_disabled_and_caps_at_track_peak() {
+        let fs = 48000.0;
+        let mut dsp = DspPipelineV2::new(fs);
+        dsp.eq_enabled = false;
+        dsp.set_crossfeed_preset(CROSSFEED_OFF);
+        dsp.install_parameters(&[], 0.0, -6.0, 1.0, 0.0, false);
+
+        // Warm up past limiter delay and measure steady-state attenuation (-6.0 dB = 0.501187)
+        let mut peak_out = 0.0_f64;
+        for i in 0..2400 {
+            let x = 0.5 * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / fs).sin();
+            let (l, r) = dsp.process_stereo(x, x);
+            if i >= 1200 {
+                peak_out = peak_out.max(l.abs()).max(r.abs());
+            }
+        }
+        let expected_atten = 0.5 * 10.0_f64.powf(-6.0 / 20.0);
+        assert!(
+            (peak_out - expected_atten).abs() < 0.005,
+            "Expected -6 dB ReplayGain peak ~{}, got {}",
+            expected_atten,
+            peak_out
+        );
+
+        // Positive +6.0 dB ReplayGain with track_peak = 0.8 must cap at -20 * log10(0.8) = +1.9382 dB
+        // (linear gain = 1.0 / 0.8 = 1.25). Using input peak 0.4 keeps output ~0.5, well below -1 dBTP.
+        let mut dsp_cap = DspPipelineV2::new(fs);
+        dsp_cap.eq_enabled = false;
+        dsp_cap.set_crossfeed_preset(CROSSFEED_OFF);
+        dsp_cap.install_parameters(&[], 0.0, 6.0, 0.8, 0.0, false);
+
+        let mut capped_peak = 0.0_f64;
+        for i in 0..2400 {
+            let x = 0.4 * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / fs).sin();
+            let (l, r) = dsp_cap.process_stereo(x, x);
+            if i >= 1200 {
+                capped_peak = capped_peak.max(l.abs()).max(r.abs());
+            }
+        }
+        let expected_capped = 0.4 * (1.0 / 0.8);
+        assert!(
+            (capped_peak - expected_capped).abs() < 0.005,
+            "Expected capped ReplayGain peak ~{}, got {}",
+            expected_capped,
+            capped_peak
+        );
+    }
+
+    #[test]
+    fn test_bs2b_crossfeed_mono_unity_and_hard_pan_blending() {
+        let fs = 48000.0;
+        for &preset in &[CROSSFEED_DEFAULT, CROSSFEED_CHU_MOY, CROSSFEED_JAN_MEIER] {
+            let mut dsp = DspPipelineV2::new(fs);
+            dsp.eq_enabled = false;
+            dsp.set_crossfeed_preset(preset);
+            dsp.install_parameters(&[], 0.0, 0.0, 1.0, 0.0, false);
+
+            // 100 Hz mono L == R: combined direct + crossfeed transfer is unity (~0 dB)
+            let mut sum_sq_l = 0.0_f64;
+            let mut sum_sq_in = 0.0_f64;
+            for i in 0..4800 {
+                let x = 0.4 * (2.0 * std::f64::consts::PI * 100.0 * i as f64 / fs).sin();
+                let (l, r) = dsp.process_stereo(x, x);
+                if i >= 2400 {
+                    assert!(
+                        (l - r).abs() < 1e-12,
+                        "Mono signal must remain balanced under crossfeed preset {}",
+                        preset
+                    );
+                    sum_sq_l += l * l;
+                    sum_sq_in += x * x;
+                }
+            }
+            let gain_db = 10.0 * (sum_sq_l / sum_sq_in).log10();
+            assert!(
+                gain_db.abs() < 0.15,
+                "Preset {} 100 Hz mono gain {} dB should stay within +-0.15 dB of unity",
+                preset,
+                gain_db
+            );
+        }
+
+        // Hard-left input (L = 0.5, R = 0.0): LF blends more into R than HF
+        let measure_hard_left = |freq: f64| -> (f64, f64) {
+            let mut dsp = DspPipelineV2::new(fs);
+            dsp.eq_enabled = false;
+            dsp.set_crossfeed_preset(CROSSFEED_DEFAULT);
+            dsp.install_parameters(&[], 0.0, 0.0, 1.0, 0.0, false);
+            let mut sq_l = 0.0_f64;
+            let mut sq_r = 0.0_f64;
+            for i in 0..4800 {
+                let x = 0.5 * (2.0 * std::f64::consts::PI * freq * i as f64 / fs).sin();
+                let (l, r) = dsp.process_stereo(x, 0.0);
+                if i >= 2400 {
+                    sq_l += l * l;
+                    sq_r += r * r;
+                }
+            }
+            ((sq_l / 2400.0).sqrt(), (sq_r / 2400.0).sqrt())
+        };
+
+        let (lf_l, lf_r) = measure_hard_left(200.0);
+        let (hf_l, hf_r) = measure_hard_left(5000.0);
+        assert!(
+            lf_r > 0.05,
+            "200 Hz crossfeed into right channel should be substantial, got {}",
+            lf_r
+        );
+        assert!(
+            lf_r / lf_l > hf_r / hf_l * 2.0,
+            "LF R/L ratio ({}) should substantially exceed HF R/L ratio ({})",
+            lf_r / lf_l,
+            hf_r / hf_l
+        );
+        assert!(
+            hf_l > lf_l,
+            "HF direct channel ({}) should retain more energy than LF ({})",
+            hf_l,
+            lf_l
+        );
+    }
+
+    #[test]
+    fn test_dop_lockout_bypasses_crossfeed_and_replaygain() {
+        let mut dsp = DspPipelineV2::new(176400.0);
+        dsp.dop_active = true;
+        dsp.eq_enabled = true;
+        dsp.set_crossfeed_preset(CROSSFEED_JAN_MEIER);
+        dsp.install_parameters(&[], -3.0, -6.0, 1.0, 0.25, true);
+
+        let pairs = [
+            (0.05_f64, -0.05_f64),
+            (-0.421875_f64, 0.7890625_f64),
+            (0.0_f64, 0.1234567890123456_f64),
+            (0.999_f64, -0.999_f64),
+        ];
+        for &(in_l, in_r) in &pairs {
+            let (out_l, out_r) = dsp.process_stereo(in_l, in_r);
+            assert_eq!(
+                out_l.to_bits(),
+                in_l.to_bits(),
+                "DoP active must preserve left channel bit-for-bit"
+            );
+            assert_eq!(
+                out_r.to_bits(),
+                in_r.to_bits(),
+                "DoP active must preserve right channel bit-for-bit"
+            );
+        }
     }
 }

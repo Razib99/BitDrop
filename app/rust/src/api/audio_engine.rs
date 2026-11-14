@@ -17,9 +17,10 @@ use symphonia::core::probe::Hint;
 
 use crate::cloud::media_source::CloudMediaSource;
 pub use crate::dsp::{
-    downmix_to_stereo, BoundaryKind, BoundaryMarker, DspConfigSnapshot, DspMailbox, DspPipelineV2,
-    EqBandSpec, VisualizerFrameData, EQ_HIGH_PASS, EQ_HIGH_SHELF, EQ_LOW_PASS, EQ_LOW_SHELF,
-    EQ_PEAK, ISO_10_BAND, MAX_EQ_BANDS,
+    downmix_to_stereo, BoundaryKind, BoundaryMarker, CrossfeedFilterF64, DspConfigSnapshot,
+    DspMailbox, DspPipelineV2, EqBandSpec, VisualizerFrameData, CROSSFEED_CHU_MOY,
+    CROSSFEED_DEFAULT, CROSSFEED_JAN_MEIER, CROSSFEED_OFF, EQ_HIGH_PASS, EQ_HIGH_SHELF,
+    EQ_LOW_PASS, EQ_LOW_SHELF, EQ_PEAK, ISO_10_BAND, MAX_EQ_BANDS,
 };
 use rubato::Resampler;
 

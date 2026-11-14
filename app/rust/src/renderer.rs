@@ -71,12 +71,18 @@ impl OutputRenderer {
             if snap.sample_rate > 0.0 && (self.dsp.sample_rate - snap.sample_rate).abs() > 0.5 {
                 self.dsp.set_sample_rate(snap.sample_rate);
             }
+            self.dsp.set_crossfeed_preset(snap.crossfeed_preset);
+            let track_peak = if snap.track_peak > 0.0 {
+                snap.track_peak
+            } else {
+                1.0
+            };
             if snap.is_parametric {
                 self.dsp.install_parameters(
                     &snap.specs[..snap.spec_count],
                     snap.preamp_db,
-                    0.0,
-                    1.0,
+                    snap.replay_gain_db,
+                    track_peak,
                     snap.balance,
                     snap.mono,
                 );
@@ -84,8 +90,8 @@ impl OutputRenderer {
                 self.dsp.update_graphic_gains(
                     &snap.graphic_gains,
                     snap.preamp_db,
-                    0.0,
-                    1.0,
+                    snap.replay_gain_db,
+                    track_peak,
                     snap.balance,
                     snap.mono,
                 );
