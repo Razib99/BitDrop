@@ -349,5 +349,93 @@ Filter 2: ON LSC Fc 80 Hz Gain 2.0 dB Q 0.71
       expect(newRepo.currentSettings.gapless, isFalse);
       expect(newRepo.currentSettings.directUsbDriver, isTrue);
     });
+
+    test('resolveReplayGain distinguishes off, track, album, and peak fallback',
+        () {
+      EqState rgState(ReplayGainMode mode, [double preamp = 0.0]) => EqState(
+            mode: EqMode.graphic,
+            bypass: true,
+            preampDb: 0,
+            bands: const [],
+            replayGain: mode,
+            replayGainPreampDb: preamp,
+          );
+
+      const track = Track(
+        id: 'rg-1',
+        title: 'RG Track',
+        artist: 'Tester',
+        albumTitle: 'RG Album',
+        albumId: 'alb-1',
+        durationMs: 180000,
+        format: AudioFormat(
+          codec: Codec.flac,
+          bitDepth: 24,
+          sampleRate: 96000,
+          channels: 2,
+        ),
+        availability: Availability.cached,
+        sizeBytes: 1024,
+        artwork: Artwork(seed: 1, dominantColor: 0xFF000000),
+        replayGainDb: -6.4,
+        replayGainAlbumDb: -7.8,
+        trackPeak: 0.95,
+        albumPeak: 0.99,
+      );
+
+      final off = BitDropSettingsRepository.resolveReplayGain(
+        rgState(ReplayGainMode.off, -3.0),
+        track,
+      );
+      expect(off.gainDb, equals(0.0));
+      expect(off.peak, equals(1.0));
+
+      final trackMode = BitDropSettingsRepository.resolveReplayGain(
+        rgState(ReplayGainMode.track),
+        track,
+      );
+      expect(trackMode.gainDb, equals(-6.4));
+      expect(trackMode.peak, equals(0.95));
+
+      final albumMode = BitDropSettingsRepository.resolveReplayGain(
+        rgState(ReplayGainMode.album),
+        track,
+      );
+      expect(albumMode.gainDb, equals(-7.8));
+      expect(albumMode.peak, equals(0.99));
+
+      const partialTrack = Track(
+        id: 'rg-2',
+        title: 'No Album RG',
+        artist: 'Tester',
+        albumTitle: 'RG Album',
+        albumId: 'alb-1',
+        durationMs: 180000,
+        format: AudioFormat(
+          codec: Codec.flac,
+          bitDepth: 16,
+          sampleRate: 44100,
+          channels: 2,
+        ),
+        availability: Availability.cached,
+        sizeBytes: 1024,
+        artwork: Artwork(seed: 1, dominantColor: 0xFF000000),
+        replayGainDb: -4.2,
+        trackPeak: 0.91,
+      );
+      final albumFallback = BitDropSettingsRepository.resolveReplayGain(
+        rgState(ReplayGainMode.album, -2.0),
+        partialTrack,
+      );
+      expect(albumFallback.gainDb, equals(-4.2));
+      expect(albumFallback.peak, equals(0.91));
+
+      final noTagsFallback = BitDropSettingsRepository.resolveReplayGain(
+        rgState(ReplayGainMode.album, -2.0),
+        null,
+      );
+      expect(noTagsFallback.gainDb, equals(-2.0));
+      expect(noTagsFallback.peak, equals(1.0));
+    });
   });
 }

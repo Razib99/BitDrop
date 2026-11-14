@@ -34,6 +34,10 @@ pub struct CloudTrackRow {
     /// False while only the filename is known, i.e. before the tag pass has
     /// reached this row. The UI shimmers these fields rather than hiding them.
     pub tags_read: bool,
+    pub replay_gain_track_gain: Option<f64>,
+    pub replay_gain_album_gain: Option<f64>,
+    pub replay_gain_track_peak: Option<f64>,
+    pub replay_gain_album_peak: Option<f64>,
 }
 
 /// Materialized album summary row for instant rendering without runtime GROUP BY.
@@ -115,7 +119,7 @@ pub struct TrackPlaceholder {
 }
 
 /// A batch tag update payload from metadata extraction.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TrackTagUpdate {
     pub file_id: String,
     pub title: String,
@@ -131,6 +135,10 @@ pub struct TrackTagUpdate {
     pub channels: u32,
     pub bits_per_sample: u32,
     pub artwork_path: String,
+    pub replay_gain_track_gain: Option<f64>,
+    pub replay_gain_album_gain: Option<f64>,
+    pub replay_gain_track_peak: Option<f64>,
+    pub replay_gain_album_peak: Option<f64>,
 }
 
 /// Record of a completed audio chunk with CRC32 integrity checksum.
@@ -269,11 +277,15 @@ impl MetadataDb {
                 channels         INTEGER,
                 bits_per_sample  INTEGER,
                 size_bytes       INTEGER DEFAULT 0,
-                picture_offset   INTEGER,
-                picture_length   INTEGER,
-                artwork_path     TEXT,
-                tags_read        INTEGER NOT NULL DEFAULT 0,
-                artwork_checked  INTEGER NOT NULL DEFAULT 0
+                picture_offset         INTEGER,
+                picture_length         INTEGER,
+                artwork_path           TEXT,
+                tags_read              INTEGER NOT NULL DEFAULT 0,
+                artwork_checked        INTEGER NOT NULL DEFAULT 0,
+                replay_gain_track_gain REAL,
+                replay_gain_album_gain REAL,
+                replay_gain_track_peak REAL,
+                replay_gain_album_peak REAL
             )",
             [],
         )?;
@@ -285,6 +297,22 @@ impl MetadataDb {
         let _ = conn.execute("ALTER TABLE tracks ADD COLUMN picture_length INTEGER", []);
         let _ = conn.execute(
             "ALTER TABLE tracks ADD COLUMN artwork_checked INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE tracks ADD COLUMN replay_gain_track_gain REAL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE tracks ADD COLUMN replay_gain_album_gain REAL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE tracks ADD COLUMN replay_gain_track_peak REAL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE tracks ADD COLUMN replay_gain_album_peak REAL",
             [],
         );
 
@@ -914,6 +942,10 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 24,
                 artwork_path: "/tmp/bill_evans.jpg".to_string(),
+                replay_gain_track_gain: Some(-5.25),
+                replay_gain_album_gain: Some(-4.8),
+                replay_gain_track_peak: Some(0.94),
+                replay_gain_album_peak: Some(0.98),
             },
             TrackTagUpdate {
                 file_id: "id_2".to_string(),
@@ -930,6 +962,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 24,
                 artwork_path: "/tmp/bill_evans.jpg".to_string(),
+                ..Default::default()
             },
         ];
         db.batch_update_tags(&updates).unwrap();
@@ -1403,6 +1436,7 @@ mod tests {
             channels: 2,
             bits_per_sample: 16,
             artwork_path: "/cache/artwork/album.img".to_string(),
+            ..Default::default()
         }];
         db.batch_update_tags(&updates).unwrap();
         assert!(db.is_artwork_checked("track_with_art").unwrap());
@@ -1474,6 +1508,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: "/cache/artwork/band_a.img".to_string(),
+                ..Default::default()
             },
             TrackTagUpdate {
                 file_id: "t2".to_string(),
@@ -1490,6 +1525,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: String::new(),
+                ..Default::default()
             },
             TrackTagUpdate {
                 file_id: "t3".to_string(),
@@ -1506,6 +1542,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 24,
                 artwork_path: "/cache/artwork/miles.img".to_string(),
+                ..Default::default()
             },
             TrackTagUpdate {
                 file_id: "t4".to_string(),
@@ -1522,6 +1559,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: String::new(),
+                ..Default::default()
             },
         ];
         db.batch_update_tags(&updates).unwrap();
@@ -1709,6 +1747,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 24,
                 artwork_path: None,
+                ..Default::default()
             },
             LocalTrackInfo {
                 path: track2_path.to_string_lossy().to_string(),
@@ -1728,6 +1767,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 24,
                 artwork_path: None,
+                ..Default::default()
             },
             LocalTrackInfo {
                 path: fake_path.to_string_lossy().to_string(),
@@ -1747,6 +1787,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 24,
                 artwork_path: None,
+                ..Default::default()
             },
         ];
 

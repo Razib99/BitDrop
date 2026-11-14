@@ -3150,6 +3150,10 @@ impl SseDecode for crate::api::cloud_library::CloudTrack {
         let mut var_sizeBytes = <u64>::sse_decode(deserializer);
         let mut var_tagsRead = <bool>::sse_decode(deserializer);
         let mut var_artworkPath = <String>::sse_decode(deserializer);
+        let mut var_replayGainTrackGain = <Option<f64>>::sse_decode(deserializer);
+        let mut var_replayGainAlbumGain = <Option<f64>>::sse_decode(deserializer);
+        let mut var_replayGainTrackPeak = <Option<f64>>::sse_decode(deserializer);
+        let mut var_replayGainAlbumPeak = <Option<f64>>::sse_decode(deserializer);
         return crate::api::cloud_library::CloudTrack {
             file_id: var_fileId,
             name: var_name,
@@ -3169,6 +3173,10 @@ impl SseDecode for crate::api::cloud_library::CloudTrack {
             size_bytes: var_sizeBytes,
             tags_read: var_tagsRead,
             artwork_path: var_artworkPath,
+            replay_gain_track_gain: var_replayGainTrackGain,
+            replay_gain_album_gain: var_replayGainAlbumGain,
+            replay_gain_track_peak: var_replayGainTrackPeak,
+            replay_gain_album_peak: var_replayGainAlbumPeak,
         };
     }
 }
@@ -3211,6 +3219,10 @@ impl SseDecode for crate::cloud::db::CloudTrackRow {
         let mut var_sizeBytes = <u64>::sse_decode(deserializer);
         let mut var_artworkPath = <String>::sse_decode(deserializer);
         let mut var_tagsRead = <bool>::sse_decode(deserializer);
+        let mut var_replayGainTrackGain = <Option<f64>>::sse_decode(deserializer);
+        let mut var_replayGainAlbumGain = <Option<f64>>::sse_decode(deserializer);
+        let mut var_replayGainTrackPeak = <Option<f64>>::sse_decode(deserializer);
+        let mut var_replayGainAlbumPeak = <Option<f64>>::sse_decode(deserializer);
         return crate::cloud::db::CloudTrackRow {
             file_id: var_fileId,
             name: var_name,
@@ -3230,6 +3242,10 @@ impl SseDecode for crate::cloud::db::CloudTrackRow {
             size_bytes: var_sizeBytes,
             artwork_path: var_artworkPath,
             tags_read: var_tagsRead,
+            replay_gain_track_gain: var_replayGainTrackGain,
+            replay_gain_album_gain: var_replayGainAlbumGain,
+            replay_gain_track_peak: var_replayGainTrackPeak,
+            replay_gain_album_peak: var_replayGainAlbumPeak,
         };
     }
 }
@@ -3777,6 +3793,17 @@ impl SseDecode for Option<crate::cloud::db::CloudTrackRow> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<crate::cloud::db::CloudTrackRow>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<f64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<f64>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -4640,6 +4667,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudTrack {
             self.size_bytes.into_into_dart().into_dart(),
             self.tags_read.into_into_dart().into_dart(),
             self.artwork_path.into_into_dart().into_dart(),
+            self.replay_gain_track_gain.into_into_dart().into_dart(),
+            self.replay_gain_album_gain.into_into_dart().into_dart(),
+            self.replay_gain_track_peak.into_into_dart().into_dart(),
+            self.replay_gain_album_peak.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4700,6 +4731,10 @@ impl flutter_rust_bridge::IntoDart for crate::cloud::db::CloudTrackRow {
             self.size_bytes.into_into_dart().into_dart(),
             self.artwork_path.into_into_dart().into_dart(),
             self.tags_read.into_into_dart().into_dart(),
+            self.replay_gain_track_gain.into_into_dart().into_dart(),
+            self.replay_gain_album_gain.into_into_dart().into_dart(),
+            self.replay_gain_track_peak.into_into_dart().into_dart(),
+            self.replay_gain_album_peak.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5316,6 +5351,10 @@ impl SseEncode for crate::api::cloud_library::CloudTrack {
         <u64>::sse_encode(self.size_bytes, serializer);
         <bool>::sse_encode(self.tags_read, serializer);
         <String>::sse_encode(self.artwork_path, serializer);
+        <Option<f64>>::sse_encode(self.replay_gain_track_gain, serializer);
+        <Option<f64>>::sse_encode(self.replay_gain_album_gain, serializer);
+        <Option<f64>>::sse_encode(self.replay_gain_track_peak, serializer);
+        <Option<f64>>::sse_encode(self.replay_gain_album_peak, serializer);
     }
 }
 
@@ -5350,6 +5389,10 @@ impl SseEncode for crate::cloud::db::CloudTrackRow {
         <u64>::sse_encode(self.size_bytes, serializer);
         <String>::sse_encode(self.artwork_path, serializer);
         <bool>::sse_encode(self.tags_read, serializer);
+        <Option<f64>>::sse_encode(self.replay_gain_track_gain, serializer);
+        <Option<f64>>::sse_encode(self.replay_gain_album_gain, serializer);
+        <Option<f64>>::sse_encode(self.replay_gain_track_peak, serializer);
+        <Option<f64>>::sse_encode(self.replay_gain_album_peak, serializer);
     }
 }
 
@@ -5771,6 +5814,16 @@ impl SseEncode for Option<crate::cloud::db::CloudTrackRow> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::cloud::db::CloudTrackRow>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<f64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <f64>::sse_encode(value, serializer);
         }
     }
 }

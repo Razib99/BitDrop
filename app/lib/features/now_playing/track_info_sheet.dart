@@ -73,6 +73,8 @@ class TrackInfoSheet extends StatelessWidget {
             _InfoRow('File size', Fmt.bytes(track.sizeBytes)),
             if (track.replayGainDb != null)
               _InfoRow('ReplayGain (track)', Fmt.db(track.replayGainDb!)),
+            if (track.replayGainAlbumDb != null)
+              _InfoRow('ReplayGain (album)', Fmt.db(track.replayGainAlbumDb!)),
             _InfoRow(
               'Availability',
               AvailabilityGlyph.describe(

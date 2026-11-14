@@ -268,19 +268,34 @@ class BitDropSettingsRepository {
     return stages;
   }
 
+  /// Resolves effective ReplayGain gain (dB) and peak ceiling from [eqState] and [track].
+  static ({double gainDb, double peak}) resolveReplayGain(
+    EqState eqState,
+    Track? track,
+  ) {
+    if (eqState.replayGain == ReplayGainMode.off) {
+      return (gainDb: 0.0, peak: 1.0);
+    }
+    final isAlbum = eqState.replayGain == ReplayGainMode.album;
+    final gainDb = isAlbum
+        ? (track?.replayGainAlbumDb ??
+            track?.replayGainDb ??
+            eqState.replayGainPreampDb)
+        : (track?.replayGainDb ?? eqState.replayGainPreampDb);
+    final rawPeak =
+        isAlbum ? (track?.albumPeak ?? track?.trackPeak) : track?.trackPeak;
+    final peak = (rawPeak != null && rawPeak > 0) ? rawPeak : 1.0;
+    return (gainDb: gainDb, peak: peak);
+  }
+
   /// Builds EQ band payload + decoupled ReplayGain/BS2B parameters and pushes
   /// them into the lock-free Rust engine without mutating reactive streams.
   void pushEqSnapshotToEngine(EqState eqState) {
     final balance = eqState.balance;
     final mono = eqState.mono ? 1.0 : 0.0;
-    final currentTrack = currentTrackProvider?.call();
-    final double replayGainDb = eqState.replayGain == ReplayGainMode.off
-        ? 0.0
-        : (currentTrack?.replayGainDb ?? eqState.replayGainPreampDb);
-    final double trackPeak =
-        (currentTrack?.trackPeak != null && currentTrack!.trackPeak! > 0)
-            ? currentTrack.trackPeak!
-            : 1.0;
+    final rg = resolveReplayGain(eqState, currentTrackProvider?.call());
+    final replayGainDb = rg.gainDb;
+    final trackPeak = rg.peak;
 
     final List<double> enginePayload;
 

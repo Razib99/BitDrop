@@ -11,7 +11,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'audio_engine.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `emit_event`, `initialize_engine`, `is_current`, `open_cpal_output_stream`, `open_media_source`, `request_load`, `return_audio_consumers`, `set_ramp`, `stage_load`, `start_stream_watchdog`, `stream_opens`
+// These functions are ignored because they are not marked as `pub`: `build_dsp_config_snapshot`, `emit_event`, `initialize_engine`, `is_current`, `open_cpal_output_stream`, `open_media_source`, `request_load`, `return_audio_consumers`, `set_ramp`, `stage_load`, `start_stream_watchdog`, `stream_opens`
 // These types are ignored because they are not used by any `pub` functions: `AUDIO_CONSUMER`, `BOUNDARY_CONSUMER`, `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DSP_TRIPLE_BUFFER`, `DecoderCmd`, `DsdDecoderSession`, `EVENT_SINK`, `LOAD_SENDER`, `LoadRequest`, `OpenedTrack`, `PLAYER_STATE`, `TRIGGERED_PRODUCER`, `TrackDecoderBackend`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `default`, `default`, `default`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `eq`, `fmt`, `fmt`, `fmt`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 

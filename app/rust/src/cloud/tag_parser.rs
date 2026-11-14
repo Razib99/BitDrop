@@ -169,6 +169,88 @@ pub fn parse_multi_artist_tag(raw: &str) -> Vec<String> {
     parse_artists(raw)
 }
 
+/// Parsed ReplayGain metadata fields for a track (`REPLAYGAIN_*` and `R128_*`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ReplayGainTags {
+    pub track_gain_db: Option<f64>,
+    pub album_gain_db: Option<f64>,
+    pub track_peak: Option<f64>,
+    pub album_peak: Option<f64>,
+}
+
+/// Parses a ReplayGain dB string such as `"-6.45 dB"` or `"+1.20 DB"`.
+pub fn parse_replay_gain_db(raw: &str) -> Option<f64> {
+    let mut trimmed = raw.trim();
+    if trimmed.len() >= 2 && trimmed[trimmed.len() - 2..].eq_ignore_ascii_case("db") {
+        trimmed = trimmed[..trimmed.len() - 2].trim_end();
+    }
+    let val = trimmed.parse::<f64>().ok()?;
+    if val.is_finite() && (-60.0..=60.0).contains(&val) {
+        Some(val)
+    } else {
+        None
+    }
+}
+
+/// Parses a positive linear ReplayGain peak value such as `"0.988525"`.
+pub fn parse_replay_gain_peak(raw: &str) -> Option<f64> {
+    let val = raw.trim().parse::<f64>().ok()?;
+    if val.is_finite() && val > 0.0 && val <= 10.0 {
+        Some(val)
+    } else {
+        None
+    }
+}
+
+/// Parses an RFC 7845 / EBU R128 Q7.8 integer gain tag and shifts from `-23 LUFS`
+/// reference level to standard ReplayGain `-18 LUFS` (`+5.0 dB`).
+pub fn parse_r128_gain_db(raw: &str) -> Option<f64> {
+    let q78 = raw.trim().parse::<i32>().ok()?;
+    let db = (q78 as f64 / 256.0) + 5.0;
+    if db.is_finite() && (-60.0..=60.0).contains(&db) {
+        Some(db)
+    } else {
+        None
+    }
+}
+
+impl ReplayGainTags {
+    /// Ingests one metadata key/value pair if it represents a ReplayGain or R128 tag.
+    pub fn ingest_tag(&mut self, key: &str, value: &str) {
+        let trimmed = key.trim();
+        let norm_key = if trimmed.len() > 5 && trimmed[..5].eq_ignore_ascii_case("txxx:") {
+            trimmed[5..].trim()
+        } else {
+            trimmed
+        };
+        if norm_key.eq_ignore_ascii_case("REPLAYGAIN_TRACK_GAIN") {
+            if let Some(v) = parse_replay_gain_db(value) {
+                self.track_gain_db = Some(v);
+            }
+        } else if norm_key.eq_ignore_ascii_case("REPLAYGAIN_ALBUM_GAIN") {
+            if let Some(v) = parse_replay_gain_db(value) {
+                self.album_gain_db = Some(v);
+            }
+        } else if norm_key.eq_ignore_ascii_case("REPLAYGAIN_TRACK_PEAK") {
+            if let Some(v) = parse_replay_gain_peak(value) {
+                self.track_peak = Some(v);
+            }
+        } else if norm_key.eq_ignore_ascii_case("REPLAYGAIN_ALBUM_PEAK") {
+            if let Some(v) = parse_replay_gain_peak(value) {
+                self.album_peak = Some(v);
+            }
+        } else if norm_key.eq_ignore_ascii_case("R128_TRACK_GAIN") && self.track_gain_db.is_none() {
+            if let Some(v) = parse_r128_gain_db(value) {
+                self.track_gain_db = Some(v);
+            }
+        } else if norm_key.eq_ignore_ascii_case("R128_ALBUM_GAIN") && self.album_gain_db.is_none() {
+            if let Some(v) = parse_r128_gain_db(value) {
+                self.album_gain_db = Some(v);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,5 +336,32 @@ mod tests {
             parse_artists(input5),
             vec!["Hall & Oates", "Kool & The Gang"]
         );
+    }
+
+    #[test]
+    fn test_replay_gain_tag_ingestion_and_edge_cases() {
+        let mut rg = ReplayGainTags::default();
+        rg.ingest_tag("TXXX:REPLAYGAIN_TRACK_GAIN", " -7.35 dB ");
+        rg.ingest_tag("replaygain_album_gain", "+1.25 DB");
+        rg.ingest_tag("REPLAYGAIN_TRACK_PEAK", "0.972107");
+        rg.ingest_tag("REPLAYGAIN_ALBUM_PEAK", "1.023");
+
+        assert!((rg.track_gain_db.unwrap() - (-7.35)).abs() < 1e-6);
+        assert!((rg.album_gain_db.unwrap() - 1.25).abs() < 1e-6);
+        assert!((rg.track_peak.unwrap() - 0.972107).abs() < 1e-6);
+        assert!((rg.album_peak.unwrap() - 1.023).abs() < 1e-6);
+
+        // Zero/negative peaks and invalid numbers are ignored cleanly.
+        rg.ingest_tag("REPLAYGAIN_TRACK_PEAK", "0.0");
+        rg.ingest_tag("REPLAYGAIN_ALBUM_PEAK", "-0.5");
+        assert!((rg.track_peak.unwrap() - 0.972107).abs() < 1e-6);
+        assert!((rg.album_peak.unwrap() - 1.023).abs() < 1e-6);
+
+        // R128 fallback (-256 Q7.8 = -1.0 dB relative to -23 LUFS => +4.0 dB RG).
+        let mut opus_rg = ReplayGainTags::default();
+        opus_rg.ingest_tag("R128_TRACK_GAIN", "-256");
+        opus_rg.ingest_tag("R128_ALBUM_GAIN", "-512");
+        assert!((opus_rg.track_gain_db.unwrap() - 4.0).abs() < 1e-6);
+        assert!((opus_rg.album_gain_db.unwrap() - 3.0).abs() < 1e-6);
     }
 }

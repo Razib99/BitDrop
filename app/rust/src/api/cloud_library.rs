@@ -135,6 +135,10 @@ pub struct CloudTrack {
     pub tags_read: bool,
     /// Absolute path to artwork pulled out of the file, or empty.
     pub artwork_path: String,
+    pub replay_gain_track_gain: Option<f64>,
+    pub replay_gain_album_gain: Option<f64>,
+    pub replay_gain_track_peak: Option<f64>,
+    pub replay_gain_album_peak: Option<f64>,
 }
 
 impl From<CloudTrackRow> for CloudTrack {
@@ -158,6 +162,10 @@ impl From<CloudTrackRow> for CloudTrack {
             size_bytes: r.size_bytes,
             tags_read: r.tags_read,
             artwork_path: r.artwork_path,
+            replay_gain_track_gain: r.replay_gain_track_gain,
+            replay_gain_album_gain: r.replay_gain_album_gain,
+            replay_gain_track_peak: r.replay_gain_track_peak,
+            replay_gain_album_peak: r.replay_gain_album_peak,
         }
     }
 }
@@ -499,9 +507,11 @@ pub fn cloud_library_read_tags(
     let mut disc_number: Option<u32> = None;
 
     let mut embedded_lyrics: Option<String> = None;
+    let mut rg = crate::cloud::tag_parser::ReplayGainTags::default();
 
     if let Some(metadata) = format.metadata().current() {
         for tag in metadata.tags() {
+            rg.ingest_tag(&tag.key, &tag.value.to_string());
             if tag.key.eq_ignore_ascii_case("lyrics")
                 || tag.key.eq_ignore_ascii_case("unsyncedlyrics")
                 || tag.key.eq_ignore_ascii_case("uslt")
@@ -564,6 +574,8 @@ pub fn cloud_library_read_tags(
                 title = ?, artist = ?, album = ?, album_artist = ?,
                 genre = ?, year = ?, track_number = ?, disc_number = ?,
                 duration_ms = ?, sample_rate = ?, channels = ?, bits_per_sample = ?,
+                replay_gain_track_gain = ?, replay_gain_album_gain = ?,
+                replay_gain_track_peak = ?, replay_gain_album_peak = ?,
                 tags_read = 1
              WHERE file_id = ?",
             rusqlite::params![
@@ -579,6 +591,10 @@ pub fn cloud_library_read_tags(
                 sample_rate,
                 channels,
                 bits_per_sample,
+                rg.track_gain_db,
+                rg.album_gain_db,
+                rg.track_peak,
+                rg.album_peak,
                 file_id
             ],
         )?;
@@ -1010,6 +1026,7 @@ pub fn cloud_library_scan_tags_batch(
                         channels: 2,
                         bits_per_sample: 16,
                         artwork_path: String::new(),
+                        ..Default::default()
                     };
 
                     let range_end = if size_bytes > 0 && size_bytes < 65536 {
@@ -1219,6 +1236,11 @@ pub fn cloud_library_scan_tags_batch(
                                 }
                             }
 
+                            let mut rg = crate::cloud::tag_parser::ReplayGainTags::default();
+                            for (k, v) in &meta.tags {
+                                rg.ingest_tag(k, v);
+                            }
+
                             return TrackTagUpdate {
                                 file_id,
                                 title,
@@ -1234,6 +1256,10 @@ pub fn cloud_library_scan_tags_batch(
                                 channels,
                                 bits_per_sample,
                                 artwork_path,
+                                replay_gain_track_gain: rg.track_gain_db,
+                                replay_gain_album_gain: rg.album_gain_db,
+                                replay_gain_track_peak: rg.track_peak,
+                                replay_gain_album_peak: rg.album_peak,
                             };
                         }
                     }
@@ -1288,9 +1314,11 @@ pub fn cloud_library_scan_tags_batch(
                         let mut year = 0;
                         let mut track_number = 0;
                         let mut disc_number = 1;
+                        let mut rg = crate::cloud::tag_parser::ReplayGainTags::default();
 
                         if let Some(metadata) = format.metadata().current() {
                             for tag in metadata.tags() {
+                                rg.ingest_tag(&tag.key, &tag.value.to_string());
                                 match tag.std_key {
                                     Some(symphonia::core::meta::StandardTagKey::TrackTitle) => {
                                         title = tag.value.to_string()
@@ -1423,6 +1451,10 @@ pub fn cloud_library_scan_tags_batch(
                             channels,
                             bits_per_sample,
                             artwork_path,
+                            replay_gain_track_gain: rg.track_gain_db,
+                            replay_gain_album_gain: rg.album_gain_db,
+                            replay_gain_track_peak: rg.track_peak,
+                            replay_gain_album_peak: rg.album_peak,
                         };
                     }
 
@@ -1490,6 +1522,7 @@ pub fn cloud_library_scan_tags_batch(
                         channels: default_update.channels,
                         bits_per_sample: default_update.bits_per_sample,
                         artwork_path,
+                        ..Default::default()
                     }
                 }
             })

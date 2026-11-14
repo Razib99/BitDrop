@@ -23,7 +23,7 @@ pub struct LocalScanProgress {
 }
 
 /// Extracted metadata and file properties for a local audio track.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct LocalTrackInfo {
     pub path: String,
     pub name: String,
@@ -42,6 +42,10 @@ pub struct LocalTrackInfo {
     pub channels: u8,
     pub bits_per_sample: u8,
     pub artwork_path: Option<String>,
+    pub replay_gain_track_gain: Option<f64>,
+    pub replay_gain_album_gain: Option<f64>,
+    pub replay_gain_track_peak: Option<f64>,
+    pub replay_gain_album_peak: Option<f64>,
 }
 
 /// Errors encountered during local directory scanning.
@@ -200,6 +204,7 @@ pub fn extract_local_metadata(
                     channels: (hdr.channel_num as u8).max(1),
                     bits_per_sample: 1,
                     artwork_path: None,
+                    ..Default::default()
                 });
             }
             Err(e) => {
@@ -223,6 +228,7 @@ pub fn extract_local_metadata(
                     channels: 2,
                     bits_per_sample: 1,
                     artwork_path: None,
+                    ..Default::default()
                 });
             }
         }
@@ -263,6 +269,7 @@ pub fn extract_local_metadata(
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: None,
+                ..Default::default()
             });
         }
     };
@@ -311,6 +318,7 @@ pub fn extract_local_metadata(
     let mut track_number = fallback_track;
     let mut disc_number: Option<u32> = Some(1);
     let mut artwork_path = None;
+    let mut replay_gain = crate::cloud::tag_parser::ReplayGainTags::default();
 
     // Check embedded artwork
     if let Some(metadata) = probed.format.metadata().current() {
@@ -329,6 +337,7 @@ pub fn extract_local_metadata(
         }
 
         for tag in metadata.tags() {
+            replay_gain.ingest_tag(&tag.key, &tag.value.to_string());
             match tag.std_key {
                 Some(symphonia::core::meta::StandardTagKey::TrackTitle) => {
                     title = tag.value.to_string().trim().to_string();
@@ -404,6 +413,10 @@ pub fn extract_local_metadata(
         channels,
         bits_per_sample,
         artwork_path,
+        replay_gain_track_gain: replay_gain.track_gain_db,
+        replay_gain_album_gain: replay_gain.album_gain_db,
+        replay_gain_track_peak: replay_gain.track_peak,
+        replay_gain_album_peak: replay_gain.album_peak,
     })
 }
 

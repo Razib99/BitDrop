@@ -681,6 +681,10 @@ class CloudTrack {
 
   /// Absolute path to artwork pulled out of the file, or empty.
   final String artworkPath;
+  final double? replayGainTrackGain;
+  final double? replayGainAlbumGain;
+  final double? replayGainTrackPeak;
+  final double? replayGainAlbumPeak;
 
   const CloudTrack({
     required this.fileId,
@@ -701,6 +705,10 @@ class CloudTrack {
     required this.sizeBytes,
     required this.tagsRead,
     required this.artworkPath,
+    this.replayGainTrackGain,
+    this.replayGainAlbumGain,
+    this.replayGainTrackPeak,
+    this.replayGainAlbumPeak,
   });
 
   @override
@@ -722,7 +730,11 @@ class CloudTrack {
       bitsPerSample.hashCode ^
       sizeBytes.hashCode ^
       tagsRead.hashCode ^
-      artworkPath.hashCode;
+      artworkPath.hashCode ^
+      replayGainTrackGain.hashCode ^
+      replayGainAlbumGain.hashCode ^
+      replayGainTrackPeak.hashCode ^
+      replayGainAlbumPeak.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -746,7 +758,11 @@ class CloudTrack {
           bitsPerSample == other.bitsPerSample &&
           sizeBytes == other.sizeBytes &&
           tagsRead == other.tagsRead &&
-          artworkPath == other.artworkPath;
+          artworkPath == other.artworkPath &&
+          replayGainTrackGain == other.replayGainTrackGain &&
+          replayGainAlbumGain == other.replayGainAlbumGain &&
+          replayGainTrackPeak == other.replayGainTrackPeak &&
+          replayGainAlbumPeak == other.replayGainAlbumPeak;
 }
 
 /// Parsed lyrics for a track, supporting both synchronized and plain formats.

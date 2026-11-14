@@ -31,6 +31,10 @@ class CloudTrackRow {
   /// False while only the filename is known, i.e. before the tag pass has
   /// reached this row. The UI shimmers these fields rather than hiding them.
   final bool tagsRead;
+  final double? replayGainTrackGain;
+  final double? replayGainAlbumGain;
+  final double? replayGainTrackPeak;
+  final double? replayGainAlbumPeak;
 
   const CloudTrackRow({
     required this.fileId,
@@ -51,6 +55,10 @@ class CloudTrackRow {
     required this.sizeBytes,
     required this.artworkPath,
     required this.tagsRead,
+    this.replayGainTrackGain,
+    this.replayGainAlbumGain,
+    this.replayGainTrackPeak,
+    this.replayGainAlbumPeak,
   });
 
   @override
@@ -72,7 +80,11 @@ class CloudTrackRow {
       bitsPerSample.hashCode ^
       sizeBytes.hashCode ^
       artworkPath.hashCode ^
-      tagsRead.hashCode;
+      tagsRead.hashCode ^
+      replayGainTrackGain.hashCode ^
+      replayGainAlbumGain.hashCode ^
+      replayGainTrackPeak.hashCode ^
+      replayGainAlbumPeak.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -96,5 +108,9 @@ class CloudTrackRow {
           bitsPerSample == other.bitsPerSample &&
           sizeBytes == other.sizeBytes &&
           artworkPath == other.artworkPath &&
-          tagsRead == other.tagsRead;
+          tagsRead == other.tagsRead &&
+          replayGainTrackGain == other.replayGainTrackGain &&
+          replayGainAlbumGain == other.replayGainAlbumGain &&
+          replayGainTrackPeak == other.replayGainTrackPeak &&
+          replayGainAlbumPeak == other.replayGainAlbumPeak;
 }

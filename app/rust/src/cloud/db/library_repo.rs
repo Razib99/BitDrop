@@ -44,6 +44,10 @@ impl<'a> LibraryRepository<'a> {
             size_bytes: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
             tags_read: r.get::<_, i64>(16)? != 0,
             artwork_path: r.get::<_, Option<String>>(17)?.unwrap_or_default(),
+            replay_gain_track_gain: r.get::<_, Option<f64>>(18)?,
+            replay_gain_album_gain: r.get::<_, Option<f64>>(19)?,
+            replay_gain_track_peak: r.get::<_, Option<f64>>(20)?,
+            replay_gain_album_peak: r.get::<_, Option<f64>>(21)?,
         })
     }
 
@@ -139,12 +143,15 @@ impl<'a> LibraryRepository<'a> {
                     file_id, name, folder_path, size_bytes, title, artist,
                     album, album_artist, genre, year, track_number, disc_number,
                     duration_ms, sample_rate, channels, bits_per_sample,
-                    artwork_path, artwork_checked, tags_read
+                    artwork_path, artwork_checked, tags_read,
+                    replay_gain_track_gain, replay_gain_album_gain,
+                    replay_gain_track_peak, replay_gain_album_peak
                  ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6,
                     ?7, ?8, ?9, ?10, ?11, ?12,
                     ?13, ?14, ?15, ?16,
-                    ?17, ?18, 1
+                    ?17, ?18, 1,
+                    ?19, ?20, ?21, ?22
                  )
                  ON CONFLICT(file_id) DO UPDATE SET
                     name = excluded.name,
@@ -164,7 +171,11 @@ impl<'a> LibraryRepository<'a> {
                     bits_per_sample = excluded.bits_per_sample,
                     artwork_path = COALESCE(excluded.artwork_path, tracks.artwork_path),
                     artwork_checked = CASE WHEN excluded.artwork_path IS NOT NULL AND excluded.artwork_path != '' THEN 1 ELSE tracks.artwork_checked END,
-                    tags_read = 1",
+                    tags_read = 1,
+                    replay_gain_track_gain = COALESCE(excluded.replay_gain_track_gain, tracks.replay_gain_track_gain),
+                    replay_gain_album_gain = COALESCE(excluded.replay_gain_album_gain, tracks.replay_gain_album_gain),
+                    replay_gain_track_peak = COALESCE(excluded.replay_gain_track_peak, tracks.replay_gain_track_peak),
+                    replay_gain_album_peak = COALESCE(excluded.replay_gain_album_peak, tracks.replay_gain_album_peak)",
             )?;
 
             for item in items {
@@ -213,6 +224,10 @@ impl<'a> LibraryRepository<'a> {
                     bits_per_sample,
                     &item.artwork_path,
                     artwork_checked,
+                    &item.replay_gain_track_gain,
+                    &item.replay_gain_album_gain,
+                    &item.replay_gain_track_peak,
+                    &item.replay_gain_album_peak,
                 ])?;
             }
         }
@@ -274,7 +289,11 @@ impl<'a> LibraryRepository<'a> {
                     duration_ms = ?10, sample_rate = ?11, channels = ?12,
                     bits_per_sample = ?13, artwork_path = ?14,
                     artwork_checked = CASE WHEN ?14 IS NOT NULL AND ?14 != '' THEN 1 ELSE tracks.artwork_checked END,
-                    tags_read = 1
+                    tags_read = 1,
+                    replay_gain_track_gain = ?15,
+                    replay_gain_album_gain = ?16,
+                    replay_gain_track_peak = ?17,
+                    replay_gain_album_peak = ?18
                  WHERE file_id = ?1",
             )?;
 
@@ -309,6 +328,10 @@ impl<'a> LibraryRepository<'a> {
                     u.channels,
                     u.bits_per_sample,
                     u.artwork_path,
+                    u.replay_gain_track_gain,
+                    u.replay_gain_album_gain,
+                    u.replay_gain_track_peak,
+                    u.replay_gain_album_peak,
                 ])?;
 
                 let album_clean = if u.album.is_empty() {
@@ -447,7 +470,9 @@ impl<'a> LibraryRepository<'a> {
             "SELECT t.file_id, t.name, t.folder_path, t.title, t.artist, t.album,
                     t.album_artist, t.genre, t.year, t.track_number, t.disc_number,
                     t.duration_ms, t.sample_rate, t.channels, t.bits_per_sample,
-                    t.size_bytes, t.tags_read, t.artwork_path
+                    t.size_bytes, t.tags_read, t.artwork_path,
+                    t.replay_gain_track_gain, t.replay_gain_album_gain,
+                    t.replay_gain_track_peak, t.replay_gain_album_peak
              FROM tracks_fts f
              JOIN tracks t ON t.rowid = f.rowid
              WHERE tracks_fts MATCH ?1
@@ -491,7 +516,9 @@ impl<'a> LibraryRepository<'a> {
             "SELECT file_id, name, folder_path, title, artist, album,
                     album_artist, genre, year, track_number, disc_number,
                     duration_ms, sample_rate, channels, bits_per_sample,
-                    size_bytes, tags_read, artwork_path
+                    size_bytes, tags_read, artwork_path,
+                    replay_gain_track_gain, replay_gain_album_gain,
+                    replay_gain_track_peak, replay_gain_album_peak
              FROM tracks
              ORDER BY album, album_artist, disc_number, track_number, title",
         )?;
@@ -506,7 +533,9 @@ impl<'a> LibraryRepository<'a> {
             "SELECT file_id, name, folder_path, title, artist, album,
                     album_artist, genre, year, track_number, disc_number,
                     duration_ms, sample_rate, channels, bits_per_sample,
-                    size_bytes, tags_read, artwork_path
+                    size_bytes, tags_read, artwork_path,
+                    replay_gain_track_gain, replay_gain_album_gain,
+                    replay_gain_track_peak, replay_gain_album_peak
              FROM tracks WHERE file_id = ?1",
         )?;
         let mut rows = stmt.query_map(params![file_id], Self::row_to_cloud_track)?;
@@ -568,7 +597,9 @@ impl<'a> LibraryRepository<'a> {
                 "SELECT DISTINCT t.file_id, t.name, t.folder_path, t.title, t.artist, t.album,
                         t.album_artist, t.genre, t.year, t.track_number, t.disc_number,
                         t.duration_ms, t.sample_rate, t.channels, t.bits_per_sample,
-                        t.size_bytes, t.tags_read, t.artwork_path
+                        t.size_bytes, t.tags_read, t.artwork_path,
+                        t.replay_gain_track_gain, t.replay_gain_album_gain,
+                        t.replay_gain_track_peak, t.replay_gain_album_peak
                  FROM tracks t
                  LEFT JOIN track_genres tg ON t.rowid = tg.track_id
                  LEFT JOIN genres g ON tg.genre_id = g.id
@@ -580,7 +611,9 @@ impl<'a> LibraryRepository<'a> {
                 "SELECT DISTINCT t.file_id, t.name, t.folder_path, t.title, t.artist, t.album,
                         t.album_artist, t.genre, t.year, t.track_number, t.disc_number,
                         t.duration_ms, t.sample_rate, t.channels, t.bits_per_sample,
-                        t.size_bytes, t.tags_read, t.artwork_path
+                        t.size_bytes, t.tags_read, t.artwork_path,
+                        t.replay_gain_track_gain, t.replay_gain_album_gain,
+                        t.replay_gain_track_peak, t.replay_gain_album_peak
                  FROM tracks t
                  JOIN track_genres tg ON t.rowid = tg.track_id
                  JOIN genres g ON tg.genre_id = g.id
@@ -727,7 +760,9 @@ impl<'a> LibraryRepository<'a> {
                     "SELECT file_id, name, folder_path, title, artist, album,
                             album_artist, genre, year, track_number, disc_number,
                             duration_ms, sample_rate, channels, bits_per_sample,
-                            size_bytes, tags_read, artwork_path
+                            size_bytes, tags_read, artwork_path,
+                            replay_gain_track_gain, replay_gain_album_gain,
+                            replay_gain_track_peak, replay_gain_album_peak
                      FROM tracks
                      ORDER BY folder_path, album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
                 )?
@@ -736,7 +771,9 @@ impl<'a> LibraryRepository<'a> {
                     "SELECT file_id, name, folder_path, title, artist, album,
                             album_artist, genre, year, track_number, disc_number,
                             duration_ms, sample_rate, channels, bits_per_sample,
-                            size_bytes, tags_read, artwork_path
+                            size_bytes, tags_read, artwork_path,
+                            replay_gain_track_gain, replay_gain_album_gain,
+                            replay_gain_track_peak, replay_gain_album_peak
                      FROM tracks
                      WHERE folder_path = '' OR folder_path = '/'
                      ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
@@ -749,7 +786,9 @@ impl<'a> LibraryRepository<'a> {
                 "SELECT file_id, name, folder_path, title, artist, album,
                         album_artist, genre, year, track_number, disc_number,
                         duration_ms, sample_rate, channels, bits_per_sample,
-                        size_bytes, tags_read, artwork_path
+                        size_bytes, tags_read, artwork_path,
+                        replay_gain_track_gain, replay_gain_album_gain,
+                        replay_gain_track_peak, replay_gain_album_peak
                  FROM tracks
                  WHERE folder_path = ?1 OR folder_path = ?2 OR folder_path LIKE ?3 OR folder_path LIKE ?4
                  ORDER BY folder_path, album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
@@ -764,7 +803,9 @@ impl<'a> LibraryRepository<'a> {
                 "SELECT file_id, name, folder_path, title, artist, album,
                         album_artist, genre, year, track_number, disc_number,
                         duration_ms, sample_rate, channels, bits_per_sample,
-                        size_bytes, tags_read, artwork_path
+                        size_bytes, tags_read, artwork_path,
+                        replay_gain_track_gain, replay_gain_album_gain,
+                        replay_gain_track_peak, replay_gain_album_peak
                  FROM tracks
                  WHERE folder_path = ?1 OR folder_path = ?2
                  ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
@@ -1284,6 +1325,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: Some("/music/art1.img".into()),
+                ..Default::default()
             },
             LocalTrackInfo {
                 path: "/music/t2.flac".into(),
@@ -1303,6 +1345,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: Some("/music/art2.img".into()),
+                ..Default::default()
             },
             LocalTrackInfo {
                 path: "/music/t3.flac".into(),
@@ -1322,6 +1365,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: Some("/music/art3.img".into()),
+                ..Default::default()
             },
             LocalTrackInfo {
                 path: "/music/t4.flac".into(),
@@ -1341,6 +1385,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: Some("/music/art4.img".into()),
+                ..Default::default()
             },
             LocalTrackInfo {
                 path: "/music/t5.flac".into(),
@@ -1360,6 +1405,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: Some("/music/art5.img".into()),
+                ..Default::default()
             },
             LocalTrackInfo {
                 path: "/music/t6.flac".into(),
@@ -1379,6 +1425,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: None,
+                ..Default::default()
             },
         ];
 
@@ -1506,6 +1553,10 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 24,
                 artwork_path: None,
+                replay_gain_track_gain: Some(-6.5),
+                replay_gain_album_gain: Some(-7.2),
+                replay_gain_track_peak: Some(0.988),
+                replay_gain_album_peak: Some(0.999),
             },
             LocalTrackInfo {
                 path: "/music/t2.flac".into(),
@@ -1525,6 +1576,7 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: None,
+                ..Default::default()
             },
             LocalTrackInfo {
                 path: "/music/t3.mp3".into(),
@@ -1544,9 +1596,16 @@ mod tests {
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: None,
+                ..Default::default()
             },
         ];
         db.batch_insert_local_tracks(&tracks).unwrap();
+
+        let t1 = db.get_track("/music/t1.flac").unwrap().unwrap();
+        assert_eq!(t1.replay_gain_track_gain, Some(-6.5));
+        assert_eq!(t1.replay_gain_album_gain, Some(-7.2));
+        assert_eq!(t1.replay_gain_track_peak, Some(0.988));
+        assert_eq!(t1.replay_gain_album_peak, Some(0.999));
 
         // Record playback
         // Track 1 (Hi-Res: 96k/24) played twice, 300s each = 600s = 10 mins

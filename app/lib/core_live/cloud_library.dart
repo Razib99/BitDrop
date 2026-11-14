@@ -631,85 +631,124 @@ class CloudLibrary {
   static Codec _codecFor(String name) => codecFor(name);
 
   /// Converts an indexed SQLite track row from Rust into a model [Track].
-  static Track trackFromRow(rust_db.CloudTrackRow r) {
-    final title = r.title.isNotEmpty
-        ? r.title
-        : r.name.replaceFirst(RegExp(r'\.[a-zA-Z0-9]+$'), '');
-    final artist = r.artist.isNotEmpty ? r.artist : 'Unknown artist';
-    final album = r.album.isNotEmpty ? r.album : 'Unknown album';
-    final albumArtist = r.albumArtist.isNotEmpty ? r.albumArtist : artist;
-    final albumId = albumIdFor(album, albumArtist);
-    final isLocal = _isLocalTrackId(r.fileId);
+  static Track trackFromRow(rust_db.CloudTrackRow r) => _mapTrack(
+        fileId: r.fileId,
+        name: r.name,
+        folderPath: r.folderPath,
+        title: r.title,
+        artist: r.artist,
+        album: r.album,
+        albumArtist: r.albumArtist,
+        genre: r.genre,
+        year: r.year,
+        trackNumber: r.trackNumber,
+        discNumber: r.discNumber,
+        durationMs: r.durationMs,
+        sampleRate: r.sampleRate,
+        channels: r.channels,
+        bitsPerSample: r.bitsPerSample,
+        sizeBytes: r.sizeBytes,
+        tagsRead: r.tagsRead,
+        artworkPath: r.artworkPath,
+        replayGainTrackGain: r.replayGainTrackGain,
+        replayGainAlbumGain: r.replayGainAlbumGain,
+        replayGainTrackPeak: r.replayGainTrackPeak,
+        replayGainAlbumPeak: r.replayGainAlbumPeak,
+      );
+
+  Track _toTrack(rust.CloudTrack r) => _mapTrack(
+        fileId: r.fileId,
+        name: r.name,
+        folderPath: r.folderPath,
+        title: r.title,
+        artist: r.artist,
+        album: r.album,
+        albumArtist: r.albumArtist,
+        genre: r.genre,
+        year: r.year,
+        trackNumber: r.trackNumber,
+        discNumber: r.discNumber,
+        durationMs: r.durationMs,
+        sampleRate: r.sampleRate,
+        channels: r.channels,
+        bitsPerSample: r.bitsPerSample,
+        sizeBytes: r.sizeBytes,
+        tagsRead: r.tagsRead,
+        artworkPath: r.artworkPath,
+        replayGainTrackGain: r.replayGainTrackGain,
+        replayGainAlbumGain: r.replayGainAlbumGain,
+        replayGainTrackPeak: r.replayGainTrackPeak,
+        replayGainAlbumPeak: r.replayGainAlbumPeak,
+      );
+
+  static Track _mapTrack({
+    required String fileId,
+    required String name,
+    required String folderPath,
+    required String title,
+    required String artist,
+    required String album,
+    required String albumArtist,
+    required String genre,
+    required int year,
+    required int trackNumber,
+    required int discNumber,
+    required int durationMs,
+    required int sampleRate,
+    required int channels,
+    required int bitsPerSample,
+    required BigInt sizeBytes,
+    required bool tagsRead,
+    required String artworkPath,
+    required double? replayGainTrackGain,
+    required double? replayGainAlbumGain,
+    required double? replayGainTrackPeak,
+    required double? replayGainAlbumPeak,
+  }) {
+    final resolvedTitle = title.isNotEmpty
+        ? title
+        : name.replaceFirst(RegExp(r'\.[a-zA-Z0-9]+$'), '');
+    final resolvedArtist = artist.isNotEmpty ? artist : 'Unknown artist';
+    final resolvedAlbum = album.isNotEmpty ? album : 'Unknown album';
+    final resolvedAlbumArtist =
+        albumArtist.isNotEmpty ? albumArtist : resolvedArtist;
+    final albumId = albumIdFor(resolvedAlbum, resolvedAlbumArtist);
+    final isLocal = _isLocalTrackId(fileId);
 
     return Track(
-      id: r.fileId,
-      title: title,
-      artist: artist,
-      albumTitle: album,
+      id: fileId,
+      title: resolvedTitle,
+      artist: resolvedArtist,
+      albumTitle: resolvedAlbum,
       albumId: albumId,
-      durationMs: r.durationMs,
-      format: AudioFormat(
-        codec: _codecFor(r.name),
-        bitDepth: r.bitsPerSample == 0 ? 16 : r.bitsPerSample,
-        sampleRate: r.sampleRate == 0 ? 44100 : r.sampleRate,
-        channels: r.channels == 0 ? 2 : r.channels,
-      ),
-      availability: isLocal ? Availability.cached : Availability.cloudOnly,
-      sizeBytes: r.sizeBytes.toInt(),
-      artwork: Artwork(
-        seed: albumId.hashCode,
-        dominantColor: _tintFor(albumId),
-        uri: r.artworkPath.isEmpty ? null : r.artworkPath,
-      ),
-      trackNumber: r.trackNumber == 0 ? null : r.trackNumber,
-      discNumber: r.discNumber == 0 ? 1 : r.discNumber,
-      year: r.year == 0 ? null : r.year,
-      genre: r.genre.isEmpty ? null : r.genre,
-      folderPath: r.folderPath,
-      tagsPending: !r.tagsRead,
-    );
-  }
-
-  Track _toTrack(rust.CloudTrack r) {
-    final title = r.title.isNotEmpty
-        ? r.title
-        : r.name.replaceFirst(RegExp(r'\.[a-zA-Z0-9]+$'), '');
-    final artist = r.artist.isNotEmpty ? r.artist : 'Unknown artist';
-    final album = r.album.isNotEmpty ? r.album : 'Unknown album';
-    final albumArtist = r.albumArtist.isNotEmpty ? r.albumArtist : artist;
-    final albumId = albumIdFor(album, albumArtist);
-    final isLocal = _isLocalTrackId(r.fileId);
-
-    return Track(
-      id: r.fileId,
-      title: title,
-      artist: artist,
-      albumTitle: album,
-      albumId: albumId,
-      durationMs: r.durationMs,
+      durationMs: durationMs,
       // Before the tag pass the stream info is unknown; the UI shows these as
       // pending rather than printing a confident 0/0.
       format: AudioFormat(
-        codec: _codecFor(r.name),
-        bitDepth: r.bitsPerSample == 0 ? 16 : r.bitsPerSample,
-        sampleRate: r.sampleRate == 0 ? 44100 : r.sampleRate,
-        channels: r.channels == 0 ? 2 : r.channels,
+        codec: _codecFor(name),
+        bitDepth: bitsPerSample == 0 ? 16 : bitsPerSample,
+        sampleRate: sampleRate == 0 ? 44100 : sampleRate,
+        channels: channels == 0 ? 2 : channels,
       ),
       availability: isLocal ? Availability.cached : Availability.cloudOnly,
-      sizeBytes: r.sizeBytes.toInt(),
+      sizeBytes: sizeBytes.toInt(),
       artwork: Artwork(
         seed: albumId.hashCode,
         dominantColor: _tintFor(albumId),
         // Embedded cover pulled out during the tag pass. Null until that
         // reaches this track, so the seeded gradient stands in meanwhile.
-        uri: r.artworkPath.isEmpty ? null : r.artworkPath,
+        uri: artworkPath.isEmpty ? null : artworkPath,
       ),
-      trackNumber: r.trackNumber == 0 ? null : r.trackNumber,
-      discNumber: r.discNumber == 0 ? 1 : r.discNumber,
-      year: r.year == 0 ? null : r.year,
-      genre: r.genre.isEmpty ? null : r.genre,
-      folderPath: r.folderPath,
-      tagsPending: !r.tagsRead,
+      trackNumber: trackNumber == 0 ? null : trackNumber,
+      discNumber: discNumber == 0 ? 1 : discNumber,
+      year: year == 0 ? null : year,
+      genre: genre.isEmpty ? null : genre,
+      folderPath: folderPath,
+      tagsPending: !tagsRead,
+      replayGainDb: replayGainTrackGain,
+      replayGainAlbumDb: replayGainAlbumGain,
+      trackPeak: replayGainTrackPeak,
+      albumPeak: replayGainAlbumPeak,
     );
   }
 

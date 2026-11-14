@@ -244,7 +244,9 @@ class Track {
     this.tagsPending = false,
     this.unsupportedReason,
     this.replayGainDb,
+    this.replayGainAlbumDb,
     this.trackPeak,
+    this.albumPeak,
   });
 
   final String id;
@@ -276,7 +278,9 @@ class Track {
   final bool tagsPending;
   final String? unsupportedReason;
   final double? replayGainDb;
+  final double? replayGainAlbumDb;
   final double? trackPeak;
+  final double? albumPeak;
 
   bool get isPlayable =>
       availability != Availability.unavailable &&
@@ -314,7 +318,9 @@ class Track {
         tagsPending: tagsPending ?? this.tagsPending,
         unsupportedReason: unsupportedReason,
         replayGainDb: replayGainDb,
+        replayGainAlbumDb: replayGainAlbumDb,
         trackPeak: trackPeak,
+        albumPeak: albumPeak,
       );
 }
 
