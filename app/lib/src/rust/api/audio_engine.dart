@@ -154,6 +154,15 @@ void engineSetEq({required List<double> gains}) =>
 void engineSetEqEnabled({required bool enabled}) => RustLib.instance.api
     .crateApiAudioEngineEngineSetEqEnabled(enabled: enabled);
 
+/// Configures ReplayGain gain (dB) and track linear peak independently of EQ bypass.
+void engineSetReplayGain({required double gainDb, required double trackPeak}) =>
+    RustLib.instance.api.crateApiAudioEngineEngineSetReplayGain(
+        gainDb: gainDb, trackPeak: trackPeak);
+
+/// Configures the 64-bit BS2B headphone crossfeed preset (`0` Off, `1` Default, `2` Chu Moy, `3` Jan Meier).
+void engineSetCrossfeed({required int preset}) =>
+    RustLib.instance.api.crateApiAudioEngineEngineSetCrossfeed(preset: preset);
+
 /// Attaches a direct user-space USB Audio DAC (Tier D bit-perfect bypass).
 EngineUsbDacDiagnostics engineAttachUsbDac(
         {required int fd, required int sampleRate, required int bitDepth}) =>
@@ -481,6 +490,9 @@ class PlayerState {
   final double autoGain;
   final double balance;
   final bool mono;
+  final double replayGainDb;
+  final double trackPeak;
+  final int crossfeedPreset;
   final bool eqUpdated;
 
   /// Where the output gain is heading, 0.0 or 1.0.
@@ -538,6 +550,9 @@ class PlayerState {
     required this.autoGain,
     required this.balance,
     required this.mono,
+    required this.replayGainDb,
+    required this.trackPeak,
+    required this.crossfeedPreset,
     required this.eqUpdated,
     required this.fadeTarget,
     required this.fadeStep,
@@ -569,6 +584,9 @@ class PlayerState {
       autoGain.hashCode ^
       balance.hashCode ^
       mono.hashCode ^
+      replayGainDb.hashCode ^
+      trackPeak.hashCode ^
+      crossfeedPreset.hashCode ^
       eqUpdated.hashCode ^
       fadeTarget.hashCode ^
       fadeStep.hashCode ^
@@ -602,6 +620,9 @@ class PlayerState {
           autoGain == other.autoGain &&
           balance == other.balance &&
           mono == other.mono &&
+          replayGainDb == other.replayGainDb &&
+          trackPeak == other.trackPeak &&
+          crossfeedPreset == other.crossfeedPreset &&
           eqUpdated == other.eqUpdated &&
           fadeTarget == other.fadeTarget &&
           fadeStep == other.fadeStep &&

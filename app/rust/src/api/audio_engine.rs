@@ -204,7 +204,7 @@ unsafe impl Send for CpalStreamWrapper {}
 unsafe impl Sync for CpalStreamWrapper {}
 
 lazy_static::lazy_static! {}
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct PlayerState {
     pub target_sample_rate: u32,
     pub flush_requested: bool,
@@ -222,6 +222,9 @@ pub struct PlayerState {
     pub auto_gain: f32,
     pub balance: f32,
     pub mono: bool,
+    pub replay_gain_db: f32,
+    pub track_peak: f32,
+    pub crossfeed_preset: u8,
     pub eq_updated: bool,
 
     /// Where the output gain is heading, 0.0 or 1.0.
@@ -264,6 +267,43 @@ pub struct PlayerState {
     pub source_channels: u32,
 }
 
+impl Default for PlayerState {
+    fn default() -> Self {
+        Self {
+            target_sample_rate: 0,
+            flush_requested: false,
+            is_playing: false,
+            position_ms: 0,
+            duration_ms: 0,
+            current_track_id: String::new(),
+            hardware_sample_rate: 0,
+            hardware_format: String::new(),
+            eq_enabled: false,
+            eq_gains: [0.0; 10],
+            eq_preamp: 0.0,
+            eq_specs: None,
+            auto_gain: 0.0,
+            balance: 0.0,
+            mono: false,
+            replay_gain_db: 0.0,
+            track_peak: 1.0,
+            crossfeed_preset: CROSSFEED_OFF,
+            eq_updated: false,
+            fade_target: 0.0,
+            fade_step: 0.0,
+            gate_output: false,
+            loading: false,
+            decoded_ms: 0,
+            buffering: false,
+            buffered_ms: 0,
+            source_codec: String::new(),
+            source_sample_rate: 0,
+            source_bits: 0,
+            source_channels: 0,
+        }
+    }
+}
+
 /// How long a track-change ramp takes. Long enough to read as a deliberate
 /// fade rather than a cut, short enough not to hold up the next track.
 pub const FADE_MS: u32 = 260;
@@ -295,8 +335,8 @@ fn set_ramp(state: &mut PlayerState, target: f32, ms: u32) {
     CALLBACK_FADE_STEP.store(state.fade_step.to_bits(), Ordering::Relaxed);
 }
 
-/// Publishes the current EQ and DSP configuration into the lock-free Triple Buffer.
-pub fn publish_dsp_config(state: &PlayerState) {
+/// Builds a lock-free `DspConfigSnapshot` from the current `PlayerState`.
+pub(crate) fn build_dsp_config_snapshot(state: &PlayerState) -> DspConfigSnapshot {
     let mut snap = DspConfigSnapshot {
         sample_rate: if state.target_sample_rate > 0 {
             state.target_sample_rate as f64
@@ -308,6 +348,17 @@ pub fn publish_dsp_config(state: &PlayerState) {
         auto_gain: state.auto_gain as f64,
         balance: state.balance as f64,
         mono: state.mono,
+        replay_gain_db: if state.replay_gain_db.is_finite() {
+            state.replay_gain_db as f64
+        } else {
+            0.0
+        },
+        track_peak: if state.track_peak.is_finite() && state.track_peak > 0.0 {
+            state.track_peak as f64
+        } else {
+            1.0
+        },
+        crossfeed_preset: state.crossfeed_preset,
         ..Default::default()
     };
     if let Some(specs) = &state.eq_specs {
@@ -319,7 +370,12 @@ pub fn publish_dsp_config(state: &PlayerState) {
         snap.is_parametric = false;
         snap.graphic_gains = state.eq_gains;
     }
-    DSP_TRIPLE_BUFFER.publish(snap);
+    snap
+}
+
+/// Publishes the current EQ and DSP configuration into the lock-free Triple Buffer.
+pub fn publish_dsp_config(state: &PlayerState) {
+    DSP_TRIPLE_BUFFER.publish(build_dsp_config_snapshot(state));
 }
 
 pub enum DecoderCmd {
@@ -2336,6 +2392,33 @@ pub fn engine_set_eq_enabled(enabled: bool) {
     publish_dsp_config(&state);
 }
 
+/// Configures ReplayGain gain (dB) and track linear peak independently of EQ bypass.
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_set_replay_gain(gain_db: f32, track_peak: f32) {
+    let mut state = PLAYER_STATE.lock().unwrap();
+    state.replay_gain_db = if gain_db.is_finite() { gain_db } else { 0.0 };
+    state.track_peak = if track_peak.is_finite() && track_peak > 0.0 {
+        track_peak
+    } else {
+        1.0
+    };
+    state.eq_updated = true;
+    publish_dsp_config(&state);
+}
+
+/// Configures the 64-bit BS2B headphone crossfeed preset (`0` Off, `1` Default, `2` Chu Moy, `3` Jan Meier).
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_set_crossfeed(preset: u8) {
+    let mut state = PLAYER_STATE.lock().unwrap();
+    state.crossfeed_preset = if preset <= CROSSFEED_JAN_MEIER {
+        preset
+    } else {
+        CROSSFEED_OFF
+    };
+    state.eq_updated = true;
+    publish_dsp_config(&state);
+}
+
 /// Diagnostic telemetry for the active Tier D direct USB stream.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EngineUsbDacDiagnostics {
@@ -3216,5 +3299,52 @@ mod tests {
                 || state.output_sample_rate > 0
                 || !state.hardware_format.is_empty()
         );
+    }
+
+    #[test]
+    fn test_engine_set_replay_gain_and_crossfeed_publish_and_preserve() {
+        engine_set_eq_enabled(false);
+        engine_set_replay_gain(-4.5, 0.85);
+        engine_set_crossfeed(CROSSFEED_JAN_MEIER);
+
+        {
+            let state = PLAYER_STATE.lock().unwrap();
+            let snap = build_dsp_config_snapshot(&state);
+            assert!(!snap.eq_enabled);
+            assert!((snap.replay_gain_db - (-4.5)).abs() < 1e-5);
+            assert!((snap.track_peak - 0.85).abs() < 1e-5);
+            assert_eq!(snap.crossfeed_preset, CROSSFEED_JAN_MEIER);
+        }
+
+        // Calling engine_set_eq must preserve ReplayGain and crossfeed settings
+        engine_set_eq(vec![0.0; 13]);
+        {
+            let state = PLAYER_STATE.lock().unwrap();
+            let snap2 = build_dsp_config_snapshot(&state);
+            assert!((snap2.replay_gain_db - (-4.5)).abs() < 1e-5);
+            assert!((snap2.track_peak - 0.85).abs() < 1e-5);
+            assert_eq!(snap2.crossfeed_preset, CROSSFEED_JAN_MEIER);
+        }
+
+        // Verify triple-buffer consumer receives latest published snapshot if unowned
+        if let Some(mut consumer) = DSP_TRIPLE_BUFFER.take_consumer() {
+            if let Some(live_snap) = consumer.read_new() {
+                assert!((live_snap.replay_gain_db - (-4.5)).abs() < 1e-5);
+                assert!((live_snap.track_peak - 0.85).abs() < 1e-5);
+                assert_eq!(live_snap.crossfeed_preset, CROSSFEED_JAN_MEIER);
+            }
+            DSP_TRIPLE_BUFFER.return_consumer(consumer);
+        }
+
+        // Non-positive peak, NaN gain, and out-of-range preset must sanitize cleanly
+        engine_set_replay_gain(f32::NAN, 0.0);
+        engine_set_crossfeed(99);
+        {
+            let state = PLAYER_STATE.lock().unwrap();
+            let snap3 = build_dsp_config_snapshot(&state);
+            assert_eq!(snap3.replay_gain_db, 0.0);
+            assert_eq!(snap3.track_peak, 1.0);
+            assert_eq!(snap3.crossfeed_preset, CROSSFEED_OFF);
+        }
     }
 }
