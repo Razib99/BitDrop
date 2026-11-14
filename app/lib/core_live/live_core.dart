@@ -97,6 +97,11 @@ class LiveBitDropCore implements BitDropCore {
   StreamSubscription<void>? _outputProbeSub;
   StreamSubscription<EqState>? _eqSub;
   StreamSubscription<audio_svc.PlaybackState>? _playbackSub;
+  StreamSubscription<List<audio_svc.MediaItem>>? _queueSub;
+  StreamSubscription<audio_svc.MediaItem?>? _mediaItemSub;
+  StreamSubscription<NowPlaying?>? _nowPlayingSub;
+  String? _lastMediaItemId;
+  (String?, double?, double?, double?, double?)? _lastSyncedReplayGainKey;
   Timer? _uiPositionTimer;
   Timer? _visualizerTimer;
   Timer? _diagnosticsTimer;
@@ -328,29 +333,47 @@ class LiveBitDropCore implements BitDropCore {
       ));
     });
 
-    _audioHandler.queue.listen((_) => _emitQueue());
+    _queueSub = _audioHandler.queue.listen((_) => _emitQueue());
 
-    _audioHandler.mediaItem.listen((item) {
-      _flushPlaybackRecord();
-      _playbackRecorded = false;
-      _trackedTrack = null;
-      _accumulatedListenedMs = 0;
-      _lastPositionMs = -1;
-      if (item != null) {
-        final track = _lookupTrack(item.id);
-        if (track != null) {
-          _nowPlaying.add(NowPlaying(
-            track: _enrichTrack(track),
-            contextLabel: _currentContextLabel.isNotEmpty
-                ? _currentContextLabel
-                : (track.folderPath.isNotEmpty
-                    ? track.folderPath
-                    : 'Local Music'),
-          ));
+    _mediaItemSub = _audioHandler.mediaItem.listen((item) {
+      if (item?.id != _lastMediaItemId) {
+        _lastMediaItemId = item?.id;
+        _flushPlaybackRecord();
+        _playbackRecorded = false;
+        _trackedTrack = null;
+        _accumulatedListenedMs = 0;
+        _lastPositionMs = -1;
+        if (item != null) {
+          final track = _lookupTrack(item.id);
+          if (track != null) {
+            _nowPlaying.add(NowPlaying(
+              track: _enrichTrack(track),
+              contextLabel: _currentContextLabel.isNotEmpty
+                  ? _currentContextLabel
+                  : (track.folderPath.isNotEmpty
+                      ? track.folderPath
+                      : 'Local Music'),
+            ));
+          }
         }
       }
       _emitQueue();
-      _pushEqToEngine();
+    });
+
+    _nowPlayingSub = _nowPlaying.listen((np) {
+      final t = np?.track;
+      final key = (
+        t?.id,
+        t?.replayGainDb,
+        t?.replayGainAlbumDb,
+        t?.trackPeak,
+        t?.albumPeak,
+      );
+      if (key != _lastSyncedReplayGainKey) {
+        _lastSyncedReplayGainKey = key;
+        _settingsRepo.pushReplayGainForTrack(_eq.value, t);
+        _recomputeSignalPath();
+      }
     });
 
     _eqSub = _eq.listen(_pushEqToEngine);
@@ -2526,6 +2549,9 @@ class LiveBitDropCore implements BitDropCore {
     _outputProbeSub?.cancel();
     _eqSub?.cancel();
     _playbackSub?.cancel();
+    _queueSub?.cancel();
+    _mediaItemSub?.cancel();
+    _nowPlayingSub?.cancel();
     _playback.close();
     _position.close();
     _nowPlaying.close();

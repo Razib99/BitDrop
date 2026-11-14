@@ -320,5 +320,87 @@ void main() {
       expect(restoredEq.preampDb, equals(-4.5));
       expect(liveCore.settingsRepository.currentEq.preampDb, equals(-4.5));
     });
+
+    test('LiveBitDropCore dynamically syncs ReplayGain across track switches',
+        () async {
+      final pushed = <(double, double)>[];
+      liveCore.settingsRepository.onReplayGainPushed = (gain, peak) {
+        pushed.add((gain, peak));
+      };
+
+      const track1 = Track(
+        id: 't1',
+        title: 'Track 1',
+        artist: 'Artist A',
+        albumTitle: 'Album X',
+        albumId: 'alb-x',
+        durationMs: 120000,
+        format: AudioFormat(
+          codec: Codec.flac,
+          bitDepth: 24,
+          sampleRate: 96000,
+          channels: 2,
+        ),
+        availability: Availability.cached,
+        sizeBytes: 1000,
+        artwork: Artwork(seed: 1, dominantColor: 0xFF000000),
+        replayGainDb: -5.2,
+        replayGainAlbumDb: -7.1,
+        trackPeak: 0.92,
+        albumPeak: 0.98,
+      );
+      const track2 = Track(
+        id: 't2',
+        title: 'Track 2',
+        artist: 'Artist A',
+        albumTitle: 'Album Y',
+        albumId: 'alb-y',
+        durationMs: 140000,
+        format: AudioFormat(
+          codec: Codec.flac,
+          bitDepth: 16,
+          sampleRate: 44100,
+          channels: 2,
+        ),
+        availability: Availability.cached,
+        sizeBytes: 1000,
+        artwork: Artwork(seed: 2, dominantColor: 0xFF000000),
+        replayGainDb: -3.4,
+        replayGainAlbumDb: -6.0,
+        trackPeak: 0.87,
+        albumPeak: 0.95,
+      );
+
+      await liveCore.send(const SetReplayGain(mode: ReplayGainMode.track));
+      pushed.clear();
+
+      // Transition to track 1 -> pushes track 1 track gain & peak
+      liveCore.nowPlayingSubjectForTesting
+          .add(const NowPlaying(track: track1, contextLabel: 'Album X'));
+      await Future<void>.delayed(Duration.zero);
+      expect(pushed, equals([(-5.2, 0.92)]));
+
+      // Duplicate metadata (e.g. favorite/duration update) does not re-push
+      liveCore.nowPlayingSubjectForTesting.add(NowPlaying(
+        track: track1.copyWith(favorite: true),
+        contextLabel: 'Album X',
+      ));
+      await Future<void>.delayed(Duration.zero);
+      expect(pushed, equals([(-5.2, 0.92)]));
+
+      // Gapless / track switch to track 2 -> pushes track 2 track gain & peak
+      liveCore.nowPlayingSubjectForTesting
+          .add(const NowPlaying(track: track2, contextLabel: 'Album Y'));
+      await Future<void>.delayed(Duration.zero);
+      expect(pushed, equals([(-5.2, 0.92), (-3.4, 0.87)]));
+
+      // Switch ReplayGain mode to album and switch back to track 1 -> pushes album gain & peak
+      await liveCore.send(const SetReplayGain(mode: ReplayGainMode.album));
+      pushed.clear();
+      liveCore.nowPlayingSubjectForTesting
+          .add(const NowPlaying(track: track1, contextLabel: 'Album X'));
+      await Future<void>.delayed(Duration.zero);
+      expect(pushed, equals([(-7.1, 0.98)]));
+    });
   });
 }

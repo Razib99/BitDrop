@@ -46,12 +46,15 @@ class BitDropSettingsRepository {
   void Function(EqState eq)? onEqChanged;
   void Function(List<DeviceProfile> profiles)? onDeviceProfilesChanged;
   Track? Function()? currentTrackProvider;
+  @visibleForTesting
+  void Function(double gainDb, double trackPeak)? onReplayGainPushed;
 
   BitDropSettingsRepository({
     this.onSettingsChanged,
     this.onEqChanged,
     this.onDeviceProfilesChanged,
     this.currentTrackProvider,
+    this.onReplayGainPushed,
   });
 
   Stream<AppSettings> get settings => _settings.stream;
@@ -288,6 +291,16 @@ class BitDropSettingsRepository {
     return (gainDb: gainDb, peak: peak);
   }
 
+  /// Pushes only the ReplayGain gain and peak for [track] under [eqState]
+  /// without re-uploading EQ biquads (used on dynamic track/gapless switches).
+  void pushReplayGainForTrack(EqState eqState, Track? track) {
+    final rg = resolveReplayGain(eqState, track);
+    onReplayGainPushed?.call(rg.gainDb, rg.peak);
+    try {
+      rust.engineSetReplayGain(gainDb: rg.gainDb, trackPeak: rg.peak);
+    } catch (_) {}
+  }
+
   /// Builds EQ band payload + decoupled ReplayGain/BS2B parameters and pushes
   /// them into the lock-free Rust engine without mutating reactive streams.
   void pushEqSnapshotToEngine(EqState eqState) {
@@ -345,6 +358,7 @@ class BitDropSettingsRepository {
       ];
     }
 
+    onReplayGainPushed?.call(replayGainDb, trackPeak);
     try {
       rust.engineSetEq(gains: enginePayload);
       rust.engineSetEqEnabled(enabled: !eqState.bypass);
