@@ -33,6 +33,7 @@ class MainActivity : AudioServiceActivity() {
     private var activeUsbConnection: UsbDeviceConnection? = null
     private var activeUsbDevice: UsbDevice? = null
     private var usbPermissionReceiver: BroadcastReceiver? = null
+    private var usbAttachReceiver: BroadcastReceiver? = null
     private var usbDetachReceiver: BroadcastReceiver? = null
     private val ACTION_USB_PERMISSION = "com.bitdrop.bitdrop.USB_PERMISSION"
 
@@ -105,6 +106,32 @@ class MainActivity : AudioServiceActivity() {
             registerReceiver(receiver, filter)
         }
 
+        // Real-time USB device attachment monitoring
+        val attachReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (UsbManager.ACTION_USB_DEVICE_ATTACHED == intent?.action) {
+                    val device: UsbDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                    }
+                    if (device != null && isUsbAudioDevice(device)) {
+                        runOnUiThread {
+                            methodChannel?.invokeMethod("onDeviceChanged", null)
+                        }
+                    }
+                }
+            }
+        }
+        usbAttachReceiver = attachReceiver
+        val attachFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(attachReceiver, attachFilter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(attachReceiver, attachFilter)
+        }
+
         // Real-time USB device detachment monitoring
         val detachReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -149,6 +176,13 @@ class MainActivity : AudioServiceActivity() {
         }
         noisyReceiver = null
 
+        usbAttachReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
+        }
+        usbAttachReceiver = null
+
         usbDetachReceiver?.let {
             try {
                 unregisterReceiver(it)
@@ -182,6 +216,13 @@ class MainActivity : AudioServiceActivity() {
         }
         noisyReceiver = null
 
+        usbAttachReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
+        }
+        usbAttachReceiver = null
+
         usbDetachReceiver?.let {
             try {
                 unregisterReceiver(it)
@@ -200,13 +241,61 @@ class MainActivity : AudioServiceActivity() {
         methodChannel = null
     }
 
-    private fun getActiveUsbDevice(am: AudioManager): AudioDeviceInfo? {
-        val devices = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        return devices.firstOrNull {
-            it.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
-            it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-            it.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
+    private fun isUsbOutputType(type: Int): Boolean =
+        type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+            type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+            type == AudioDeviceInfo.TYPE_USB_ACCESSORY
+
+    private fun preferredOutputOrder(): List<Int> {
+        val list = mutableListOf(
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_USB_DEVICE,
+            AudioDeviceInfo.TYPE_USB_ACCESSORY,
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_LINE_ANALOG,
+            AudioDeviceInfo.TYPE_AUX_LINE,
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            list.add(AudioDeviceInfo.TYPE_BLE_HEADSET)
+            list.add(AudioDeviceInfo.TYPE_BLE_SPEAKER)
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            list.add(AudioDeviceInfo.TYPE_BLE_BROADCAST)
+        }
+        list.add(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
+        return list
+    }
+
+    private fun pickPreferredDevice(candidates: List<AudioDeviceInfo>): AudioDeviceInfo? {
+        if (candidates.isEmpty()) return null
+        val order = preferredOutputOrder()
+        return order.firstNotNullOfOrNull { wanted ->
+            candidates.firstOrNull { it.type == wanted }
+        } ?: candidates.firstOrNull()
+    }
+
+    private fun resolveActiveOutputDevice(am: AudioManager): AudioDeviceInfo? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                val routed = am.getAudioDevicesForAttributes(mediaAudioAttributes)
+                val matched = pickPreferredDevice(routed)
+                if (matched != null) return matched
+            } catch (_: Exception) {}
+        }
+        val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList()
+        return pickPreferredDevice(outputs)
+    }
+
+    private fun getActiveUsbDevice(am: AudioManager): AudioDeviceInfo? {
+        val routed = resolveActiveOutputDevice(am)
+        if (routed != null && isUsbOutputType(routed.type)) {
+            return routed
+        }
+        return am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            .firstOrNull { isUsbOutputType(it.type) }
     }
 
     private val mediaAudioAttributes: AudioAttributes by lazy {
@@ -221,28 +310,9 @@ class MainActivity : AudioServiceActivity() {
      */
     private fun currentOutput(): Map<String, Any?> {
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val devices = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        val active = resolveActiveOutputDevice(am) ?: return mapOf("available" to false)
 
-        val order = listOf(
-            AudioDeviceInfo.TYPE_USB_HEADSET,
-            AudioDeviceInfo.TYPE_USB_DEVICE,
-            AudioDeviceInfo.TYPE_USB_ACCESSORY,
-            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-            AudioDeviceInfo.TYPE_WIRED_HEADSET,
-            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
-        )
-
-        val active = order.firstNotNullOfOrNull { wanted ->
-            devices.firstOrNull { it.type == wanted }
-        } ?: devices.firstOrNull()
-
-        if (active == null) return mapOf("available" to false)
-
-        val isUsb = active.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
-                    active.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-                    active.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
+        val isUsb = isUsbOutputType(active.type)
 
         var supportsBitPerfect = false
         var maxTier = when (typeName(active.type)) {
@@ -380,6 +450,44 @@ class MainActivity : AudioServiceActivity() {
     }
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    private fun encodingBits(encoding: Int): Int = when (encoding) {
+        AudioFormat.ENCODING_PCM_16BIT -> 16
+        AudioFormat.ENCODING_PCM_24BIT_PACKED -> 24
+        AudioFormat.ENCODING_PCM_32BIT, AudioFormat.ENCODING_PCM_FLOAT -> 32
+        else -> 0
+    }
+
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    private fun scoreMixerCandidate(
+        attr: AudioMixerAttributes,
+        targetSampleRate: Int,
+        targetBitDepth: Int,
+    ): Int {
+        val fmt = attr.format
+        val rate = fmt.sampleRate
+        val rateScore = when {
+            rate == targetSampleRate -> 1000
+            targetSampleRate > 0 && rate > targetSampleRate && rate % targetSampleRate == 0 -> 400
+            rate > 0 -> 100
+            else -> 0
+        }
+        val bits = encodingBits(fmt.encoding)
+        val depthScore = when {
+            bits == targetBitDepth && fmt.encoding != AudioFormat.ENCODING_PCM_FLOAT -> 200
+            bits > targetBitDepth -> 170 - (bits - targetBitDepth) // Lossless wider container (e.g. 16 -> 24/32)
+            fmt.encoding == AudioFormat.ENCODING_PCM_FLOAT -> 140
+            bits > 0 -> 60
+            else -> 10
+        }
+        val channelScore = when (fmt.channelMask) {
+            AudioFormat.CHANNEL_OUT_STEREO -> 50
+            0 -> 25
+            else -> 0
+        }
+        return rateScore + depthScore + channelScore
+    }
+
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     private fun setApi34PreferredMixerAttributes(
         am: AudioManager,
         device: AudioDeviceInfo,
@@ -388,28 +496,54 @@ class MainActivity : AudioServiceActivity() {
         bitPerfect: Boolean
     ): Boolean {
         return try {
-            val encoding = when (bitDepth) {
-                24 -> AudioFormat.ENCODING_PCM_24BIT_PACKED
-                32 -> AudioFormat.ENCODING_PCM_32BIT
-                else -> AudioFormat.ENCODING_PCM_16BIT
-            }
-
-            val format = AudioFormat.Builder()
-                .setSampleRate(sampleRate)
-                .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
-                .setEncoding(encoding)
-                .build()
-
-            val behavior = if (bitPerfect) {
+            val targetBehavior = if (bitPerfect) {
                 AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT
             } else {
                 AudioMixerAttributes.MIXER_BEHAVIOR_DEFAULT
             }
 
-            val mixerAttrs = AudioMixerAttributes.Builder(format)
-                .setMixerBehavior(behavior)
-                .build()
+            val supported = try {
+                am.getSupportedMixerAttributes(device)
+            } catch (_: Exception) {
+                emptyList()
+            }
 
+            val behaviorMatches = supported.filter { it.mixerBehavior == targetBehavior }
+            val chosen = if (bitPerfect) {
+                // For bit-perfect, prefer exact sample rate; never force non-integer rate shift.
+                val exactRate = behaviorMatches.filter { it.format.sampleRate == sampleRate }
+                val candidates = exactRate.ifEmpty {
+                    behaviorMatches.filter {
+                        sampleRate > 0 && it.format.sampleRate > sampleRate &&
+                            it.format.sampleRate % sampleRate == 0
+                    }
+                }
+                candidates.maxByOrNull { scoreMixerCandidate(it, sampleRate, bitDepth) }
+            } else {
+                behaviorMatches.maxByOrNull { scoreMixerCandidate(it, sampleRate, bitDepth) }
+            }
+
+            if (chosen != null) {
+                return am.setPreferredMixerAttributes(mediaAudioAttributes, device, chosen)
+            }
+            if (!bitPerfect && behaviorMatches.isEmpty()) {
+                return am.clearPreferredMixerAttributes(mediaAudioAttributes, device)
+            }
+
+            // Fallback when getSupportedMixerAttributes returned empty on non-standard HALs.
+            val encoding = when (bitDepth) {
+                24 -> AudioFormat.ENCODING_PCM_24BIT_PACKED
+                32 -> AudioFormat.ENCODING_PCM_32BIT
+                else -> AudioFormat.ENCODING_PCM_16BIT
+            }
+            val format = AudioFormat.Builder()
+                .setSampleRate(sampleRate)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                .setEncoding(encoding)
+                .build()
+            val mixerAttrs = AudioMixerAttributes.Builder(format)
+                .setMixerBehavior(targetBehavior)
+                .build()
             am.setPreferredMixerAttributes(mediaAudioAttributes, device, mixerAttrs)
         } catch (e: Exception) {
             false
@@ -430,15 +564,20 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
-    private fun typeName(type: Int): String = when (type) {
-        AudioDeviceInfo.TYPE_USB_HEADSET,
-        AudioDeviceInfo.TYPE_USB_DEVICE,
-        AudioDeviceInfo.TYPE_USB_ACCESSORY -> "usb"
-        AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "wired"
-        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "bluetooth"
-        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "speaker"
+    private fun typeName(type: Int): String = when {
+        isUsbOutputType(type) -> "usb"
+        type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+            type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+            type == AudioDeviceInfo.TYPE_LINE_ANALOG ||
+            type == AudioDeviceInfo.TYPE_AUX_LINE -> "wired"
+        type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+            type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                (type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                    type == AudioDeviceInfo.TYPE_BLE_SPEAKER)) ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                type == AudioDeviceInfo.TYPE_BLE_BROADCAST) -> "bluetooth"
+        type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "speaker"
         else -> "unknown"
     }
 
