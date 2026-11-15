@@ -538,8 +538,8 @@ impl FilterBankF64 {
         let mut total_re = self.preamp_linear;
         let mut total_im = 0.0;
 
-        for i in 0..self.active {
-            let (h_re, h_im) = self.bands[i].complex_response(w);
+        for band in self.bands.iter().take(self.active) {
+            let (h_re, h_im) = band.complex_response(w);
             let next_re = total_re * h_re - total_im * h_im;
             let next_im = total_re * h_im + total_im * h_re;
             total_re = next_re;
