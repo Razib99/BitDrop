@@ -53,6 +53,9 @@ pub struct UsbDacDiagnostics {
 /// Internal session state for an active Direct USB DAC stream.
 pub struct DirectUsbSession {
     pub handle: Arc<UsbDeviceHandle>,
+    pub parsed: ParsedAudioDevice,
+    pub alt_setting: u32,
+    pub stream_config: UsbStreamConfig,
     pub stream_handle: UsbStreamHandle,
     pub streaming_iface: u32,
     pub control_iface: Option<u32>,
@@ -157,6 +160,9 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
     preferred_bit_depth: u32,
     source: S,
 ) -> Result<UsbDacDiagnostics, UsbFsError> {
+    // 0. Ensure any prior Direct USB session is detached cleanly first.
+    let _ = detach_direct_usb_device();
+
     // 1. Wrap raw descriptor borrowed from Kotlin
     let handle = Arc::new(UsbDeviceHandle::from_raw_fd_borrowed(fd));
 
@@ -181,6 +187,9 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
     let feedback_ep = best_alt.feedback_endpoint.clone();
 
     let streaming_iface = streaming_iface_info.interface_number as u32;
+    let alt_setting = best_alt.alt_setting as u32;
+    let bit_resolution = format_info.bit_resolution;
+    let channels = format_info.channels;
     let control_iface = parsed
         .control_interface
         .as_ref()
@@ -219,7 +228,7 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
     };
 
     // 6. Set alternate setting to activate isochronous endpoint
-    if let Err(e) = handle.set_interface_alt(streaming_iface, best_alt.alt_setting as u32) {
+    if let Err(e) = handle.set_interface_alt(streaming_iface, alt_setting) {
         let _ = handle.release_interface(streaming_iface);
         if let Some(ctrl_num) = control_iface {
             if ctrl_num != streaming_iface {
@@ -237,7 +246,7 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
         data_endpoint: data_ep,
         feedback_endpoint: feedback_ep,
         sample_rate: negotiated_rate,
-        channels: format_info.channels,
+        channels,
         format: pcm_format,
         pacer_mode,
         is_high_speed,
@@ -245,20 +254,23 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
     };
 
     // 8. Start streaming worker thread
-    let stream_handle =
-        match UsbStreamingEngine::start_stream(Arc::clone(&handle), stream_config, source) {
-            Ok(sh) => sh,
-            Err(e) => {
-                let _ = handle.set_interface_alt(streaming_iface, 0);
-                let _ = handle.release_interface(streaming_iface);
-                if let Some(ctrl_num) = control_iface {
-                    if ctrl_num != streaming_iface {
-                        let _ = handle.release_interface(ctrl_num);
-                    }
+    let stream_handle = match UsbStreamingEngine::start_stream(
+        Arc::clone(&handle),
+        stream_config.clone(),
+        source,
+    ) {
+        Ok(sh) => sh,
+        Err(e) => {
+            let _ = handle.set_interface_alt(streaming_iface, 0);
+            let _ = handle.release_interface(streaming_iface);
+            if let Some(ctrl_num) = control_iface {
+                if ctrl_num != streaming_iface {
+                    let _ = handle.release_interface(ctrl_num);
                 }
-                return Err(e);
             }
-        };
+            return Err(e);
+        }
+    };
 
     let proto_str = match parsed.protocol {
         AudioClassProtocol::Uac1 => "UAC1",
@@ -280,8 +292,8 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
         is_active: true,
         device_name: format!("Direct USB DAC ({proto_str})"),
         sample_rate: negotiated_rate,
-        bit_depth: format_info.bit_resolution,
-        channels: format_info.channels,
+        bit_depth: bit_resolution,
+        channels,
         format_name: format!("{:?}", pcm_format),
         pacer_mode: pacer_mode_str,
         frames_played: 0,
@@ -291,6 +303,9 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
 
     let session = DirectUsbSession {
         handle,
+        parsed,
+        alt_setting,
+        stream_config,
         stream_handle,
         streaming_iface,
         control_iface,
@@ -302,6 +317,62 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
     set_active_stream_backend(StreamBackend::DirectUsb);
 
     Ok(diagnostics)
+}
+
+/// Reconfigures an active Direct USB DAC session to match a new track sample rate in-place.
+///
+/// Returns `Ok(None)` if no Direct USB session is active or the session already runs at the
+/// requested rate. Stops the streaming worker first so `source`'s consumers are returned cleanly
+/// before `make_source` acquires them for the new stream.
+pub fn reconfigure_direct_usb_sample_rate<S, F>(
+    preferred_sample_rate: u32,
+    make_source: F,
+) -> Result<Option<UsbDacDiagnostics>, UsbFsError>
+where
+    S: AudioSampleSource + 'static,
+    F: FnOnce(u32) -> Option<S>,
+{
+    let target_rate = if preferred_sample_rate > 0 {
+        preferred_sample_rate
+    } else {
+        48000
+    };
+
+    let mut guard = ACTIVE_USB_SESSION.lock();
+    let Some(session) = guard.as_mut() else {
+        return Ok(None);
+    };
+
+    if session.diagnostics.sample_rate == target_rate {
+        return Ok(None);
+    }
+
+    // Stop active worker cleanly; its Drop returns audio ringbuffer consumers.
+    let _ = session.stream_handle.stop();
+    while session.handle.reap_urb_ndelay().is_ok() {}
+    let _ = session.handle.set_interface_alt(session.streaming_iface, 0);
+
+    let negotiated_rate =
+        negotiate_device_sample_rate(&session.handle, &session.parsed, target_rate)
+            .unwrap_or(session.diagnostics.sample_rate);
+    session
+        .handle
+        .set_interface_alt(session.streaming_iface, session.alt_setting)?;
+
+    session.stream_config.sample_rate = negotiated_rate;
+    session.diagnostics.sample_rate = negotiated_rate;
+
+    let Some(source) = make_source(negotiated_rate) else {
+        return Err(UsbFsError::InvalidArgument);
+    };
+
+    session.stream_handle = UsbStreamingEngine::start_stream(
+        Arc::clone(&session.handle),
+        session.stream_config.clone(),
+        source,
+    )?;
+
+    Ok(Some(session.diagnostics.clone()))
 }
 
 /// Detaches active USB DAC session and cleanly releases hardware interfaces.
@@ -424,5 +495,23 @@ mod tests {
         assert!(triggered);
         assert_eq!(fallback_hot, Some(true));
         assert!(!is_hot_disconnected());
+    }
+
+    #[test]
+    fn test_reconfigure_sample_rate_when_inactive_returns_none() {
+        struct DummySource;
+        impl AudioSampleSource for DummySource {
+            fn render_audio_frames(&mut self, _out_slice: &mut [f32], _channels: usize) -> bool {
+                true
+            }
+        }
+        let _ = detach_direct_usb_device();
+        let mut called = false;
+        let res = reconfigure_direct_usb_sample_rate(96000, |_| {
+            called = true;
+            Some(DummySource)
+        });
+        assert_eq!(res.unwrap(), None);
+        assert!(!called);
     }
 }

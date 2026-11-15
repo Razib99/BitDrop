@@ -1085,11 +1085,59 @@ fn initialize_engine() {
                     drop(state);
 
                     if stream_sr > 0 && stream_sr != cur_target {
-                        eprintln!("[bitdrop] stream rate {stream_sr} != current stream {cur_target}; rebuilding output stream");
-                        #[cfg(target_os = "android")]
-                        open_output_stream(Some(stream_sr));
-                        #[cfg(not(target_os = "android"))]
-                        open_cpal_output_stream(Some(stream_sr));
+                        if crate::usb_dac::get_active_stream_backend()
+                            == crate::usb_dac::StreamBackend::DirectUsb
+                        {
+                            eprintln!(
+                                "[bitdrop] track rate {stream_sr} != DirectUsb rate {cur_target}; reconfiguring USB DAC clock"
+                            );
+                            let target_bits = opened.bits_per_sample;
+                            match crate::usb_dac::reconfigure_direct_usb_sample_rate(
+                                stream_sr,
+                                |negotiated_sr| {
+                                    let (c, bc, tp) = acquire_audio_consumers(10)?;
+                                    let mut renderer = crate::renderer::OutputRenderer::new(
+                                        negotiated_sr as f64,
+                                        Some(c),
+                                        Some(bc),
+                                        tp,
+                                    );
+                                    renderer.fade_gain = 0.0;
+                                    Some(crate::usb_dac::UsbAudioSource { renderer })
+                                },
+                            ) {
+                                Ok(Some(diag)) => {
+                                    let mut state = PLAYER_STATE.lock().unwrap();
+                                    state.target_sample_rate = diag.sample_rate;
+                                    state.hardware_sample_rate = diag.sample_rate;
+                                    state.hardware_format = format!(
+                                        "Direct USB {} (Tier D Bit-Perfect)",
+                                        diag.format_name
+                                    );
+                                    state.eq_updated = true;
+                                    publish_dsp_config(&state);
+                                }
+                                Ok(None) => {}
+                                Err(err) => {
+                                    eprintln!(
+                                        "[bitdrop] DirectUsb rate switch ({stream_sr}Hz/{target_bits}b) failed ({err}); falling back to standard output"
+                                    );
+                                    let _ = crate::usb_dac::detach_direct_usb_device();
+                                    #[cfg(target_os = "android")]
+                                    open_output_stream(Some(stream_sr));
+                                    #[cfg(not(target_os = "android"))]
+                                    open_cpal_output_stream(Some(stream_sr));
+                                }
+                            }
+                        } else {
+                            eprintln!(
+                                "[bitdrop] stream rate {stream_sr} != current stream {cur_target}; rebuilding output stream"
+                            );
+                            #[cfg(target_os = "android")]
+                            open_output_stream(Some(stream_sr));
+                            #[cfg(not(target_os = "android"))]
+                            open_cpal_output_stream(Some(stream_sr));
+                        }
                     }
 
                     let mut state = PLAYER_STATE.lock().unwrap();
@@ -1629,13 +1677,16 @@ fn open_output_stream(sample_rate: Option<u32>) {
                 sample_rate
             );
             // Re-acquire consumers returned by the failed exclusive callback's Drop.
-            let (consumer, boundary_consumer, triggered_producer) = match acquire_audio_consumers(10) {
-                Some(handles) => handles,
-                None => {
-                    eprintln!("[bitdrop] audio ringbuffer consumers unavailable for shared fallback");
-                    return;
-                }
-            };
+            let (consumer, boundary_consumer, triggered_producer) =
+                match acquire_audio_consumers(10) {
+                    Some(handles) => handles,
+                    None => {
+                        eprintln!(
+                            "[bitdrop] audio ringbuffer consumers unavailable for shared fallback"
+                        );
+                        return;
+                    }
+                };
             let mut shared_builder = AudioStreamBuilder::default()
                 .set_performance_mode(PerformanceMode::None)
                 .set_sharing_mode(SharingMode::Shared)
@@ -1853,13 +1904,18 @@ fn start_stream_watchdog() {
                 continue;
             }
 
+            // When DirectUsb is active, Oboe/CPAL is intentionally idle, so skip OS watchdog checks.
+            if crate::usb_dac::get_active_stream_backend()
+                == crate::usb_dac::StreamBackend::DirectUsb
+            {
+                last_frames = CONSUMED_FRAMES.load(Ordering::Relaxed);
+                stalled_ticks = 0;
+                continue;
+            }
+
             let current_sr = {
                 let state = PLAYER_STATE.lock().unwrap();
-                if state.source_sample_rate > 0 {
-                    Some(state.source_sample_rate)
-                } else {
-                    None
-                }
+                effective_pcm_stream_rate(&state)
             };
 
             #[cfg(target_os = "android")]
@@ -2174,23 +2230,40 @@ pub fn engine_output_state() -> EngineOutputState {
     }
 }
 
+fn effective_pcm_stream_rate(state: &PlayerState) -> Option<u32> {
+    let is_dsd = state.source_codec.eq_ignore_ascii_case("DSF")
+        || state.source_codec.eq_ignore_ascii_case("DSD");
+    if is_dsd
+        && crate::usb_dac::get_active_stream_backend() != crate::usb_dac::StreamBackend::DirectUsb
+    {
+        return Some(crate::dsd::decimator::DSD_PCM_TARGET_RATE);
+    }
+    if state.source_sample_rate > 0 {
+        Some(state.source_sample_rate)
+    } else if state.target_sample_rate > 0 {
+        Some(state.target_sample_rate)
+    } else {
+        None
+    }
+}
+
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_set_hardware_sample_rate(rate: u32) {
-    {
+    if crate::usb_dac::get_active_stream_backend() == crate::usb_dac::StreamBackend::DirectUsb {
+        return;
+    }
+    let should_reopen = {
         let mut state = PLAYER_STATE.lock().unwrap();
         state.hardware_sample_rate = rate;
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        if rate > 0 {
-            open_cpal_output_stream(Some(rate));
-        }
-    }
-    #[cfg(target_os = "android")]
-    {
-        if rate > 0 {
-            open_output_stream(Some(rate));
-        }
+        // Reopen only when idle or no output stream is established yet so generic
+        // OS route updates (e.g. 48 kHz) do not tear down an active track's matched stream.
+        rate > 0 && (state.current_track_id.is_empty() || state.target_sample_rate == 0)
+    };
+    if should_reopen {
+        #[cfg(not(target_os = "android"))]
+        open_cpal_output_stream(Some(rate));
+        #[cfg(target_os = "android")]
+        open_output_stream(Some(rate));
     }
 }
 
@@ -2465,13 +2538,13 @@ impl From<crate::usb_dac::UsbDacDiagnostics> for EngineUsbDacDiagnostics {
 
 /// Acquires the ring-buffer consumer handles, retrying briefly while an old
 /// stream callback finishes dropping and returning them.
-pub(crate) fn acquire_audio_consumers(
-    max_retries: usize,
-) -> Option<(
+pub(crate) type AudioConsumerHandles = (
     rtrb::Consumer<f32>,
     rtrb::Consumer<crate::dsp::BoundaryMarker>,
     Option<rtrb::Producer<crate::dsp::BoundaryMarker>>,
-)> {
+);
+
+pub(crate) fn acquire_audio_consumers(max_retries: usize) -> Option<AudioConsumerHandles> {
     for attempt in 0..max_retries.max(1) {
         {
             let mut c_guard = AUDIO_CONSUMER.lock().unwrap();
@@ -2511,23 +2584,22 @@ pub fn engine_attach_usb_dac(
     sample_rate: u32,
     bit_depth: u32,
 ) -> Result<EngineUsbDacDiagnostics, String> {
-    #[cfg(target_os = "android")]
+    let _ = crate::usb_dac::detach_direct_usb_device();
     {
-        *ACTIVE_STREAM.lock().unwrap() = None;
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = CPAL_STREAM.lock().unwrap().0.take();
+        let _open_guard = STREAM_OPEN_LOCK.lock().unwrap();
+        #[cfg(target_os = "android")]
+        {
+            *ACTIVE_STREAM.lock().unwrap() = None;
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = CPAL_STREAM.lock().unwrap().0.take();
+        }
     }
 
-    let (consumer, boundary_consumer, triggered_producer) = {
-        let mut c_guard = AUDIO_CONSUMER.lock().unwrap();
-        let mut b_guard = BOUNDARY_CONSUMER.lock().unwrap();
-        let mut t_guard = TRIGGERED_PRODUCER.lock().unwrap();
-        match (c_guard.take(), b_guard.take()) {
-            (Some(c), Some(b)) => (c, b, t_guard.take()),
-            _ => return Err("Audio ringbuffer consumers unavailable".into()),
-        }
+    let (consumer, boundary_consumer, triggered_producer) = match acquire_audio_consumers(10) {
+        Some(handles) => handles,
+        None => return Err("Audio ringbuffer consumers unavailable".into()),
     };
 
     let target_sr = if sample_rate > 0 {
@@ -2560,10 +2632,14 @@ pub fn engine_attach_usb_dac(
             Ok(diag.into())
         }
         Err(err) => {
+            let restore_sr = {
+                let state = PLAYER_STATE.lock().unwrap();
+                effective_pcm_stream_rate(&state)
+            };
             #[cfg(target_os = "android")]
-            open_output_stream(None);
+            open_output_stream(restore_sr);
             #[cfg(not(target_os = "android"))]
-            open_cpal_output_stream(None);
+            open_cpal_output_stream(restore_sr);
             Err(format!("Failed to attach USB DAC: {err}"))
         }
     }
@@ -2575,10 +2651,14 @@ pub fn engine_detach_usb_dac() -> Result<(), String> {
     crate::usb_dac::detach_direct_usb_device()
         .map_err(|e| format!("Failed to detach USB DAC: {e}"))?;
 
+    let restore_sr = {
+        let state = PLAYER_STATE.lock().unwrap();
+        effective_pcm_stream_rate(&state)
+    };
     #[cfg(target_os = "android")]
-    open_output_stream(None);
+    open_output_stream(restore_sr);
     #[cfg(not(target_os = "android"))]
-    open_cpal_output_stream(None);
+    open_cpal_output_stream(restore_sr);
 
     Ok(())
 }

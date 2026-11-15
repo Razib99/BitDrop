@@ -9,7 +9,7 @@ BASEDIR=$(cd "$BASEDIR" ; pwd -P)
 # Remove XCode SDK from path. Otherwise this breaks tool compilation when building iOS project
 NEW_PATH=`echo $PATH | tr ":" "\n" | grep -v "Contents/Developer/" | tr "\n" ":"`
 
-export PATH=${NEW_PATH%?} # remove trailing :
+export PATH="$HOME/.cargo/bin:${NEW_PATH%?}" # remove trailing : and include cargo
 
 env
 

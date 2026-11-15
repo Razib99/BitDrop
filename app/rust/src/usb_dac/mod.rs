@@ -11,7 +11,8 @@ pub mod usbfs;
 pub use backend::{
     attach_direct_usb_device, check_and_execute_failover, detach_direct_usb_device,
     get_active_stream_backend, get_usb_dac_diagnostics, is_direct_usb_active,
-    set_active_stream_backend, DirectUsbSession, StreamBackend, UsbAudioSource, UsbDacDiagnostics,
+    reconfigure_direct_usb_sample_rate, set_active_stream_backend, DirectUsbSession, StreamBackend,
+    UsbAudioSource, UsbDacDiagnostics,
 };
 
 pub use controls::{

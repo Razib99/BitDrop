@@ -40,7 +40,7 @@ class IosAudioHostBroker: NSObject {
   private func setupAudioSession() {
     do {
       let session = AVAudioSession.sharedInstance()
-      try session.setCategory(.playback, mode: .default, options: [.defaultToSpeaker, .allowBluetooth, .allowAirPlay])
+      try session.setCategory(.playback, mode: .default)
       try session.setActive(true)
     } catch {
       print("[bitdrop-ios] Failed to activate audio session: \(error)")
@@ -179,11 +179,17 @@ class IosAudioHostBroker: NSObject {
 
   private func setPreferredSampleRate(_ rate: Double, result: @escaping FlutterResult) {
     let session = AVAudioSession.sharedInstance()
+    let previousRate = session.sampleRate
     do {
       try session.setPreferredSampleRate(rate)
       try session.setActive(true)
       let activeRate = session.sampleRate
       print("[bitdrop-ios] setPreferredSampleRate success: requested=\(rate), active=\(activeRate)")
+      if abs(activeRate - previousRate) > 0.5 {
+        DispatchQueue.main.async { [weak self] in
+          self?.channel.invokeMethod("onDeviceChanged", nil)
+        }
+      }
       result(true)
     } catch {
       print("[bitdrop-ios] setPreferredSampleRate failed: \(error)")
@@ -193,9 +199,16 @@ class IosAudioHostBroker: NSObject {
 
   private func clearPreferredSampleRate(result: @escaping FlutterResult) {
     let session = AVAudioSession.sharedInstance()
+    let previousRate = session.sampleRate
     do {
       try session.setPreferredSampleRate(0.0)
       try session.setActive(true)
+      let activeRate = session.sampleRate
+      if abs(activeRate - previousRate) > 0.5 {
+        DispatchQueue.main.async { [weak self] in
+          self?.channel.invokeMethod("onDeviceChanged", nil)
+        }
+      }
       result(true)
     } catch {
       result(false)

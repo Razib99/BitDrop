@@ -1,0 +1,68 @@
+name: BitDrop iOS Unsigned IPA Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Version Label (e.g. v1.1.0)'
+        required: false
+        default: 'v1.1.0'
+  push:
+    branches: [ main ]
+    paths:
+      - 'app/ios/**'
+      - 'app/rust/**'
+      - 'app/rust_builder/**'
+      - 'app/lib/**'
+      - 'app/pubspec.*'
+      - '.github/workflows/ios-ipa.yml'
+
+jobs:
+  build-ios-ipa:
+    name: Build Unsigned iOS Release IPA (macOS / Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Stable with iOS Target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/rust -> target
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          cache: true
+
+      - name: Install Flutter Dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build iOS Release Bundle (No Codesign)
+        working-directory: app
+        run: flutter build ios --release --no-codesign
+
+      - name: Package Runner.app into Unsigned IPA
+        run: |
+          VERSION_TAG="${{ inputs.tag_name || 'v1.1.0' }}"
+          mkdir -p Payload release_ios
+          cp -R app/build/ios/iphoneos/Runner.app Payload/Runner.app
+          zip -qry "release_ios/BitDrop-${VERSION_TAG}-ios-unsigned.ipa" Payload
+          cp "release_ios/BitDrop-${VERSION_TAG}-ios-unsigned.ipa" "release_ios/BitDrop-ios-unsigned.ipa"
+          cd release_ios
+          shasum -a 256 *.ipa > SHA256SUMS-ios.txt
+          ls -lh
+          cat SHA256SUMS-ios.txt
+
+      - name: Upload Unsigned iOS IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BitDrop-iOS-Unsigned-IPA
+          path: release_ios/*
