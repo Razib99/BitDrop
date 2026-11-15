@@ -34,6 +34,7 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: app/rust -> target
+          cache-on-failure: true
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -47,7 +48,7 @@ jobs:
 
       - name: Build iOS Release Bundle (No Codesign)
         working-directory: app
-        run: flutter build ios --release --no-codesign
+        run: flutter build ios --release --no-codesign --verbose
 
       - name: Package Runner.app into Unsigned IPA
         run: |
