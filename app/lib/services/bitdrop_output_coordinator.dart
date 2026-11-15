@@ -70,6 +70,11 @@ class BitDropOutputCoordinator {
     DeviceType? previousType = _outputProbe.current?.type;
 
     _outputProbeSub = _outputProbe.stream.listen((device) {
+      if (device?.systemSampleRate != null && device!.systemSampleRate! > 0) {
+        try {
+          rust.engineSetHardwareSampleRate(rate: device.systemSampleRate!);
+        } catch (_) {}
+      }
       final newType = device?.type;
       final wasEarphone = isEarphone(previousType);
       final isNowEarphone = isEarphone(newType);
@@ -362,10 +367,32 @@ class BitDropOutputCoordinator {
       return '$apiText system mixer (AudioFlinger) mixes audio at '
           '${actual.sampleRate ~/ 1000} kHz, so your '
           '${source.sampleRate ~/ 1000} kHz file is resampled before it reaches $devName. '
-          'Connect a USB DAC for bit-perfect playback.';
+          '${device?.type == DeviceType.usb ? "Enable the Direct USB DAC driver in Settings to bypass the mixer." : "Connect a USB DAC for bit-perfect output."}';
     }
-    return 'Audio is routed to ${device?.name ?? "your audio device"} at '
-        'native rate ${actual.sampleRate ~/ 1000} kHz.';
+    if (dsp) {
+      return 'The equaliser or DSP is active, altering the audio samples. '
+          'Bypass the equaliser to restore bit-perfect output.';
+    }
+    if (device != null && device.type == DeviceType.usb && !isDirectUsb) {
+      final apiText = device.apiLevel != null
+          ? "Android ${device.apiLevel}'s"
+          : 'the Android';
+      return 'Your ${device.name} is running at native ${source.sampleRate ~/ 1000} kHz, '
+          'routed through $apiText shared system mixer (AudioFlinger). '
+          'Enable the Direct USB DAC driver in Settings to bypass the mixer and unlock bit-perfect output.';
+    }
+    if (device != null && !device.supportsBitPerfect) {
+      final apiText = device.apiLevel != null
+          ? "Android ${device.apiLevel}'s"
+          : 'the Android';
+      return 'Your ${device.name} is running at native ${source.sampleRate ~/ 1000} kHz, '
+          'routed through $apiText system mixer (AudioFlinger).';
+    }
+    if (tier == OutputTier.nativeRate) {
+      return "No resampling is happening: the stream runs at the file's native rate "
+          '(${source.sampleRate ~/ 1000} kHz).';
+    }
+    return 'The output path could not be determined.';
   }
 
   void dispose() {

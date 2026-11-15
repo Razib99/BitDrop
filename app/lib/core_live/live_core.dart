@@ -73,18 +73,6 @@ class LiveBitDropCore implements BitDropCore {
   int _streamOpens = 0;
 
   final OutputDeviceProbe _outputProbe;
-  final _signalPath = BehaviorSubject<SignalPath>.seeded(_unknownPath);
-
-  static const _unknownPath = SignalPath(
-    tier: OutputTier.unknown,
-    source: AudioFormat(codec: Codec.flac, bitDepth: 0, sampleRate: 0),
-    requested: AudioFormat(codec: Codec.flac, bitDepth: 0, sampleRate: 0),
-    actual: AudioFormat(codec: Codec.flac, bitDepth: 0, sampleRate: 0),
-    dspActive: false,
-    volume: VolumeMode.system,
-    explanation:
-        'Nothing is playing yet, so there is no output path to report.',
-  );
 
   /// What the engine banks before it lets a new track or a landed seek be
   /// heard. Must track `PREBUFFER_MS` in the Rust engine: a progress readout
@@ -94,7 +82,6 @@ class LiveBitDropCore implements BitDropCore {
   Album? _realAlbum;
 
   StreamSubscription<SyncStatus>? _cloudStatusSub;
-  StreamSubscription<void>? _outputProbeSub;
   StreamSubscription<EqState>? _eqSub;
   StreamSubscription<audio_svc.PlaybackState>? _playbackSub;
   StreamSubscription<List<audio_svc.MediaItem>>? _queueSub;
@@ -147,7 +134,7 @@ class LiveBitDropCore implements BitDropCore {
     _settingsRepo.onEqChanged = (e) {
       if (!_disposed && !_eq.isClosed) {
         _eq.add(e);
-        _recomputeSignalPath();
+        _outputCoord.recomputeSignalPath();
       }
       prevOnEq?.call(e);
     };
@@ -165,6 +152,15 @@ class LiveBitDropCore implements BitDropCore {
           cloudProvider: () => _cloud,
           isDirectUsbDriverEnabled: () => _settings.value.directUsbDriver,
           eqStateProvider: () => _eq.value,
+          onEarphoneDisconnected: _pauseIfPlaying,
+          onBecomingNoisy: _pauseIfPlaying,
+          onInterruptionBegan: _pauseIfPlaying,
+          onInterruptionEnded: (shouldResume) {
+            if (shouldResume && !_audioHandler.playbackState.value.playing) {
+              debugPrint('[core] audio interruption ended: resuming playback');
+              unawaited(_audioHandler.play());
+            }
+          },
         );
     try {
       rust.initEngine();
@@ -225,56 +221,10 @@ class LiveBitDropCore implements BitDropCore {
     _diagnosticsTimer =
         Timer.periodic(const Duration(seconds: 1), (_) => _pollDiagnostics());
 
-    _outputProbe.start();
-    DeviceType? previousType = _outputProbe.current?.type;
-    _outputProbeSub = _outputProbe.stream.listen((device) {
-      if (device?.systemSampleRate != null && device!.systemSampleRate! > 0) {
-        try {
-          rust.engineSetHardwareSampleRate(rate: device.systemSampleRate!);
-        } catch (_) {}
-      }
-      final newType = device?.type;
-      final wasEarphone = _isEarphone(previousType);
-      final isNowEarphone = _isEarphone(newType);
-
-      if (wasEarphone && !isNowEarphone) {
-        if (_audioHandler.playbackState.value.playing) {
-          debugPrint(
-            '[core] earphone disconnected ($previousType -> $newType): pausing playback',
-          );
-          unawaited(_audioHandler.pause());
-        }
-      }
-      if (_settings.value.directUsbDriver && newType == DeviceType.usb) {
-        unawaited(_autoAttachDirectUsbIfPossible());
-      }
-      previousType = newType;
-      _recomputeSignalPath();
-    });
-
-    _outputProbe.onBecomingNoisy = () {
-      if (_audioHandler.playbackState.value.playing) {
-        debugPrint('[core] audio becoming noisy: pausing playback');
-        unawaited(_audioHandler.pause());
-      }
-    };
-
-    _outputProbe.onInterruptionBegan = () {
-      if (_audioHandler.playbackState.value.playing) {
-        debugPrint('[core] audio interruption began: pausing playback');
-        unawaited(_audioHandler.pause());
-      }
-    };
-
-    _outputProbe.onInterruptionEnded = (shouldResume) {
-      if (shouldResume && !_audioHandler.playbackState.value.playing) {
-        debugPrint('[core] audio interruption ended: resuming playback');
-        unawaited(_audioHandler.play());
-      }
-    };
+    _outputCoord.start();
 
     _playbackSub = _audioHandler.playbackState.listen((state) {
-      _recomputeSignalPath();
+      _outputCoord.recomputeSignalPath();
       final isPlaying = state.playing;
       final buffering =
           state.processingState == audio_svc.AudioProcessingState.buffering;
@@ -372,17 +322,24 @@ class LiveBitDropCore implements BitDropCore {
       if (key != _lastSyncedReplayGainKey) {
         _lastSyncedReplayGainKey = key;
         _settingsRepo.pushReplayGainForTrack(_eq.value, t);
-        _recomputeSignalPath();
+        _outputCoord.recomputeSignalPath();
       }
     });
 
     _eqSub = _eq.listen(_pushEqToEngine);
   }
 
+  void _pauseIfPlaying() {
+    if (_audioHandler.playbackState.value.playing) {
+      debugPrint('[core] pausing playback on route change/interruption');
+      unawaited(_audioHandler.pause());
+    }
+  }
+
   void _pushEqToEngine([EqState? state]) {
     final eqState = state ?? _eq.value;
     _settingsRepo.pushEqSnapshotToEngine(eqState);
-    _recomputeSignalPath();
+    _outputCoord.recomputeSignalPath();
   }
 
   // Intercepted streams
@@ -402,7 +359,7 @@ class LiveBitDropCore implements BitDropCore {
 
   // Delegated streams
   @override
-  Stream<SignalPath> get signalPath => _signalPath.stream;
+  Stream<SignalPath> get signalPath => _outputCoord.signalPath;
   final _queue = BehaviorSubject<QueueState>.seeded(QueueState.empty);
   @override
   Stream<QueueState> get queue => _queue.stream;
@@ -1900,10 +1857,10 @@ class LiveBitDropCore implements BitDropCore {
         _eq.add(updatedEq);
         _settingsRepo.syncFromLiveState(eq: updatedEq);
         unawaited(_saveEqState());
-        _recomputeSignalPath();
+        _outputCoord.recomputeSignalPath();
       }
       if (cmd.key == 'directUsbDriver') {
-        unawaited(_handleDirectUsbDriverSetting(cmd.value as bool));
+        unawaited(_outputCoord.handleDirectUsbDriverSetting(cmd.value as bool));
       }
     } else if (cmd is SetSafetyAttenuation) {
       final updated = _settings.value.copyWith(
@@ -1975,13 +1932,13 @@ class LiveBitDropCore implements BitDropCore {
       );
       unawaited(_saveEqState());
       unawaited(_saveSettings());
-      _recomputeSignalPath();
+      _outputCoord.recomputeSignalPath();
     } else if (cmd is SetCrossfeed) {
       final updatedEq = _eq.value.copyWith(crossfeed: cmd.preset);
       _eq.add(updatedEq);
       _settingsRepo.syncFromLiveState(eq: updatedEq);
       unawaited(_saveEqState());
-      _recomputeSignalPath();
+      _outputCoord.recomputeSignalPath();
     } else if (cmd is AssignEqToDevice) {
       final currentDev = _outputProbe.current;
       final devName = currentDev?.id == cmd.deviceId
@@ -2070,148 +2027,6 @@ class LiveBitDropCore implements BitDropCore {
     }
   }
 
-  /// Builds the signal path from measured facts only.
-  ///
-  /// The source format comes from the decoder, the output rate from the
-  /// stream the device actually granted, and the device from AudioManager.
-  /// Nothing here is inferred from a file name or assumed from a scenario.
-  void _recomputeSignalPath() {
-    if (_signalPath.isClosed) return;
-    final rust.EngineOutputState out;
-    try {
-      out = rust.engineOutputState();
-    } catch (_) {
-      if (!_signalPath.isClosed) _signalPath.add(_unknownPath);
-      return;
-    }
-    if (!out.hasTrack || out.sourceSampleRate == 0) {
-      if (!_signalPath.isClosed) _signalPath.add(_unknownPath);
-      return;
-    }
-
-    final device = _outputProbe.current;
-    final codec = _codecFromName(out.sourceCodec);
-
-    final track = _nowPlaying.valueOrNull?.track;
-    final sourceBitDepth = out.sourceBits == 0 ? 16 : out.sourceBits;
-    final sourceChannels = out.sourceChannels == 0 ? 2 : out.sourceChannels;
-
-    final source = AudioFormat(
-      codec: codec,
-      bitDepth: sourceBitDepth,
-      sampleRate: out.sourceSampleRate,
-      bitrateKbps: track?.format.bitrateKbps,
-      channels: sourceChannels,
-    );
-
-    String streamBackend = 'Standard';
-    try {
-      streamBackend = rust.engineGetStreamBackend();
-    } catch (_) {}
-    final isDirectUsb = streamBackend == 'DirectUsb';
-
-    final dsp = out.dspActive;
-    final isExclusiveBitPerfect = isDirectUsb ||
-        ((device?.type == DeviceType.usb &&
-                device?.supportsBitPerfect == true) &&
-            !dsp);
-
-    // What actually leaves the hardware:
-    final hwRate = out.hardwareSampleRate != 0
-        ? out.hardwareSampleRate
-        : (device?.systemSampleRate ?? 0);
-
-    // Resampling only occurs when sample rates actually differ between source and output
-    final resampled = !isDirectUsb &&
-        ((!isExclusiveBitPerfect &&
-                hwRate != 0 &&
-                hwRate != source.sampleRate) ||
-            (out.outputSampleRate != 0 &&
-                out.outputSampleRate != source.sampleRate));
-
-    final actualSampleRate = isDirectUsb
-        ? (out.hardwareSampleRate != 0
-            ? out.hardwareSampleRate
-            : source.sampleRate)
-        : (resampled && hwRate != 0
-            ? hwRate
-            : (out.outputSampleRate == 0
-                ? source.sampleRate
-                : out.outputSampleRate));
-    final actualBitDepth = isDirectUsb && out.hardwareFormat.isNotEmpty
-        ? (out.hardwareFormat.contains('32')
-            ? 32
-            : (out.hardwareFormat.contains('24') ? 24 : 16))
-        : sourceBitDepth;
-    final actualBitrate =
-        (actualBitDepth * actualSampleRate * sourceChannels) ~/ 1000;
-    final actual = source.copyWith(
-      bitDepth: actualBitDepth,
-      sampleRate: actualSampleRate,
-      bitrateKbps: actualBitrate,
-    );
-
-    final bool isRateShifted =
-        !isDirectUsb && (actualSampleRate != source.sampleRate);
-
-    final OutputTier tier;
-    if (isDirectUsb) {
-      tier = OutputTier.bitPerfect;
-    } else if (isRateShifted) {
-      tier = OutputTier.resampled;
-    } else if (isExclusiveBitPerfect) {
-      tier = OutputTier.bitPerfect;
-    } else {
-      tier = OutputTier.nativeRate;
-    }
-
-    if (device?.type == DeviceType.usb && _supported && !isDirectUsb) {
-      unawaited(_outputProbe.setPreferredMixerAttributes(
-        sampleRate: source.sampleRate,
-        bitDepth: source.bitDepth,
-        bitPerfect: !dsp,
-      ));
-    }
-
-    final dspChain = BitDropSettingsRepository.describeDspChain(
-      _eq.value,
-      engineDspActive: dsp,
-    );
-
-    _signalPath.add(SignalPath(
-      tier: tier,
-      source: source,
-      requested: source,
-      actual: actual,
-      dspActive: dsp,
-      dspChain: dspChain,
-      volume: dsp ? VolumeMode.softwareDithered : VolumeMode.system,
-      device: device,
-      sourceLabel: _cloud?.trackById(_currentTrackId) != null
-          ? 'Google Drive'
-          : 'This device',
-      decoderLabel: source.codec == Codec.dsf
-          ? (isDirectUsb
-              ? '${source.shortLabel} Bitstream -> DoP v1.1 Framing'
-              : '${source.shortLabel} -> 176.4 kHz / 24-bit Polyphase FIR Decimation')
-          : '${source.codec.label} -> '
-              '${source.bitDepth}-bit integer PCM',
-      explanation:
-          _explain(tier, source, actual, dsp, device, isDirectUsb: isDirectUsb),
-    ));
-  }
-
-  static bool get _supported =>
-      !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS);
-
-  String get _currentTrackId => _nowPlaying.value?.track.id ?? '';
-
-  /// Cached spans of the current track, read straight from the chunk cache.
-  ///
-  /// Recomputed per tick rather than cached: a chunk can land at any moment
-  /// and a stale answer would tell the user a seek is instant when it is not.
   List<CachedRange> _cachedRanges() {
     try {
       return rust
@@ -2221,115 +2036,6 @@ class LiveBitDropCore implements BitDropCore {
     } catch (_) {
       return const [];
     }
-  }
-
-  static Codec _codecFromName(String name) => switch (name.toUpperCase()) {
-        'FLAC' => Codec.flac,
-        'ALAC' => Codec.alac,
-        'PCM' || 'WAV' => Codec.wav,
-        'AIFF' => Codec.aiff,
-        'MP3' => Codec.mp3,
-        'AAC' => Codec.aac,
-        'VORBIS' || 'OPUS' => Codec.opus,
-        'DSF' || 'DSD' => Codec.dsf,
-        _ => Codec.flac,
-      };
-
-  /// Plain language, and specific about the actual cause.
-  static String _explain(
-    OutputTier tier,
-    AudioFormat source,
-    AudioFormat actual,
-    bool dsp,
-    OutputDevice? device, {
-    bool isDirectUsb = false,
-  }) {
-    if (source.codec == Codec.dsf) {
-      if (tier == OutputTier.bitPerfect) {
-        if (isDirectUsb) {
-          return 'Bit-perfect direct DSD stream active via User-Space USB Audio (Tier D) with DoP v1.1 framing. '
-              'The audio engine transmits the pure 1-bit DSD bitstream directly to your ${device?.name ?? "USB DAC"} '
-              'without PCM decimation, DSP, or OS mixer interaction.';
-        }
-        return 'DSD 1-bit stream decimated to 176.4 kHz / 24-bit PCM using 64-bit polyphase sinc FIR filter. '
-            'Streaming bit-perfect PCM to ${device?.name ?? "USB DAC"} at 176.4 kHz with zero OS resampling.';
-      }
-      return 'DSD 1-bit stream decimated to 176.4 kHz / 24-bit PCM using 64-bit polyphase sinc FIR filter '
-          'and routed to ${device?.name ?? "your audio device"}.';
-    }
-
-    if (tier == OutputTier.bitPerfect) {
-      if (isDirectUsb) {
-        return 'Bit-perfect direct stream active via User-Space USB Audio (Tier D). '
-            'The audio engine has direct hardware control over your ${device?.name ?? "USB DAC"} at '
-            '${actual.sampleRate ~/ 1000} kHz / ${actual.bitDepth}-bit format with zero OS mixer interaction or resampling.';
-      }
-      if (defaultTargetPlatform == TargetPlatform.iOS) {
-        return 'Bit-perfect direct stream active via iOS CoreAudio & AVAudioSession (Tier A). '
-            'The audio engine has native hardware clock control over your ${device?.name ?? "USB DAC"} at '
-            '${source.sampleRate ~/ 1000} kHz / ${source.bitDepth}-bit format with zero OS resampling or DSP.';
-      }
-      return 'Bit-perfect direct stream active via Android 14+ Mixer Attributes. '
-          'The audio engine has exclusive access to your ${device?.name ?? "USB DAC"} at its native '
-          '${source.sampleRate ~/ 1000} kHz / ${source.bitDepth}-bit format with zero resampling or DSP.';
-    }
-    if (dsp && actual.sampleRate == source.sampleRate) {
-      return 'Audio is running at native ${source.sampleRate ~/ 1000} kHz. '
-          'The 64-bit floating-point equaliser or DSP is active, altering the audio samples. '
-          'Bypass the equaliser to restore bit-perfect output.';
-    }
-    if (device?.type == DeviceType.phoneSpeaker) {
-      final osName =
-          defaultTargetPlatform == TargetPlatform.iOS ? 'iOS' : 'Android';
-      if (actual.sampleRate != source.sampleRate) {
-        return 'Phone speakers route through the $osName mixer at '
-            '${actual.sampleRate ~/ 1000} kHz, so your '
-            '${source.sampleRate ~/ 1000} kHz audio is resampled. Connect a USB DAC '
-            'for bit-perfect playback.';
-      } else {
-        return 'Phone speaker output is routed through the $osName shared audio mixer at native '
-            '${source.sampleRate ~/ 1000} kHz. Connect a USB DAC for direct exclusive bit-perfect playback.';
-      }
-    }
-    if (device?.type == DeviceType.bluetooth) {
-      return 'Bluetooth re-encodes audio with its own codec (lossy compression), '
-          'so lossless bit-perfect playback is not possible over Bluetooth.';
-    }
-    if (tier == OutputTier.resampled &&
-        actual.sampleRate != source.sampleRate) {
-      final apiText = device?.apiLevel != null
-          ? 'Android ${device!.apiLevel}\'s'
-          : 'the Android';
-      final devName = device?.name ?? 'your audio device';
-      return '$apiText system mixer (AudioFlinger) mixes audio at '
-          '${actual.sampleRate ~/ 1000} kHz, so your '
-          '${source.sampleRate ~/ 1000} kHz file is resampled before it reaches $devName. '
-          '${device?.type == DeviceType.usb ? "Enable the Direct USB DAC driver in Settings to bypass the mixer." : "Connect a USB DAC for bit-perfect output."}';
-    }
-    if (dsp) {
-      return 'The equaliser or DSP is active, altering the audio samples. '
-          'Bypass the equaliser to restore bit-perfect output.';
-    }
-    if (device != null && device.type == DeviceType.usb && !isDirectUsb) {
-      final apiText = device.apiLevel != null
-          ? 'Android ${device.apiLevel}\'s'
-          : 'the Android';
-      return 'Your ${device.name} is running at native ${source.sampleRate ~/ 1000} kHz, '
-          'routed through $apiText shared system mixer (AudioFlinger). '
-          'Enable the Direct USB DAC driver in Settings to bypass the mixer and unlock bit-perfect output.';
-    }
-    if (device != null && !device.supportsBitPerfect) {
-      final apiText = device.apiLevel != null
-          ? 'Android ${device.apiLevel}\'s'
-          : 'the Android';
-      return 'Your ${device.name} is running at native ${source.sampleRate ~/ 1000} kHz, '
-          'routed through $apiText system mixer (AudioFlinger).';
-    }
-    if (tier == OutputTier.nativeRate) {
-      return 'No resampling is happening: the stream runs at the file\'s native rate '
-          '(${source.sampleRate ~/ 1000} kHz).';
-    }
-    return 'The output path could not be determined.';
   }
 
   void _startUiPositionTimer() {
@@ -2448,7 +2154,7 @@ class LiveBitDropCore implements BitDropCore {
     final track = _nowPlaying.value?.track;
     final source = track?.format ??
         const AudioFormat(codec: Codec.flac, bitDepth: 24, sampleRate: 96000);
-    final signal = _signalPath.value;
+    final signal = _outputCoord.currentSignalPath;
     String device = _outputProbe.current?.name ?? 'System Audio';
     try {
       if (rust.engineGetStreamBackend() == 'DirectUsb') {
@@ -2501,53 +2207,6 @@ class LiveBitDropCore implements BitDropCore {
     );
   }
 
-  static bool _isEarphone(DeviceType? type) =>
-      type == DeviceType.usb ||
-      type == DeviceType.wiredAnalog ||
-      type == DeviceType.bluetooth;
-
-  Future<void> _autoAttachDirectUsbIfPossible() async {
-    try {
-      final backend = _outputProbe.getStreamBackend();
-      if (backend == 'DirectUsb') return;
-      final usbDevices = await _outputProbe.listUsbAudioDevices();
-      if (usbDevices.isNotEmpty) {
-        final dev = usbDevices.first;
-        if (dev.hasPermission) {
-          await _outputProbe.attachDirectUsbDac(deviceId: dev.deviceId);
-          _recomputeSignalPath();
-        }
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _handleDirectUsbDriverSetting(bool enabled) async {
-    if (!enabled) {
-      await _outputProbe.detachDirectUsbDac();
-      _recomputeSignalPath();
-      return;
-    }
-    try {
-      final usbDevices = await _outputProbe.listUsbAudioDevices();
-      if (usbDevices.isNotEmpty) {
-        final targetDev = usbDevices.first;
-        if (!targetDev.hasPermission) {
-          final granted =
-              await _outputProbe.requestUsbPermission(targetDev.deviceId);
-          if (!granted) {
-            debugPrint(
-                '[usb] Permission denied for direct USB device ${targetDev.deviceId}');
-            return;
-          }
-        }
-        await _outputProbe.attachDirectUsbDac(deviceId: targetDev.deviceId);
-        _recomputeSignalPath();
-      }
-    } catch (e) {
-      debugPrint('[usb] Failed to engage direct USB DAC: $e');
-    }
-  }
-
   @override
   void dispose() {
     _disposed = true;
@@ -2556,7 +2215,6 @@ class LiveBitDropCore implements BitDropCore {
     _visualizerTimer?.cancel();
     _diagnosticsTimer?.cancel();
     _cloudStatusSub?.cancel();
-    _outputProbeSub?.cancel();
     _eqSub?.cancel();
     _playbackSub?.cancel();
     _queueSub?.cancel();
@@ -2575,7 +2233,6 @@ class LiveBitDropCore implements BitDropCore {
     _diagnostics.close();
     _cloud?.dispose();
     _outputProbe.dispose();
-    _signalPath.close();
     _banners.close();
     _defaultSources.close();
     _sleepTimer?.cancel();
