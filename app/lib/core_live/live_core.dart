@@ -1944,12 +1944,21 @@ class LiveBitDropCore implements BitDropCore {
       unawaited(_saveEqState());
     } else if (cmd is SetTone) {
       final updated = _eq.value.copyWith(
-        mode: EqMode.simple,
         bassDb: cmd.bassDb,
         trebleDb: cmd.trebleDb,
+        bassFreqHz: cmd.bassFreqHz,
+        trebleFreqHz: cmd.trebleFreqHz,
         balance: cmd.balance,
         mono: cmd.mono,
         bypass: false,
+      );
+      _eq.add(updated);
+      _settingsRepo.syncFromLiveState(eq: updated);
+      unawaited(_saveEqState());
+    } else if (cmd is SetHeadroomMode) {
+      final updated = _eq.value.copyWith(
+        smartHeadroom: cmd.smartHeadroom,
+        autoPreamp: cmd.autoPreamp,
       );
       _eq.add(updated);
       _settingsRepo.syncFromLiveState(eq: updated);
@@ -2416,6 +2425,7 @@ class LiveBitDropCore implements BitDropCore {
           peakLeftDb: frame.peakLeftDb.toDouble(),
           peakRightDb: frame.peakRightDb.toDouble(),
           clipping: frame.clipping,
+          limiterGrDb: frame.limiterGrDb.toDouble(),
         ));
       } catch (_) {}
     });

@@ -310,56 +310,24 @@ class BitDropSettingsRepository {
     final replayGainDb = rg.gainDb;
     final trackPeak = rg.peak;
 
-    final List<double> enginePayload;
-
-    if (eqState.mode == EqMode.simple) {
-      final toneBands = Biquad.fromTone(eqState.bassDb, eqState.trebleDb);
-      enginePayload = [
-        -999.0,
-        toneBands.length.toDouble(),
-        for (final b in toneBands) ...[
-          b.type.index.toDouble(),
-          b.frequencyHz,
-          b.gainDb,
-          b.q,
-        ],
-        eqState.preampDb,
-        balance,
-        mono,
-      ];
-    } else if (eqState.mode == EqMode.parametric) {
-      final activeBands = eqState.bands.where((b) => b.enabled).toList();
-      enginePayload = [
-        -999.0,
-        activeBands.length.toDouble(),
-        for (final b in activeBands) ...[
-          b.type.index.toDouble(),
-          b.frequencyHz,
-          b.gainDb,
-          b.q,
-        ],
-        eqState.preampDb,
-        balance,
-        mono,
-      ];
-    } else {
-      // EqMode.graphic
-      final gains = eqState.graphicGains.isNotEmpty
-          ? List<double>.from(eqState.graphicGains.take(10))
-          : List.filled(10, 0.0);
-      while (gains.length < 10) {
-        gains.add(0.0);
-      }
-      enginePayload = [
-        ...gains,
-        eqState.preampDb,
-        balance,
-        mono,
-      ];
-    }
+    final composedBands = Biquad.composeBands(eqState);
+    final enginePayload = <double>[
+      -999.0,
+      composedBands.length.toDouble(),
+      for (final b in composedBands) ...[
+        b.type.index.toDouble(),
+        b.frequencyHz,
+        b.gainDb,
+        b.q,
+      ],
+      eqState.preampDb,
+      balance,
+      mono,
+    ];
 
     onReplayGainPushed?.call(replayGainDb, trackPeak);
     try {
+      rust.engineSetHeadroomMode(mode: eqState.headroomModeIndex);
       rust.engineSetEq(gains: enginePayload);
       rust.engineSetEqEnabled(enabled: !eqState.bypass);
       rust.engineSetReplayGain(gainDb: replayGainDb, trackPeak: trackPeak);
@@ -472,12 +440,23 @@ class BitDropSettingsRepository {
 
   Future<void> handleSetTone(SetTone cmd) async {
     final updated = _eq.value.copyWith(
-      mode: EqMode.simple,
       bassDb: cmd.bassDb,
       trebleDb: cmd.trebleDb,
+      bassFreqHz: cmd.bassFreqHz,
+      trebleFreqHz: cmd.trebleFreqHz,
       balance: cmd.balance,
       mono: cmd.mono,
       bypass: false,
+    );
+    _eq.add(updated);
+    pushEqToEngine(updated);
+    await saveEqState();
+  }
+
+  Future<void> handleSetHeadroomMode(SetHeadroomMode cmd) async {
+    final updated = _eq.value.copyWith(
+      smartHeadroom: cmd.smartHeadroom,
+      autoPreamp: cmd.autoPreamp,
     );
     _eq.add(updated);
     pushEqToEngine(updated);

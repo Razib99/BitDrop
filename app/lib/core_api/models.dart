@@ -833,6 +833,10 @@ class EqState {
     this.graphicGains = const [],
     this.bassDb = 0,
     this.trebleDb = 0,
+    this.bassFreqHz = 65.0,
+    this.trebleFreqHz = 10000.0,
+    this.smartHeadroom = true,
+    this.autoPreamp = false,
     this.balance = 0,
     this.mono = false,
     this.replayGain = ReplayGainMode.off,
@@ -858,6 +862,10 @@ class EqState {
   final List<double> graphicGains;
   final double bassDb;
   final double trebleDb;
+  final double bassFreqHz;
+  final double trebleFreqHz;
+  final bool smartHeadroom;
+  final bool autoPreamp;
   final double balance;
   final bool mono;
   final ReplayGainMode replayGain;
@@ -880,6 +888,12 @@ class EqState {
       replayGain != ReplayGainMode.off ||
       crossfeed != CrossfeedPreset.off;
 
+  /// Headroom protection mode index forwarded to Rust (`0`=Smart, `1`=Strict, `2`=Off).
+  int get headroomModeIndex => autoPreamp ? 1 : (smartHeadroom ? 0 : 2);
+
+  String get headroomLabel =>
+      autoPreamp ? 'Strict' : (smartHeadroom ? 'Smart' : 'Off');
+
   EqState copyWith({
     EqMode? mode,
     List<EqBand>? bands,
@@ -890,6 +904,10 @@ class EqState {
     List<double>? graphicGains,
     double? bassDb,
     double? trebleDb,
+    double? bassFreqHz,
+    double? trebleFreqHz,
+    bool? smartHeadroom,
+    bool? autoPreamp,
     double? balance,
     bool? mono,
     ReplayGainMode? replayGain,
@@ -909,6 +927,10 @@ class EqState {
         graphicGains: graphicGains ?? this.graphicGains,
         bassDb: bassDb ?? this.bassDb,
         trebleDb: trebleDb ?? this.trebleDb,
+        bassFreqHz: bassFreqHz ?? this.bassFreqHz,
+        trebleFreqHz: trebleFreqHz ?? this.trebleFreqHz,
+        smartHeadroom: smartHeadroom ?? this.smartHeadroom,
+        autoPreamp: autoPreamp ?? this.autoPreamp,
         balance: balance ?? this.balance,
         mono: mono ?? this.mono,
         replayGain: replayGain ?? this.replayGain,
@@ -1071,18 +1093,21 @@ class VisualizerFrame {
     required this.peakLeftDb,
     required this.peakRightDb,
     required this.clipping,
+    this.limiterGrDb = 0.0,
   });
 
   final List<double> spectrum;
   final double peakLeftDb;
   final double peakRightDb;
   final bool clipping;
+  final double limiterGrDb;
 
   static const silent = VisualizerFrame(
     spectrum: [],
     peakLeftDb: -90,
     peakRightDb: -90,
     clipping: false,
+    limiterGrDb: 0.0,
   );
 }
 

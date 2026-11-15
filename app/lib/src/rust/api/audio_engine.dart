@@ -154,6 +154,13 @@ void engineSetEq({required List<double> gains}) =>
 void engineSetEqEnabled({required bool enabled}) => RustLib.instance.api
     .crateApiAudioEngineEngineSetEqEnabled(enabled: enabled);
 
+/// Configures automatic EQ headroom protection:
+/// `0` = Smart Loudness-Preserving (25% bass trim + limiter),
+/// `1` = Strict Anti-Clip (100% peak cut),
+/// `2` = Off (limiter-only peak protection).
+void engineSetHeadroomMode({required int mode}) =>
+    RustLib.instance.api.crateApiAudioEngineEngineSetHeadroomMode(mode: mode);
+
 /// Configures ReplayGain gain (dB) and track linear peak independently of EQ bypass.
 void engineSetReplayGain({required double gainDb, required double trackPeak}) =>
     RustLib.instance.api.crateApiAudioEngineEngineSetReplayGain(
@@ -487,6 +494,7 @@ class PlayerState {
   final F32Array10 eqGains;
   final double eqPreamp;
   final List<EqBandSpec>? eqSpecs;
+  final int headroomMode;
   final double autoGain;
   final double balance;
   final bool mono;
@@ -547,6 +555,7 @@ class PlayerState {
     required this.eqGains,
     required this.eqPreamp,
     this.eqSpecs,
+    required this.headroomMode,
     required this.autoGain,
     required this.balance,
     required this.mono,
@@ -581,6 +590,7 @@ class PlayerState {
       eqGains.hashCode ^
       eqPreamp.hashCode ^
       eqSpecs.hashCode ^
+      headroomMode.hashCode ^
       autoGain.hashCode ^
       balance.hashCode ^
       mono.hashCode ^
@@ -617,6 +627,7 @@ class PlayerState {
           eqGains == other.eqGains &&
           eqPreamp == other.eqPreamp &&
           eqSpecs == other.eqSpecs &&
+          headroomMode == other.headroomMode &&
           autoGain == other.autoGain &&
           balance == other.balance &&
           mono == other.mono &&

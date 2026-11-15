@@ -1370,7 +1370,7 @@ fn gate_10_dop_v1_1_dsp_bypass_lockout_invariant() {
     TRACK_ENDED_FLAG.store(false, Ordering::SeqCst);
 
     // Configure aggressive DSP: +6 dB preamp, peaking filter boost, auto-gain
-    let mut specs = [EqBandSpec::default(); 16];
+    let mut specs = [EqBandSpec::default(); rust_lib_bitdrop::dsp::MAX_EQ_BANDS];
     specs[0] = EqBandSpec {
         kind: EQ_PEAK,
         freq: 1000.0,

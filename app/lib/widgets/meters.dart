@@ -6,10 +6,8 @@ import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import '../util/format.dart';
 
-/// Preamp slider with the auto-preamp suggestion and a clipping meter.
-///
-/// The clip count comes from the core's meter; the UI never guesses whether
-/// clipping happened.
+/// Preamp slider with loudness-preserving headroom mode selector and real-time
+/// limiter gain-reduction telemetry.
 class PreampMeter extends StatelessWidget {
   const PreampMeter({
     super.key,
@@ -19,6 +17,10 @@ class PreampMeter extends StatelessWidget {
     this.suggestedDb,
     this.onApplySuggestion,
     this.peakDb,
+    this.headroomLabel,
+    this.effectiveHeadroomDb,
+    this.limiterGrDb = 0.0,
+    this.onCycleHeadroom,
   });
 
   final double preampDb;
@@ -27,14 +29,28 @@ class PreampMeter extends StatelessWidget {
   final double? suggestedDb;
   final VoidCallback? onApplySuggestion;
 
-  /// Peak of the combined EQ curve, used for the headroom warning.
+  /// Peak of the combined EQ curve, used for headroom telemetry.
   final double? peakDb;
+
+  /// Current headroom protection mode label ('Smart', 'Strict', 'Off').
+  final String? headroomLabel;
+
+  /// Auto-headroom offset (dB <= 0) currently applied by DSP.
+  final double? effectiveHeadroomDb;
+
+  /// Real-time lookahead limiter gain reduction (dB >= 0).
+  final double limiterGrDb;
+
+  /// Cycles headroom protection mode: Smart -> Strict -> Off.
+  final VoidCallback? onCycleHeadroom;
 
   @override
   Widget build(BuildContext context) {
     final c = context.c;
     final clipping = clippedSamples > 0;
-    final headroomRisk = (peakDb ?? 0) > 0;
+    final limiterActive = limiterGrDb > 0.05;
+    final isProtected = (headroomLabel ?? 'Smart') != 'Off';
+    final headroomRisk = !isProtected && (peakDb ?? 0) > 1.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -42,6 +58,14 @@ class PreampMeter extends StatelessWidget {
         Row(
           children: [
             Text('Preamp', style: context.t.titleSmall),
+            if (effectiveHeadroomDb != null &&
+                effectiveHeadroomDb!.abs() >= 0.1) ...[
+              const SizedBox(width: Spacing.xs),
+              Text(
+                'DSP trim ${Fmt.db(effectiveHeadroomDb!)}',
+                style: context.t.monoLabel.copyWith(color: c.textSecondary),
+              ),
+            ],
             const Spacer(),
             Text(Fmt.db(preampDb), style: context.t.monoReadout),
           ],
@@ -62,12 +86,13 @@ class PreampMeter extends StatelessWidget {
         ),
         Row(
           children: [
-            // Clipping meter: fills from 0 dB upward, red once samples clip.
             Expanded(
               child: Semantics(
                 label: clipping
                     ? 'Clipping, $clippedSamples samples clipped'
-                    : 'No clipping',
+                    : (limiterActive
+                        ? 'Limiter gain reduction ${limiterGrDb.toStringAsFixed(1)} dB'
+                        : 'No clipping'),
                 excludeSemantics: true,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -77,23 +102,34 @@ class PreampMeter extends StatelessWidget {
                         Icon(
                           clipping
                               ? Icons.warning_amber_rounded
-                              : Icons.check_circle_outline,
+                              : (limiterActive
+                                  ? Icons.shield_outlined
+                                  : Icons.check_circle_outline),
                           size: 14,
-                          color: clipping ? c.error : c.success,
+                          color: clipping
+                              ? c.error
+                              : (limiterActive ? c.accent : c.success),
                         ),
                         const SizedBox(width: 5),
-                        Text(
-                          clipping
-                              ? 'Clipping · ${Fmt.count(clippedSamples)} samples'
-                              : (headroomRisk
-                                  ? 'Peak ${Fmt.db(peakDb!)} · clipping risk'
-                                  : 'No clipping'),
-                          style: context.t.bodySmall.copyWith(
-                            color: clipping
-                                ? c.error
-                                : (headroomRisk
-                                    ? c.tierResampled
-                                    : c.textSecondary),
+                        Flexible(
+                          child: Text(
+                            clipping
+                                ? 'Clipping · ${Fmt.count(clippedSamples)} samples'
+                                : (limiterActive
+                                    ? 'Limiter GR −${limiterGrDb.toStringAsFixed(1)} dB · Clean'
+                                    : (headroomRisk
+                                        ? 'Peak ${Fmt.db(peakDb!)} · Limiter only'
+                                        : 'Clean headroom · No clipping')),
+                            overflow: TextOverflow.ellipsis,
+                            style: context.t.bodySmall.copyWith(
+                              color: clipping
+                                  ? c.error
+                                  : (limiterActive
+                                      ? c.accent
+                                      : (headroomRisk
+                                          ? c.tierResampled
+                                          : c.textSecondary)),
+                            ),
                           ),
                         ),
                       ],
@@ -104,11 +140,17 @@ class PreampMeter extends StatelessWidget {
                       child: SizedBox(
                         height: 4,
                         child: LinearProgressIndicator(
-                          value: ((peakDb ?? -12) + 15) / 27,
+                          value: limiterActive
+                              ? (limiterGrDb / 9.0).clamp(0.05, 1.0)
+                              : (((peakDb ?? -12) + 15) / 27).clamp(0.0, 1.0),
                           backgroundColor: c.surface3,
                           color: clipping
                               ? c.error
-                              : (headroomRisk ? c.tierResampled : c.accent),
+                              : (limiterActive
+                                  ? c.accent
+                                  : (headroomRisk
+                                      ? c.tierResampled
+                                      : c.success)),
                         ),
                       ),
                     ),
@@ -116,7 +158,28 @@ class PreampMeter extends StatelessWidget {
                 ),
               ),
             ),
-            if (suggestedDb != null && onApplySuggestion != null) ...[
+            if (onCycleHeadroom != null && headroomLabel != null) ...[
+              const SizedBox(width: Spacing.xs),
+              OutlinedButton.icon(
+                onPressed: onCycleHeadroom,
+                icon: Icon(
+                  headroomLabel == 'Smart'
+                      ? Icons.auto_awesome
+                      : (headroomLabel == 'Strict'
+                          ? Icons.shield_outlined
+                          : Icons.flash_on_outlined),
+                  size: 14,
+                ),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, 36),
+                  padding: const EdgeInsets.symmetric(horizontal: Spacing.xs),
+                ),
+                label: Text(
+                  'Headroom: $headroomLabel',
+                  style: context.t.monoLabel,
+                ),
+              ),
+            ] else if (suggestedDb != null && onApplySuggestion != null) ...[
               const SizedBox(width: Spacing.xs),
               OutlinedButton(
                 onPressed: onApplySuggestion,

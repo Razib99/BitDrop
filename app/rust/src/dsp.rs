@@ -25,14 +25,27 @@ pub const CROSSFEED_DEFAULT: u8 = 1; // 700.0 Hz, 4.5 dB
 pub const CROSSFEED_CHU_MOY: u8 = 2; // 700.0 Hz, 6.0 dB
 pub const CROSSFEED_JAN_MEIER: u8 = 3; // 650.0 Hz, 9.5 dB
 
-pub const MAX_EQ_BANDS: usize = 16;
+pub const MAX_EQ_BANDS: usize = 20;
 pub const ISO_10_BAND: [f64; 10] = [
     31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
 ];
 
 pub const BUTTERWORTH_Q: f64 = std::f64::consts::FRAC_1_SQRT_2; // 1.0 / sqrt(2)
 pub const OCTAVE_PEAK_Q: f64 = std::f64::consts::SQRT_2; // sqrt(2)
+pub const GRAPHIC_MID_Q: f64 = 1.15;
+pub const GRAPHIC_LOW_SHELF_FREQ: f64 = 38.0;
+pub const GRAPHIC_LOW_SHELF_Q: f64 = 0.75;
+pub const PULTEC_BASS_FREQ: f64 = 65.0;
+pub const PULTEC_BASS_Q: f64 = 0.88;
+pub const PULTEC_MUD_DIP_FREQ: f64 = 185.0;
+pub const PULTEC_MUD_DIP_Q: f64 = 1.25;
+pub const PULTEC_TREBLE_FREQ: f64 = 10000.0;
+pub const PULTEC_TREBLE_Q: f64 = 0.75;
 pub const SUBSONIC_FREQ: f64 = 18.0;
+
+pub const HEADROOM_SMART: u8 = 0;
+pub const HEADROOM_STRICT: u8 = 1;
+pub const HEADROOM_OFF: u8 = 2;
 
 /// Ring buffer capacity for the lock-free visualizer FFT.
 pub const VISUALIZER_RING_SIZE: usize = 512;
@@ -58,6 +71,7 @@ pub struct VisualizerFrameData {
     pub peak_left_db: f32,
     pub peak_right_db: f32,
     pub clipping: bool,
+    pub limiter_gr_db: f32,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
@@ -83,6 +97,7 @@ pub struct DspConfigSnapshot {
     pub spec_count: usize,
     pub is_parametric: bool,
     pub graphic_gains: [f32; 10],
+    pub headroom_mode: u8,
     pub dop_active: bool,
     pub version: u64,
 }
@@ -103,6 +118,7 @@ impl Default for DspConfigSnapshot {
             spec_count: 0,
             is_parametric: false,
             graphic_gains: [0.0; 10],
+            headroom_mode: HEADROOM_SMART,
             dop_active: false,
             version: 0,
         }
@@ -565,6 +581,71 @@ pub fn compute_auto_preamp_db(bank: &FilterBankF64, fs: f64) -> f64 {
     -(peak_gain_db.max(0.0))
 }
 
+/// Computes a loudness-preserving psychoacoustic smart headroom offset (dB).
+///
+/// Sub-bass and bass boosts (< 120 Hz) receive only a 25% broadband trim so
+/// vocals and midrange punch stay loud instead of sinking when bass is raised,
+/// while the soft-knee peak shaper and lookahead true-peak limiter protect
+/// transients from clipping. Mid/high boosts receive up to a 55% trim, capped
+/// at -6.0 dB.
+pub fn compute_smart_headroom_db(bank: &FilterBankF64, fs: f64) -> f64 {
+    if bank.active == 0 {
+        return 0.0;
+    }
+    let fs = if fs > 0.0 { fs } else { 48000.0 };
+    let min_freq = 10.0f64;
+    let max_freq = (0.495 * fs).max(min_freq * 2.0);
+    let log_min = min_freq.ln();
+    let log_max = max_freq.ln();
+    let steps = 512;
+
+    let mut max_weighted_boost = 0.0f64;
+    for i in 0..steps {
+        let t = i as f64 / (steps - 1) as f64;
+        let freq = (log_min + t * (log_max - log_min)).exp();
+        let mag_db = bank.magnitude_db_at(freq, fs) - 20.0 * bank.preamp_linear.log10();
+        let boost = mag_db.max(0.0);
+        if boost <= 0.0 {
+            continue;
+        }
+        let weight = if freq <= 120.0 {
+            0.25
+        } else if freq >= 500.0 {
+            0.55
+        } else {
+            0.25 + ((freq - 120.0) / 380.0) * 0.30
+        };
+        let weighted = boost * weight;
+        if weighted > max_weighted_boost {
+            max_weighted_boost = weighted;
+        }
+    }
+
+    if max_weighted_boost <= 1e-9 {
+        0.0
+    } else {
+        -max_weighted_boost.min(6.0)
+    }
+}
+
+/// Smooth C1 soft-knee transient peak shaper applied before the lookahead limiter.
+///
+/// Linear (`x`) below 0.86 (-1.31 dBFS) for zero distortion on normal program peaks,
+/// smoothly saturating overshoot above 0.86 toward 1.0 so bass-boosted transients
+/// sound warm rather than triggering harsh pumping.
+#[inline(always)]
+pub fn soft_knee_shape(x: f64) -> f64 {
+    const THRESH: f64 = 0.86;
+    const RANGE: f64 = 0.14;
+    let ax = x.abs();
+    if ax <= THRESH {
+        x
+    } else {
+        let over = (ax - THRESH) / RANGE;
+        x.signum() * (THRESH + RANGE * over.tanh())
+    }
+}
+
 /// Normative ITU-R BS.1770-4 48-tap FIR 4x polyphase interpolation filter coefficients.
 /// 4 phases of 12 taps each, normalized for exact unity DC gain.
 pub const TRUE_PEAK_COEFFS_4X: [[f64; 12]; 4] = [
@@ -960,6 +1041,8 @@ pub struct DspPipelineV2 {
     pub crossfeed: CrossfeedFilterF64,
 
     pub auto_preamp_enabled: bool,
+    pub headroom_mode: u8,
+    pub auto_subsonic_enabled: bool,
     pub replay_gain_db: f64,
     pub replay_gain_linear: f64,
     pub track_peak: f64,
@@ -1003,6 +1086,8 @@ impl DspPipelineV2 {
             crossfeed: CrossfeedFilterF64::default(),
 
             auto_preamp_enabled: true,
+            headroom_mode: HEADROOM_SMART,
+            auto_subsonic_enabled: false,
             replay_gain_db: 0.0,
             replay_gain_linear: 1.0,
             track_peak: 1.0,
@@ -1105,21 +1190,25 @@ impl DspPipelineV2 {
             10.0_f64.powf(effective_rg / 20.0)
         };
 
-        // Detect if any band < 60 Hz has positive gain to engage 18 Hz subsonic filter
+        // Only engage 18 Hz subsonic HPF when explicitly opted in (off by default
+        // to preserve sub-bass phase linearity and 20-35 Hz weight).
         let has_sub_boost = specs
             .iter()
             .any(|s| (s.freq as f64) < 60.0 && s.gain_db > 0.0);
-        self.subsonic_engaged = has_sub_boost;
+        self.subsonic_engaged = self.auto_subsonic_enabled && has_sub_boost;
 
         // Build target filter bank with specs
         let mut temp_bank = FilterBankF64::default();
         temp_bank.set_bands(specs, 0.0, self.sample_rate);
 
-        // Auto-preamp calculation
-        let auto_preamp_db = if self.auto_preamp_enabled {
+        // Headroom calculation: Smart (loudness-preserving) by default,
+        // Strict (100% peak protection), or Off.
+        let auto_preamp_db = if !self.auto_preamp_enabled || self.headroom_mode == HEADROOM_OFF {
+            0.0
+        } else if self.headroom_mode == HEADROOM_STRICT {
             compute_auto_preamp_db(&temp_bank, self.sample_rate)
         } else {
-            0.0
+            compute_smart_headroom_db(&temp_bank, self.sample_rate)
         };
 
         let total_preamp_db = user_preamp_db + auto_preamp_db;
@@ -1217,6 +1306,10 @@ impl DspPipelineV2 {
         l *= self.software_volume;
         r *= self.software_volume;
 
+        // 5b. Soft-Knee Peak Shaper (protects transient clarity on deep bass boosts)
+        l = soft_knee_shape(l);
+        r = soft_knee_shape(r);
+
         // 6. Lookahead Adaptive ITU-R BS.1770-4 True-Peak Limiter (-1.0 dBTP ceiling)
         let (lim_l, lim_r) = self.limiter.process_stereo(l, r);
 
@@ -1224,8 +1317,55 @@ impl DspPipelineV2 {
     }
 }
 
+/// Builds Pultec-inspired Bass Contour + Air Treble filter specs.
+///
+/// Positive bass gains pair a deep low-shelf with a gentle -0.22x dip at 185 Hz
+/// (capped at -3.5 dB) to prevent upper-bass wooliness while keeping low-end punch deep.
+pub fn build_tone_contour_specs(
+    bass_db: f64,
+    treble_db: f64,
+    bass_freq_hz: f64,
+    treble_freq_hz: f64,
+) -> ([EqBandSpec; 3], usize) {
+    let mut specs = [EqBandSpec::default(); 3];
+    let mut count = 0;
+
+    if bass_db.abs() > 0.01 {
+        specs[count] = EqBandSpec {
+            kind: EQ_LOW_SHELF,
+            freq: bass_freq_hz.clamp(30.0, 140.0) as f32,
+            gain_db: bass_db as f32,
+            q: PULTEC_BASS_Q as f32,
+        };
+        count += 1;
+
+        if bass_db > 0.5 {
+            specs[count] = EqBandSpec {
+                kind: EQ_PEAK,
+                freq: PULTEC_MUD_DIP_FREQ as f32,
+                gain_db: -(0.22 * bass_db).min(3.5) as f32,
+                q: PULTEC_MUD_DIP_Q as f32,
+            };
+            count += 1;
+        }
+    }
+
+    if treble_db.abs() > 0.01 {
+        specs[count] = EqBandSpec {
+            kind: EQ_HIGH_SHELF,
+            freq: treble_freq_hz.clamp(4000.0, 16000.0) as f32,
+            gain_db: treble_db as f32,
+            q: PULTEC_TREBLE_Q as f32,
+        };
+        count += 1;
+    }
+
+    (specs, count)
+}
+
 impl DspPipelineV2 {
-    /// Helper to install 10-band ISO graphic gains as 10 constant-Q octave peaking filters.
+    /// Installs 10-band graphic gains with Band 0 tuned as a smooth 38 Hz low-shelf
+    /// and upper bands using Q = 1.15 for seamless proportional musical transitions.
     pub fn update_graphic_gains(
         &mut self,
         gains: &[f32; 10],
@@ -1236,18 +1376,24 @@ impl DspPipelineV2 {
         mono: bool,
     ) {
         let mut specs = [EqBandSpec::default(); 10];
-        for i in 0..10 {
+        specs[0] = EqBandSpec {
+            kind: EQ_LOW_SHELF,
+            freq: GRAPHIC_LOW_SHELF_FREQ as f32,
+            gain_db: gains[0],
+            q: GRAPHIC_LOW_SHELF_Q as f32,
+        };
+        for i in 1..10 {
             specs[i] = EqBandSpec {
                 kind: EQ_PEAK,
                 freq: ISO_10_BAND[i] as f32,
                 gain_db: gains[i],
-                q: OCTAVE_PEAK_Q as f32,
+                q: GRAPHIC_MID_Q as f32,
             };
         }
         self.install_parameters(&specs, preamp_db, replay_gain_db, track_peak, balance, mono);
     }
 
-    /// Helper to install tone controls (Bass & Treble shelves with Butterworth Q).
+    /// Installs Pultec-inspired Bass Contour & Treble Air tone controls.
     #[allow(clippy::too_many_arguments)]
     pub fn update_tone_controls(
         &mut self,
@@ -1259,21 +1405,16 @@ impl DspPipelineV2 {
         balance: f64,
         mono: bool,
     ) {
-        let specs = [
-            EqBandSpec {
-                kind: EQ_LOW_SHELF,
-                freq: 105.0,
-                gain_db: bass_db as f32,
-                q: BUTTERWORTH_Q as f32,
-            },
-            EqBandSpec {
-                kind: EQ_HIGH_SHELF,
-                freq: 8000.0,
-                gain_db: treble_db as f32,
-                q: BUTTERWORTH_Q as f32,
-            },
-        ];
-        self.install_parameters(&specs, preamp_db, replay_gain_db, track_peak, balance, mono);
+        let (specs, count) =
+            build_tone_contour_specs(bass_db, treble_db, PULTEC_BASS_FREQ, PULTEC_TREBLE_FREQ);
+        self.install_parameters(
+            &specs[..count],
+            preamp_db,
+            replay_gain_db,
+            track_peak,
+            balance,
+            mono,
+        );
     }
 }
 
@@ -1377,6 +1518,7 @@ pub fn compute_visualizer_frame(is_playing: bool) -> VisualizerFrameData {
     let clipping = VISUALIZER_CLIPPING.swap(false, Ordering::Relaxed)
         || peak_left_db >= -0.01
         || peak_right_db >= -0.01;
+    let limiter_gr_db = (LIMITER_GR_MILLIDB.load(Ordering::Relaxed) as f32) / 1000.0;
 
     if !is_playing {
         return VisualizerFrameData {
@@ -1384,6 +1526,7 @@ pub fn compute_visualizer_frame(is_playing: bool) -> VisualizerFrameData {
             peak_left_db: -90.0,
             peak_right_db: -90.0,
             clipping: false,
+            limiter_gr_db: 0.0,
         };
     }
 
@@ -1403,6 +1546,7 @@ pub fn compute_visualizer_frame(is_playing: bool) -> VisualizerFrameData {
         peak_left_db,
         peak_right_db,
         clipping,
+        limiter_gr_db,
     }
 }
 
@@ -2155,5 +2299,110 @@ mod tests {
                 "DoP active must preserve right channel bit-for-bit"
             );
         }
+    }
+
+    #[test]
+    fn test_smart_headroom_preserves_midrange_loudness_and_zero_clipping() {
+        let fs = 48000.0;
+        let mut dsp = DspPipelineV2::new(fs);
+        dsp.eq_enabled = true;
+        dsp.headroom_mode = HEADROOM_SMART;
+        dsp.update_tone_controls(8.0, 0.0, 0.0, 0.0, 1.0, 0.0, false);
+
+        // Forced 18 Hz subsonic HPF must remain disengaged by default on bass boost
+        assert!(!dsp.subsonic_engaged);
+        // Smart headroom trims only ~25% of an 8 dB bass boost (-2.0 dB vs strict -8.0 dB)
+        let preamp_db = 20.0 * dsp.target_bank.preamp_linear.log10();
+        assert!(
+            (-2.5..=-1.5).contains(&preamp_db),
+            "Smart headroom preamp on +8 dB bass boost was {} dB",
+            preamp_db
+        );
+
+        // Verify 1 kHz midrange tone retains ~80% loudness (within -2.5 dB of unity)
+        let mut settled_mid_rms = 0.0f64;
+        let mid_count = 2000;
+        for i in 0..(4800 + mid_count) {
+            let t = i as f64 / fs;
+            let x = 0.25 * (2.0 * std::f64::consts::PI * 1000.0 * t).sin();
+            let (yl, _) = dsp.process_stereo(x, x);
+            if i >= 4800 {
+                settled_mid_rms += yl * yl;
+            }
+        }
+        settled_mid_rms = (settled_mid_rms / mid_count as f64).sqrt();
+        let in_mid_rms = 0.25 / std::f64::consts::SQRT_2;
+        let mid_delta_db = 20.0 * (settled_mid_rms / in_mid_rms).log10();
+        assert!(
+            mid_delta_db > -2.6,
+            "1 kHz midrange dropped too much on +8 dB bass boost: {} dB",
+            mid_delta_db
+        );
+
+        // Verify full-scale 50 Hz sine never exceeds -1.0 dBTP limiter ceiling
+        dsp.limiter = LookaheadLimiterF64::new(fs);
+        let ceiling = 10.0_f64.powf(-0.95 / 20.0);
+        let mut peak = 0.0f64;
+        for i in 0..8000 {
+            let t = i as f64 / fs;
+            let x = (2.0 * std::f64::consts::PI * 50.0 * t).sin();
+            let (yl, yr) = dsp.process_stereo(x, x);
+            peak = peak.max(yl.abs()).max(yr.abs());
+        }
+        assert!(
+            peak <= ceiling,
+            "Output peak {} exceeded limiter ceiling {}",
+            peak,
+            ceiling
+        );
+    }
+
+    #[test]
+    fn test_pultec_contour_and_graphic_band0_smooth_sub_bass() {
+        let fs = 48000.0;
+        let (specs, count) =
+            build_tone_contour_specs(6.0, 2.0, PULTEC_BASS_FREQ, PULTEC_TREBLE_FREQ);
+        assert_eq!(count, 3);
+        let mut bank = FilterBankF64::default();
+        bank.set_bands(&specs[..count], 0.0, fs);
+        let gain_30 = bank.magnitude_db_at(30.0, fs);
+        let gain_185 = bank.magnitude_db_at(185.0, fs);
+        let gain_65 = bank.magnitude_db_at(65.0, fs);
+        assert!(
+            gain_30 > 4.5,
+            "30 Hz sub-bass should be strong: {}",
+            gain_30
+        );
+        assert!(
+            gain_65 > gain_185 + 2.5,
+            "65 Hz ({}) should punch cleanly above 185 Hz mud dip ({})",
+            gain_65,
+            gain_185
+        );
+
+        // Graphic band 0 must boost 20 Hz smoothly instead of rolling off steeply
+        let mut dsp = DspPipelineV2::new(fs);
+        let gains = [6.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        dsp.update_graphic_gains(&gains, 0.0, 0.0, 1.0, 0.0, false);
+        let zero_bank_mag = {
+            let mut b = FilterBankF64::default();
+            b.set_bands(&dsp.target_bank.specs[..dsp.target_bank.active], 0.0, fs);
+            b.magnitude_db_at(25.0, fs)
+        };
+        assert!(
+            zero_bank_mag > 4.5,
+            "Graphic Band 0 low shelf should sustain 25 Hz energy: {}",
+            zero_bank_mag
+        );
+    }
+
+    #[test]
+    fn test_soft_knee_shape_linear_below_threshold_and_bounded() {
+        assert_eq!(soft_knee_shape(0.5), 0.5);
+        assert_eq!(soft_knee_shape(-0.8), -0.8);
+        let hi = soft_knee_shape(2.5);
+        assert!(hi > 0.86 && hi < 1.0, "soft_knee_shape(2.5) = {}", hi);
+        let neg = soft_knee_shape(-2.5);
+        assert!(neg < -0.86 && neg > -1.0, "soft_knee_shape(-2.5) = {}", neg);
     }
 }

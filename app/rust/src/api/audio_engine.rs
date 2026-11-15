@@ -219,6 +219,7 @@ pub struct PlayerState {
     pub eq_gains: [f32; 10],
     pub eq_preamp: f32,
     pub eq_specs: Option<Vec<EqBandSpec>>,
+    pub headroom_mode: u8,
     pub auto_gain: f32,
     pub balance: f32,
     pub mono: bool,
@@ -282,6 +283,7 @@ impl Default for PlayerState {
             eq_gains: [0.0; 10],
             eq_preamp: 0.0,
             eq_specs: None,
+            headroom_mode: crate::dsp::HEADROOM_SMART,
             auto_gain: 0.0,
             balance: 0.0,
             mono: false,
@@ -346,6 +348,7 @@ pub(crate) fn build_dsp_config_snapshot(state: &PlayerState) -> DspConfigSnapsho
         eq_enabled: state.eq_enabled,
         preamp_db: state.eq_preamp as f64,
         auto_gain: state.auto_gain as f64,
+        headroom_mode: state.headroom_mode,
         balance: state.balance as f64,
         mono: state.mono,
         replay_gain_db: if state.replay_gain_db.is_finite() {
@@ -2394,6 +2397,18 @@ pub fn engine_set_eq(gains: Vec<f32>) {
 pub fn engine_set_eq_enabled(enabled: bool) {
     let mut state = PLAYER_STATE.lock().unwrap();
     state.eq_enabled = enabled;
+    state.eq_updated = true;
+    publish_dsp_config(&state);
+}
+
+/// Configures automatic EQ headroom protection:
+/// `0` = Smart Loudness-Preserving (25% bass trim + limiter),
+/// `1` = Strict Anti-Clip (100% peak cut),
+/// `2` = Off (limiter-only peak protection).
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_set_headroom_mode(mode: u8) {
+    let mut state = PLAYER_STATE.lock().unwrap();
+    state.headroom_mode = mode.min(crate::dsp::HEADROOM_OFF);
     state.eq_updated = true;
     publish_dsp_config(&state);
 }

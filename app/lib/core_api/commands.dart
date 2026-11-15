@@ -113,11 +113,26 @@ class SetPreamp extends PlayerCommand {
 }
 
 class SetTone extends PlayerCommand {
-  const SetTone({this.bassDb, this.trebleDb, this.balance, this.mono});
+  const SetTone({
+    this.bassDb,
+    this.trebleDb,
+    this.bassFreqHz,
+    this.trebleFreqHz,
+    this.balance,
+    this.mono,
+  });
   final double? bassDb;
   final double? trebleDb;
+  final double? bassFreqHz;
+  final double? trebleFreqHz;
   final double? balance;
   final bool? mono;
+}
+
+class SetHeadroomMode extends PlayerCommand {
+  const SetHeadroomMode({required this.smartHeadroom, this.autoPreamp = false});
+  final bool smartHeadroom;
+  final bool autoPreamp;
 }
 
 class SetReplayGain extends PlayerCommand {

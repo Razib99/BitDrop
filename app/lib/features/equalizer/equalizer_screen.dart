@@ -48,6 +48,7 @@ class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
     final eq = ref.watch(eqProvider).valueOrNull;
     final signal = ref.watch(signalPathProvider).valueOrNull;
     final device = ref.watch(outputDeviceProvider).valueOrNull;
+    final vis = ref.watch(visualizerProvider).valueOrNull ?? VisualizerFrame.silent;
     final l = context.l10n;
 
     if (eq == null) {
@@ -58,6 +59,14 @@ class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
     }
 
     final bypassed = eq.bypass || _abHeld;
+    final toneBands = Biquad.fromTone(
+      eq.bassDb,
+      eq.trebleDb,
+      bassFreqHz: eq.bassFreqHz,
+      trebleFreqHz: eq.trebleFreqHz,
+    );
+    final stageBands = _stageBands(eq);
+    final totalBands = Biquad.composeBands(eq);
 
     return Scaffold(
       appBar: AppBar(
@@ -83,7 +92,7 @@ class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
           SegmentedTabs<EqMode>(
             values: EqMode.values,
             labels: (m) => switch (m) {
-              EqMode.simple => 'Simple',
+              EqMode.simple => 'Tone & Presets',
               EqMode.graphic => 'Graphic',
               EqMode.parametric => 'Parametric',
             },
@@ -94,14 +103,26 @@ class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
             child: EqGraph(
-              bands: _graphBands(eq),
+              bands: stageBands,
+              overlayBands: eq.mode == EqMode.simple ? const [] : toneBands,
+              spectrum: vis.spectrum,
               preampDb: eq.preampDb,
               bypassed: bypassed,
+              lockFrequency: eq.mode == EqMode.graphic,
               targetCurve: eq.targetCurve,
               selectedBandId: _selectedBand,
-              interactive: eq.mode == EqMode.parametric && !eq.bypass,
+              interactive: eq.mode != EqMode.simple && !eq.bypass,
               onSelect: (id) => setState(() => _selectedBand = id),
-              onChanged: (bands) => sendCommand(ref, SetEqBands(bands)),
+              onChanged: (bands) {
+                if (eq.mode == EqMode.parametric) {
+                  sendCommand(ref, SetEqBands(bands));
+                } else if (eq.mode == EqMode.graphic) {
+                  sendCommand(
+                    ref,
+                    SetGraphicGains(bands.map((b) => b.gainDb).toList()),
+                  );
+                }
+              },
             ),
           ),
           const SizedBox(height: Spacing.md),
@@ -110,12 +131,11 @@ class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
             child: PreampMeter(
               preampDb: eq.preampDb,
               clippedSamples: eq.clippedSamples,
-              peakDb: Biquad.peakDb(_graphBands(eq), preampDb: eq.preampDb),
-              suggestedDb: Biquad.suggestedPreamp(_graphBands(eq)),
-              onApplySuggestion: () => sendCommand(
-                ref,
-                SetPreamp(Biquad.suggestedPreamp(_graphBands(eq))),
-              ),
+              peakDb: Biquad.peakDb(totalBands, preampDb: eq.preampDb),
+              headroomLabel: eq.headroomLabel,
+              effectiveHeadroomDb: Biquad.autoHeadroomOffsetDb(eq, totalBands),
+              limiterGrDb: vis.limiterGrDb,
+              onCycleHeadroom: () => _cycleHeadroom(eq),
               onChanged: (v) => sendCommand(ref, SetPreamp(v)),
             ),
           ),
@@ -136,6 +156,8 @@ class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
               }
             },
           ),
+          _ToneContourDeck(eq: eq),
+          _CuratedPresetRail(eq: eq),
           switch (eq.mode) {
             EqMode.parametric => _ParametricControls(
                 eq: eq,
@@ -143,7 +165,7 @@ class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
                 onSelect: (id) => setState(() => _selectedBand = id),
               ),
             EqMode.graphic => _GraphicControls(eq: eq),
-            EqMode.simple => _SimpleControls(eq: eq),
+            EqMode.simple => const SizedBox.shrink(),
           },
           const SectionHeader(title: 'Presets'),
           ListTile(
@@ -182,15 +204,29 @@ class _EqualizerScreenState extends ConsumerState<EqualizerScreen> {
     );
   }
 
-  /// One curve renderer serves all three modes.
-  List<EqBand> _graphBands(EqState eq) => switch (eq.mode) {
+  /// Stage bands displayed as draggable nodes for the selected tab.
+  List<EqBand> _stageBands(EqState eq) => switch (eq.mode) {
         EqMode.parametric => eq.bands,
         EqMode.graphic => Biquad.fromGraphicGains(
             eq.graphicGains.isEmpty ? List.filled(10, 0.0) : eq.graphicGains,
-            MockCatalog.graphicBands,
+            Biquad.isoGraphicCenters,
           ),
-        EqMode.simple => Biquad.fromTone(eq.bassDb, eq.trebleDb),
+        EqMode.simple => Biquad.fromTone(
+            eq.bassDb,
+            eq.trebleDb,
+            bassFreqHz: eq.bassFreqHz,
+            trebleFreqHz: eq.trebleFreqHz,
+          ),
       };
+
+  void _cycleHeadroom(EqState eq) {
+    final cmd = switch (eq.headroomModeIndex) {
+      0 => const SetHeadroomMode(smartHeadroom: false, autoPreamp: true),
+      1 => const SetHeadroomMode(smartHeadroom: false, autoPreamp: false),
+      _ => const SetHeadroomMode(smartHeadroom: true, autoPreamp: false),
+    };
+    sendCommand(ref, cmd);
+  }
 }
 
 class _ActiveBanner extends StatelessWidget {
@@ -400,57 +436,207 @@ class _GraphicControls extends ConsumerWidget {
   }
 }
 
-class _SimpleControls extends ConsumerWidget {
-  const _SimpleControls({required this.eq});
+class _ToneContourDeck extends ConsumerWidget {
+  const _ToneContourDeck({required this.eq});
 
   final EqState eq;
+
+  static const _bassFreqs = [40.0, 65.0, 85.0];
+  static const _trebleFreqs = [8000.0, 10000.0, 12000.0];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.c;
+    final bassSub = eq.bassDb > 0.5
+        ? 'Shelf + 185 Hz mud dip'
+        : '${eq.bassFreqHz.round()} Hz low shelf';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SectionHeader(
+          title: 'Tone Contour',
+          subtitle: 'Always active · $bassSub',
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
+          child: Container(
+            padding: const EdgeInsets.all(Spacing.sm),
+            decoration: BoxDecoration(
+              color: c.surface2,
+              borderRadius: Radii.cardR,
+              border: Border.all(color: c.outline),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _ToneSlider(
+                  label: 'Bass',
+                  value: eq.bassDb,
+                  onChanged: (v) => sendCommand(ref, SetTone(bassDb: v)),
+                ),
+                Wrap(
+                  spacing: Spacing.xs,
+                  children: [
+                    for (final hz in _bassFreqs)
+                      BitChip(
+                        label: '${hz.round()} Hz',
+                        selected: (eq.bassFreqHz - hz).abs() < 1.0,
+                        onTap: () =>
+                            sendCommand(ref, SetTone(bassFreqHz: hz)),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: Spacing.xs),
+                _ToneSlider(
+                  label: 'Treble',
+                  value: eq.trebleDb,
+                  onChanged: (v) => sendCommand(ref, SetTone(trebleDb: v)),
+                ),
+                Wrap(
+                  spacing: Spacing.xs,
+                  children: [
+                    for (final hz in _trebleFreqs)
+                      BitChip(
+                        label: '${(hz / 1000).round()} kHz',
+                        selected: (eq.trebleFreqHz - hz).abs() < 1.0,
+                        onTap: () =>
+                            sendCommand(ref, SetTone(trebleFreqHz: hz)),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+typedef _EqCuratedPreset = ({
+  String name,
+  double bass,
+  double treble,
+  double bassFreq,
+  List<double> graphic,
+});
+
+class _CuratedPresetRail extends ConsumerWidget {
+  const _CuratedPresetRail({required this.eq});
+
+  final EqState eq;
+
+  static const _presets = <_EqCuratedPreset>[
+    (
+      name: 'Flat',
+      bass: 0.0,
+      treble: 0.0,
+      bassFreq: 65.0,
+      graphic: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ),
+    (
+      name: 'Deep Bass',
+      bass: 6.5,
+      treble: 1.0,
+      bassFreq: 65.0,
+      graphic: [3.5, 2.0, 0.5, -1.5, 0.0, 0.5, 1.0, 1.5, 1.0, 0.5],
+    ),
+    (
+      name: 'Bass & Treble',
+      bass: 5.0,
+      treble: 3.5,
+      bassFreq: 65.0,
+      graphic: [2.5, 1.5, 0.0, -1.0, -0.5, 0.5, 1.5, 2.5, 3.0, 2.0],
+    ),
+    (
+      name: 'Harman',
+      bass: 4.0,
+      treble: 1.5,
+      bassFreq: 85.0,
+      graphic: [2.0, 1.5, 0.5, -0.5, 0.0, 0.5, 2.0, 1.5, 0.5, 0.0],
+    ),
+    (
+      name: 'Warm',
+      bass: 3.5,
+      treble: -1.5,
+      bassFreq: 85.0,
+      graphic: [1.5, 2.0, 1.0, 0.5, 0.0, 0.0, -0.5, -1.0, -1.5, -1.5],
+    ),
+    (
+      name: 'Vocal',
+      bass: -1.5,
+      treble: 2.0,
+      bassFreq: 65.0,
+      graphic: [-2.0, -1.5, -0.5, 0.0, 1.5, 2.5, 3.0, 2.0, 1.0, 0.5],
+    ),
+    (
+      name: 'V-Shape',
+      bass: 5.5,
+      treble: 4.5,
+      bassFreq: 65.0,
+      graphic: [3.0, 2.0, 0.5, -1.5, -2.0, -1.0, 1.0, 2.5, 3.5, 3.0],
+    ),
+    (
+      name: 'Late Night',
+      bass: 4.5,
+      treble: 2.5,
+      bassFreq: 85.0,
+      graphic: [2.5, 2.0, 0.5, -0.5, 0.5, 1.0, 1.5, 2.0, 1.5, 1.0],
+    ),
+    (
+      name: 'Rock',
+      bass: 4.0,
+      treble: 3.0,
+      bassFreq: 65.0,
+      graphic: [2.5, 1.5, 0.5, -1.0, -0.5, 1.0, 2.5, 3.0, 2.5, 1.5],
+    ),
+    (
+      name: 'Electronic',
+      bass: 6.0,
+      treble: 3.5,
+      bassFreq: 40.0,
+      graphic: [4.5, 2.5, 0.5, -1.5, 0.0, 0.5, 1.5, 2.5, 3.0, 2.5],
+    ),
+  ];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SectionHeader(title: 'Tone'),
-        _ToneSlider(
-          label: 'Bass',
-          value: eq.bassDb,
-          onChanged: (v) => sendCommand(ref, SetTone(bassDb: v)),
-        ),
-        _ToneSlider(
-          label: 'Treble',
-          value: eq.trebleDb,
-          onChanged: (v) => sendCommand(ref, SetTone(trebleDb: v)),
-        ),
-        const SectionHeader(title: 'Presets'),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
-          child: Wrap(
-            spacing: Spacing.xs,
-            runSpacing: Spacing.xs,
-            children: [
-              for (final preset in _presets)
-                BitChip(
-                  label: preset.name,
-                  onTap: () => sendCommand(
+        const SectionHeader(title: 'Quick Presets'),
+        SizedBox(
+          height: 44,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
+            itemCount: _presets.length,
+            separatorBuilder: (_, __) => const SizedBox(width: Spacing.xs),
+            itemBuilder: (context, i) {
+              final preset = _presets[i];
+              return BitChip(
+                label: preset.name,
+                onTap: () {
+                  sendCommand(
                     ref,
-                    SetTone(bassDb: preset.bass, trebleDb: preset.treble),
-                  ),
-                ),
-            ],
+                    SetTone(
+                      bassDb: preset.bass,
+                      trebleDb: preset.treble,
+                      bassFreqHz: preset.bassFreq,
+                    ),
+                  );
+                  if (eq.mode == EqMode.graphic) {
+                    sendCommand(ref, SetGraphicGains(preset.graphic));
+                  }
+                },
+              );
+            },
           ),
         ),
       ],
     );
   }
-
-  /// Deliberately few, and no gimmicks: no "3D", no "bass boost".
-  static const _presets = [
-    (name: 'Flat', bass: 0.0, treble: 0.0),
-    (name: 'Warm', bass: 3.0, treble: -1.5),
-    (name: 'Bright', bass: -1.0, treble: 3.0),
-    (name: 'Loudness', bass: 4.0, treble: 2.5),
-    (name: 'Spoken word', bass: -3.0, treble: 1.5),
-  ];
 }
 
 class _ToneSlider extends StatelessWidget {

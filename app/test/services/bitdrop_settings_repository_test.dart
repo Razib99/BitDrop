@@ -108,19 +108,35 @@ void main() {
       expect(repo.currentEq.bypass, isFalse);
     });
 
-    test('handleSetTone updates simple tone controls', () async {
+    test('handleSetTone updates tone controls without dropping active mode',
+        () async {
       await repo.handleSetTone(const SetTone(
         bassDb: 4.0,
         trebleDb: -2.5,
+        bassFreqHz: 40.0,
+        trebleFreqHz: 12000.0,
         balance: -0.2,
         mono: true,
       ));
 
-      expect(repo.currentEq.mode, equals(EqMode.simple));
+      expect(repo.currentEq.mode, equals(EqMode.graphic));
       expect(repo.currentEq.bassDb, equals(4.0));
       expect(repo.currentEq.trebleDb, equals(-2.5));
+      expect(repo.currentEq.bassFreqHz, equals(40.0));
+      expect(repo.currentEq.trebleFreqHz, equals(12000.0));
       expect(repo.currentEq.balance, equals(-0.2));
       expect(repo.currentEq.mono, isTrue);
+    });
+
+    test('handleSetHeadroomMode switches between Smart, Strict, and Off',
+        () async {
+      expect(repo.currentEq.headroomModeIndex, equals(0)); // Smart default
+      await repo.handleSetHeadroomMode(
+          const SetHeadroomMode(smartHeadroom: false, autoPreamp: true));
+      expect(repo.currentEq.headroomModeIndex, equals(1)); // Strict
+      await repo.handleSetHeadroomMode(
+          const SetHeadroomMode(smartHeadroom: false, autoPreamp: false));
+      expect(repo.currentEq.headroomModeIndex, equals(2)); // Off
     });
 
     test('handleSetBypass toggles DSP bypass', () async {

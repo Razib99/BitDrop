@@ -68,6 +68,7 @@ impl OutputRenderer {
             self.dsp.dop_active =
                 snap.dop_active || crate::dsp::DOP_BYPASS_LOCKOUT.load(Ordering::Relaxed);
             self.dsp.eq_enabled = snap.eq_enabled;
+            self.dsp.headroom_mode = snap.headroom_mode;
             if snap.sample_rate > 0.0 && (self.dsp.sample_rate - snap.sample_rate).abs() > 0.5 {
                 self.dsp.set_sample_rate(snap.sample_rate);
             }

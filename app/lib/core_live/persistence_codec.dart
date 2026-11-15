@@ -17,6 +17,10 @@ abstract final class PersistenceCodec {
       'graphicGains': eq.graphicGains,
       'bassDb': eq.bassDb,
       'trebleDb': eq.trebleDb,
+      'bassFreqHz': eq.bassFreqHz,
+      'trebleFreqHz': eq.trebleFreqHz,
+      'smartHeadroom': eq.smartHeadroom,
+      'autoPreamp': eq.autoPreamp,
       'balance': eq.balance,
       'mono': eq.mono,
       'replayGain': eq.replayGain.name,
@@ -54,6 +58,10 @@ abstract final class PersistenceCodec {
           const [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
       final bassDb = (map['bassDb'] as num?)?.toDouble() ?? 0.0;
       final trebleDb = (map['trebleDb'] as num?)?.toDouble() ?? 0.0;
+      final bassFreqHz = (map['bassFreqHz'] as num?)?.toDouble() ?? 65.0;
+      final trebleFreqHz = (map['trebleFreqHz'] as num?)?.toDouble() ?? 10000.0;
+      final smartHeadroom = map['smartHeadroom'] as bool? ?? true;
+      final autoPreamp = map['autoPreamp'] as bool? ?? false;
       final balance = (map['balance'] as num?)?.toDouble() ?? 0.0;
       final mono = map['mono'] as bool? ?? false;
       final rgName = map['replayGain'] as String?;
@@ -98,6 +106,10 @@ abstract final class PersistenceCodec {
         graphicGains: graphicGains,
         bassDb: bassDb,
         trebleDb: trebleDb,
+        bassFreqHz: bassFreqHz,
+        trebleFreqHz: trebleFreqHz,
+        smartHeadroom: smartHeadroom,
+        autoPreamp: autoPreamp,
         balance: balance,
         mono: mono,
         replayGain: replayGain,

@@ -39,12 +39,14 @@ class VisualizerFrameData {
   final double peakLeftDb;
   final double peakRightDb;
   final bool clipping;
+  final double limiterGrDb;
 
   const VisualizerFrameData({
     required this.spectrum,
     required this.peakLeftDb,
     required this.peakRightDb,
     required this.clipping,
+    required this.limiterGrDb,
   });
 
   @override
@@ -52,7 +54,8 @@ class VisualizerFrameData {
       spectrum.hashCode ^
       peakLeftDb.hashCode ^
       peakRightDb.hashCode ^
-      clipping.hashCode;
+      clipping.hashCode ^
+      limiterGrDb.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -62,5 +65,6 @@ class VisualizerFrameData {
           spectrum == other.spectrum &&
           peakLeftDb == other.peakLeftDb &&
           peakRightDb == other.peakRightDb &&
-          clipping == other.clipping;
+          clipping == other.clipping &&
+          limiterGrDb == other.limiterGrDb;
 }

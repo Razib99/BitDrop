@@ -238,15 +238,31 @@ void main() {
       eq = await liveCore.eq.first;
       expect(eq.bypass, isTrue);
 
-      // 4. Simple Tone Mode
-      await liveCore.send(const SetTone(bassDb: 4.0, trebleDb: -2.0, balance: 0.1, mono: true));
+      // 4. Simultaneous Tone Contour preserves active Graphic mode
+      await liveCore.send(const SetTone(
+        bassDb: 4.0,
+        trebleDb: -2.0,
+        bassFreqHz: 40.0,
+        balance: 0.1,
+        mono: true,
+      ));
       eq = await liveCore.eq.first;
-      expect(eq.mode, EqMode.simple);
+      expect(eq.mode, EqMode.graphic);
       expect(eq.bassDb, 4.0);
       expect(eq.trebleDb, -2.0);
+      expect(eq.bassFreqHz, 40.0);
       expect(eq.balance, 0.1);
       expect(eq.mono, isTrue);
       expect(eq.bypass, isFalse);
+
+      // 4b. Explicit mode switch & Headroom Mode toggle
+      await liveCore.send(const SetEqMode(EqMode.simple));
+      await liveCore.send(
+          const SetHeadroomMode(smartHeadroom: false, autoPreamp: true));
+      eq = await liveCore.eq.first;
+      expect(eq.mode, EqMode.simple);
+      expect(eq.autoPreamp, isTrue);
+      expect(eq.headroomModeIndex, 1);
 
       // 5. Parametric Mode
       const testBands = [

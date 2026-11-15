@@ -37,7 +37,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.0.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1920882244;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -371050459;
 
 // Section: executor
 
@@ -836,6 +836,38 @@ fn wire__crate__api__audio_engine__engine_set_hardware_sample_rate_impl(
             transform_result_sse::<_, ()>((move || {
                 let output_ok = Result::<_, ()>::Ok({
                     crate::api::audio_engine::engine_set_hardware_sample_rate(api_rate);
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__audio_engine__engine_set_headroom_mode_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "engine_set_headroom_mode",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_mode = <u8>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::audio_engine::engine_set_headroom_mode(api_mode);
                 })?;
                 Ok(output_ok)
             })())
@@ -3858,6 +3890,7 @@ impl SseDecode for crate::api::audio_engine::PlayerState {
         let mut var_eqGains = <[f32; 10]>::sse_decode(deserializer);
         let mut var_eqPreamp = <f32>::sse_decode(deserializer);
         let mut var_eqSpecs = <Option<Vec<crate::dsp::EqBandSpec>>>::sse_decode(deserializer);
+        let mut var_headroomMode = <u8>::sse_decode(deserializer);
         let mut var_autoGain = <f32>::sse_decode(deserializer);
         let mut var_balance = <f32>::sse_decode(deserializer);
         let mut var_mono = <bool>::sse_decode(deserializer);
@@ -3889,6 +3922,7 @@ impl SseDecode for crate::api::audio_engine::PlayerState {
             eq_gains: var_eqGains,
             eq_preamp: var_eqPreamp,
             eq_specs: var_eqSpecs,
+            headroom_mode: var_headroomMode,
             auto_gain: var_autoGain,
             balance: var_balance,
             mono: var_mono,
@@ -3990,11 +4024,13 @@ impl SseDecode for crate::dsp::VisualizerFrameData {
         let mut var_peakLeftDb = <f32>::sse_decode(deserializer);
         let mut var_peakRightDb = <f32>::sse_decode(deserializer);
         let mut var_clipping = <bool>::sse_decode(deserializer);
+        let mut var_limiterGrDb = <f32>::sse_decode(deserializer);
         return crate::dsp::VisualizerFrameData {
             spectrum: var_spectrum,
             peak_left_db: var_peakLeftDb,
             peak_right_db: var_peakRightDb,
             clipping: var_clipping,
+            limiter_gr_db: var_limiterGrDb,
         };
     }
 }
@@ -4020,245 +4056,245 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        32 => wire__crate__api__audio_engine__init_app_impl(port, ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__audio_engine__init_engine_impl(port, ptr, rust_vec_len, data_len),
-        34 => wire__crate__api__audio_engine__play_audio_file_android_impl(
+        33 => wire__crate__api__audio_engine__init_app_impl(port, ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__audio_engine__init_engine_impl(port, ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__audio_engine__play_audio_file_android_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        35 => wire__crate__api__audio_engine__publish_dsp_config_impl(
+        36 => wire__crate__api__audio_engine__publish_dsp_config_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        36 => wire__crate__api__audio_engine__ramp_step_impl(port, ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__cloud_library__cache_usage_impl(port, ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__cloud_library__clear_audio_cache_impl(
+        37 => wire__crate__api__audio_engine__ramp_step_impl(port, ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__cloud_library__cache_usage_impl(port, ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__cloud_library__clear_audio_cache_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        39 => wire__crate__api__cloud_library__cloud_cache_get_limit_impl(
+        40 => wire__crate__api__cloud_library__cloud_cache_get_limit_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        40 => wire__crate__api__cloud_library__cloud_cache_get_stats_impl(
+        41 => wire__crate__api__cloud_library__cloud_cache_get_stats_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        42 => wire__crate__api__cloud_library__cloud_cache_prune_now_impl(
+        43 => wire__crate__api__cloud_library__cloud_cache_prune_now_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        44 => wire__crate__api__cloud_library__cloud_cache_set_limit_impl(
+        45 => wire__crate__api__cloud_library__cloud_cache_set_limit_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        45 => wire__crate__api__cloud_library__cloud_cache_sync_pinned_impl(
+        46 => wire__crate__api__cloud_library__cloud_cache_sync_pinned_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        46 => wire__crate__api__cloud_library__cloud_db_delete_kv_impl(
+        47 => wire__crate__api__cloud_library__cloud_db_delete_kv_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        47 => wire__crate__api__cloud_library__cloud_db_get_autoeq_profile_impl(
+        48 => wire__crate__api__cloud_library__cloud_db_get_autoeq_profile_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        48 => {
+        49 => {
             wire__crate__api__cloud_library__cloud_db_get_kv_impl(port, ptr, rust_vec_len, data_len)
         }
-        49 => wire__crate__api__cloud_library__cloud_db_insert_autoeq_profile_impl(
+        50 => wire__crate__api__cloud_library__cloud_db_insert_autoeq_profile_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        50 => wire__crate__api__cloud_library__cloud_db_list_kv_prefix_impl(
+        51 => wire__crate__api__cloud_library__cloud_db_list_kv_prefix_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        51 => wire__crate__api__cloud_library__cloud_db_search_autoeq_impl(
+        52 => wire__crate__api__cloud_library__cloud_db_search_autoeq_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        52 => {
+        53 => {
             wire__crate__api__cloud_library__cloud_db_set_kv_impl(port, ptr, rust_vec_len, data_len)
         }
-        53 => wire__crate__api__cloud_library__cloud_download_track_impl(
+        54 => wire__crate__api__cloud_library__cloud_download_track_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        54 => wire__crate__api__cloud_library__cloud_library_add_files_impl(
+        55 => wire__crate__api__cloud_library__cloud_library_add_files_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        55 => wire__crate__api__cloud_library__cloud_library_albums_impl(
+        56 => wire__crate__api__cloud_library__cloud_library_albums_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        56 => wire__crate__api__cloud_library__cloud_library_clear_impl(
+        57 => wire__crate__api__cloud_library__cloud_library_clear_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        57 => wire__crate__api__cloud_library__cloud_library_counts_impl(
+        58 => wire__crate__api__cloud_library__cloud_library_counts_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        58 => wire__crate__api__cloud_library__cloud_library_get_folder_impl(
+        59 => wire__crate__api__cloud_library__cloud_library_get_folder_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        59 => wire__crate__api__cloud_library__cloud_library_get_genres_impl(
+        60 => wire__crate__api__cloud_library__cloud_library_get_genres_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        60 => wire__crate__api__cloud_library__cloud_library_get_listening_recap_impl(
+        61 => wire__crate__api__cloud_library__cloud_library_get_listening_recap_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        61 => wire__crate__api__cloud_library__cloud_library_get_lyrics_impl(
+        62 => wire__crate__api__cloud_library__cloud_library_get_lyrics_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        62 => wire__crate__api__cloud_library__cloud_library_get_tracks_by_genre_impl(
+        63 => wire__crate__api__cloud_library__cloud_library_get_tracks_by_genre_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        63 => wire__crate__api__cloud_library__cloud_library_get_tracks_in_folder_impl(
+        64 => wire__crate__api__cloud_library__cloud_library_get_tracks_in_folder_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        64 => wire__crate__api__cloud_library__cloud_library_open_impl(
+        65 => wire__crate__api__cloud_library__cloud_library_open_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        65 => wire__crate__api__cloud_library__cloud_library_pending_impl(
+        66 => wire__crate__api__cloud_library__cloud_library_pending_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        66 => wire__crate__api__cloud_library__cloud_library_prune_local_tracks_impl(
+        67 => wire__crate__api__cloud_library__cloud_library_prune_local_tracks_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        67 => wire__crate__api__cloud_library__cloud_library_prune_missing_impl(
+        68 => wire__crate__api__cloud_library__cloud_library_prune_missing_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        68 => wire__crate__api__cloud_library__cloud_library_read_tags_impl(
+        69 => wire__crate__api__cloud_library__cloud_library_read_tags_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        69 => wire__crate__api__cloud_library__cloud_library_rebuild_albums_impl(
+        70 => wire__crate__api__cloud_library__cloud_library_rebuild_albums_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        70 => wire__crate__api__cloud_library__cloud_library_record_playback_impl(
+        71 => wire__crate__api__cloud_library__cloud_library_record_playback_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        71 => wire__crate__api__cloud_library__cloud_library_save_lyrics_impl(
+        72 => wire__crate__api__cloud_library__cloud_library_save_lyrics_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        72 => wire__crate__api__cloud_library__cloud_library_scan_local_folder_impl(
+        73 => wire__crate__api__cloud_library__cloud_library_scan_local_folder_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        73 => wire__crate__api__cloud_library__cloud_library_scan_tags_batch_impl(
+        74 => wire__crate__api__cloud_library__cloud_library_scan_tags_batch_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        74 => wire__crate__api__cloud_library__cloud_library_search_impl(
+        75 => wire__crate__api__cloud_library__cloud_library_search_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        75 => wire__crate__api__cloud_library__cloud_library_sync_missing_artwork_impl(
+        76 => wire__crate__api__cloud_library__cloud_library_sync_missing_artwork_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        76 => wire__crate__api__cloud_library__cloud_library_tracks_impl(
+        77 => wire__crate__api__cloud_library__cloud_library_tracks_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        77 => wire__crate__api__cloud_library__get_total_cache_bytes_impl(
+        78 => wire__crate__api__cloud_library__get_total_cache_bytes_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        81 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        82 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4324,38 +4360,43 @@ fn pde_ffi_dispatcher_sync_impl(
             rust_vec_len,
             data_len,
         ),
-        26 => wire__crate__api__audio_engine__engine_set_network_transport_mode_impl(
+        26 => wire__crate__api__audio_engine__engine_set_headroom_mode_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        27 => {
+        27 => wire__crate__api__audio_engine__engine_set_network_transport_mode_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        28 => {
             wire__crate__api__audio_engine__engine_set_next_cloud_impl(ptr, rust_vec_len, data_len)
         }
-        28 => {
+        29 => {
             wire__crate__api__audio_engine__engine_set_next_track_impl(ptr, rust_vec_len, data_len)
         }
-        29 => {
+        30 => {
             wire__crate__api__audio_engine__engine_set_replay_gain_impl(ptr, rust_vec_len, data_len)
         }
-        30 => wire__crate__api__audio_engine__engine_stop_impl(ptr, rust_vec_len, data_len),
-        31 => wire__crate__api__audio_engine__engine_supply_token_impl(ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__cloud_library__cloud_cache_is_complete_impl(
+        31 => wire__crate__api__audio_engine__engine_stop_impl(ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__audio_engine__engine_supply_token_impl(ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__cloud_library__cloud_cache_is_complete_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        43 => wire__crate__api__cloud_library__cloud_cache_remove_track_impl(
+        44 => wire__crate__api__cloud_library__cloud_cache_remove_track_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        78 => wire__crate__api__simple__decode_flac_full_impl(ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__simple__get_cover_art_impl(ptr, rust_vec_len, data_len),
-        80 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-        82 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
-        83 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
-        84 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__simple__decode_flac_full_impl(ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__simple__get_cover_art_impl(ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        83 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
+        84 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
+        85 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -5039,6 +5080,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::audio_engine::PlayerState {
             self.eq_gains.into_into_dart().into_dart(),
             self.eq_preamp.into_into_dart().into_dart(),
             self.eq_specs.into_into_dart().into_dart(),
+            self.headroom_mode.into_into_dart().into_dart(),
             self.auto_gain.into_into_dart().into_dart(),
             self.balance.into_into_dart().into_dart(),
             self.mono.into_into_dart().into_dart(),
@@ -5148,6 +5190,7 @@ impl flutter_rust_bridge::IntoDart for crate::dsp::VisualizerFrameData {
             self.peak_left_db.into_into_dart().into_dart(),
             self.peak_right_db.into_into_dart().into_dart(),
             self.clipping.into_into_dart().into_dart(),
+            self.limiter_gr_db.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5873,6 +5916,7 @@ impl SseEncode for crate::api::audio_engine::PlayerState {
         <[f32; 10]>::sse_encode(self.eq_gains, serializer);
         <f32>::sse_encode(self.eq_preamp, serializer);
         <Option<Vec<crate::dsp::EqBandSpec>>>::sse_encode(self.eq_specs, serializer);
+        <u8>::sse_encode(self.headroom_mode, serializer);
         <f32>::sse_encode(self.auto_gain, serializer);
         <f32>::sse_encode(self.balance, serializer);
         <bool>::sse_encode(self.mono, serializer);
@@ -5956,6 +6000,7 @@ impl SseEncode for crate::dsp::VisualizerFrameData {
         <f32>::sse_encode(self.peak_left_db, serializer);
         <f32>::sse_encode(self.peak_right_db, serializer);
         <bool>::sse_encode(self.clipping, serializer);
+        <f32>::sse_encode(self.limiter_gr_db, serializer);
     }
 }
 

@@ -725,11 +725,13 @@ class MockBitDropCore implements BitDropCore {
       return (base + wobble + _rand.nextDouble() * 0.08).clamp(0.02, 1.0);
     });
     final eqGain = _eq.value.isActive ? 4.0 : 0.0;
+    final bassBoost = _eq.value.bypass ? 0.0 : _eq.value.bassDb.clamp(0.0, 12.0);
     _visualizer.emit(VisualizerFrame(
       spectrum: spectrum,
       peakLeftDb: -14 + math.sin(_tick / 11) * 5 + eqGain,
       peakRightDb: -15 + math.sin(_tick / 9 + 1) * 5 + eqGain,
       clipping: _eq.value.isActive && _eq.value.preampDb > 0,
+      limiterGrDb: !_eq.value.bypass && bassBoost > 4.0 ? (bassBoost - 4.0) * 0.25 : 0.0,
     ));
   }
 
@@ -1687,14 +1689,29 @@ class MockBitDropCore implements BitDropCore {
         _eq.emit(_eq.value.copyWith(preampDb: db, clippedSamples: clipped));
         _recomputeSignalPath();
 
-      case SetTone(:final bassDb, :final trebleDb, :final balance, :final mono):
+      case SetTone(
+          :final bassDb,
+          :final trebleDb,
+          :final bassFreqHz,
+          :final trebleFreqHz,
+          :final balance,
+          :final mono
+        ):
         _eq.emit(_eq.value.copyWith(
-          mode: EqMode.simple,
           bassDb: bassDb,
           trebleDb: trebleDb,
+          bassFreqHz: bassFreqHz,
+          trebleFreqHz: trebleFreqHz,
           balance: balance,
           mono: mono,
           bypass: false,
+        ));
+        _recomputeSignalPath();
+
+      case SetHeadroomMode(:final smartHeadroom, :final autoPreamp):
+        _eq.emit(_eq.value.copyWith(
+          smartHeadroom: smartHeadroom,
+          autoPreamp: autoPreamp,
         ));
         _recomputeSignalPath();
 

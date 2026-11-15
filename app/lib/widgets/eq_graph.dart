@@ -24,8 +24,11 @@ class EqGraph extends StatefulWidget {
     super.key,
     required this.bands,
     required this.onChanged,
+    this.overlayBands = const [],
+    this.spectrum,
     this.preampDb = 0,
     this.bypassed = false,
+    this.lockFrequency = false,
     this.targetCurve,
     this.selectedBandId,
     this.onSelect,
@@ -35,10 +38,21 @@ class EqGraph extends StatefulWidget {
 
   final List<EqBand> bands;
 
+  /// Additional active bands (such as the always-on Pultec Tone Contour stage)
+  /// summed into the combined curve without exposing extra draggable nodes.
+  final List<EqBand> overlayBands;
+
+  /// Optional live 24-32 band FFT magnitudes (0..1) drawn behind the EQ curve.
+  final List<double>? spectrum;
+
   /// Called continuously while dragging; the parent forwards to the core.
   final ValueChanged<List<EqBand>> onChanged;
   final double preampDb;
   final bool bypassed;
+
+  /// When true (e.g. ISO Graphic mode), dragging adjusts gain vertically while
+  /// keeping each band's center frequency locked.
+  final bool lockFrequency;
 
   /// AutoEQ target overlay, when a profile is applied.
   final List<({double hz, double db})>? targetCurve;
@@ -97,6 +111,8 @@ class _EqGraphState extends State<EqGraph> {
                 size: size,
                 painter: _EqPainter(
                   bands: widget.bands,
+                  overlayBands: widget.overlayBands,
+                  spectrum: widget.spectrum,
                   preampDb: widget.preampDb,
                   bypassed: widget.bypassed,
                   targetCurve: widget.targetCurve,
@@ -182,7 +198,9 @@ class _EqGraphState extends State<EqGraph> {
       for (final b in widget.bands)
         if (b.id == id)
           b.copyWith(
-            frequencyHz: hz.clamp(Biquad.minHz, Biquad.maxHz),
+            frequencyHz: widget.lockFrequency
+                ? b.frequencyHz
+                : hz.clamp(Biquad.minHz, Biquad.maxHz),
             gainDb: double.parse(snapped.toStringAsFixed(1)),
             enabled: true,
           )
@@ -224,6 +242,8 @@ class _EqGraphState extends State<EqGraph> {
 class _EqPainter extends CustomPainter {
   _EqPainter({
     required this.bands,
+    required this.overlayBands,
+    required this.spectrum,
     required this.preampDb,
     required this.bypassed,
     required this.targetCurve,
@@ -240,6 +260,8 @@ class _EqPainter extends CustomPainter {
   });
 
   final List<EqBand> bands;
+  final List<EqBand> overlayBands;
+  final List<double>? spectrum;
   final double preampDb;
   final bool bypassed;
   final List<({double hz, double db})>? targetCurve;
@@ -274,6 +296,34 @@ class _EqPainter extends CustomPainter {
 
     double dbToY(double db) => midY - (db / EqGraph.maxDb) * span;
     double hzToX(double hz) => Biquad.positionOf(hz) * size.width;
+
+    // Live FFT spectrum backdrop behind grid & curves.
+    final spec = spectrum;
+    if (spec != null && spec.isNotEmpty) {
+      final specPaint = Paint()..color = curve.withOpacity(0.14);
+      final count = spec.length;
+      final barWidth = math.max(2.0, (size.width / count) * 0.68);
+      for (var i = 0; i < count; i++) {
+        final t = count <= 1 ? 0.0 : i / (count - 1);
+        final hz = Biquad.logFrequencyAt(t);
+        final x = hzToX(hz);
+        final amp = spec[i].clamp(0.0, 1.0);
+        final barH = amp * (size.height * 0.65);
+        if (barH <= 1.0) continue;
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(
+              (x - barWidth / 2).clamp(0.0, math.max(0.0, size.width - barWidth)),
+              size.height - barH,
+              barWidth,
+              barH,
+            ),
+            const Radius.circular(2),
+          ),
+          specPaint,
+        );
+      }
+    }
 
     // Horizontal dB grid at -12, -6, 0, +6, +12.
     final gridPaint = Paint()
@@ -329,12 +379,12 @@ class _EqPainter extends CustomPainter {
 
     final opacity = bypassed ? 0.3 : 1.0;
 
-    // Ghost curves, one per enabled band.
+    // Ghost curves, one per enabled band + faint Tone Contour ghost if active.
     final ghostPaint = Paint()
       ..color = ghost.withOpacity(ghost.opacity * opacity)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.2;
-    for (final b in bands) {
+    for (final b in [...overlayBands, ...bands]) {
       if (!b.enabled || b.gainDb == 0) continue;
       final path = Path();
       for (var i = 0; i <= 120; i++) {
@@ -346,12 +396,13 @@ class _EqPainter extends CustomPainter {
       canvas.drawPath(path, ghostPaint);
     }
 
-    // Combined curve, with a soft fill toward the 0 dB line.
+    // Combined curve (Tone Contour + active Graphic/Parametric stage), with soft fill.
+    final totalBands = [...overlayBands, ...bands];
     final combined = Path();
     final fill = Path()..moveTo(0, midY);
     for (var i = 0; i <= 220; i++) {
       final hz = Biquad.logFrequencyAt(i / 220);
-      final db = Biquad.combinedDb(bands, hz, preampDb: preampDb);
+      final db = Biquad.combinedDb(totalBands, hz, preampDb: preampDb);
       final x = hzToX(hz);
       final y = dbToY(db.clamp(-EqGraph.maxDb, EqGraph.maxDb));
       i == 0 ? combined.moveTo(x, y) : combined.lineTo(x, y);
@@ -433,6 +484,8 @@ class _EqPainter extends CustomPainter {
   @override
   bool shouldRepaint(_EqPainter old) =>
       old.bands != bands ||
+      old.overlayBands != overlayBands ||
+      old.spectrum != spectrum ||
       old.preampDb != preampDb ||
       old.bypassed != bypassed ||
       old.selectedBandId != selectedBandId ||
