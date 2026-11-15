@@ -128,18 +128,18 @@ class IosAudioHostBroker: NSObject {
           let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
           let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
       DispatchQueue.main.async { [weak self] in
-        self?.channel.invokeMethod("onDeviceChanged", nil)
+        self?.channel.invokeMethod("onDeviceChanged", arguments: nil)
       }
       return
     }
 
     DispatchQueue.main.async { [weak self] in
       guard let self = self else { return }
-      self.channel.invokeMethod("onDeviceChanged", nil)
+      self.channel.invokeMethod("onDeviceChanged", arguments: nil)
 
       if reason == .oldDeviceUnavailable {
         print("[bitdrop-ios] audio route changed: oldDeviceUnavailable (becoming noisy)")
-        self.channel.invokeMethod("onBecomingNoisy", nil)
+        self.channel.invokeMethod("onBecomingNoisy", arguments: nil)
       }
     }
   }
@@ -156,13 +156,13 @@ class IosAudioHostBroker: NSObject {
       switch type {
       case .began:
         print("[bitdrop-ios] audio interruption began")
-        self.channel.invokeMethod("onInterruptionBegan", nil)
+        self.channel.invokeMethod("onInterruptionBegan", arguments: nil)
       case .ended:
         let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
         let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
         let shouldResume = options.contains(.shouldResume)
         print("[bitdrop-ios] audio interruption ended (shouldResume: \(shouldResume))")
-        self.channel.invokeMethod("onInterruptionEnded", ["shouldResume": shouldResume])
+        self.channel.invokeMethod("onInterruptionEnded", arguments: ["shouldResume": shouldResume])
       @unknown default:
         break
       }
@@ -173,7 +173,7 @@ class IosAudioHostBroker: NSObject {
     print("[bitdrop-ios] media services reset notification received, reconfiguring audio session")
     setupAudioSession()
     DispatchQueue.main.async { [weak self] in
-      self?.channel.invokeMethod("onDeviceChanged", nil)
+      self?.channel.invokeMethod("onDeviceChanged", arguments: nil)
     }
   }
 
@@ -187,7 +187,7 @@ class IosAudioHostBroker: NSObject {
       print("[bitdrop-ios] setPreferredSampleRate success: requested=\(rate), active=\(activeRate)")
       if abs(activeRate - previousRate) > 0.5 {
         DispatchQueue.main.async { [weak self] in
-          self?.channel.invokeMethod("onDeviceChanged", nil)
+          self?.channel.invokeMethod("onDeviceChanged", arguments: nil)
         }
       }
       result(true)
@@ -206,7 +206,7 @@ class IosAudioHostBroker: NSObject {
       let activeRate = session.sampleRate
       if abs(activeRate - previousRate) > 0.5 {
         DispatchQueue.main.async { [weak self] in
-          self?.channel.invokeMethod("onDeviceChanged", nil)
+          self?.channel.invokeMethod("onDeviceChanged", arguments: nil)
         }
       }
       result(true)
@@ -270,7 +270,7 @@ class IosAudioHostBroker: NSObject {
       supportsBitPerfect = false
       explanation = "Apple AirPlay lossless network audio transport"
 
-    case .hdmi:
+    case .HDMI:
       typeStr = "usb"
       maxTier = "nativeRate"
       supportsBitPerfect = false
