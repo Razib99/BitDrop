@@ -161,6 +161,8 @@ lazy_static::lazy_static! {
 }
 
 lazy_static::lazy_static! {
+    /// Serializes output stream teardown/open across decoder, watchdog, and JNI calls.
+    static ref STREAM_OPEN_LOCK: Mutex<()> = Mutex::new(());
     /// Direct consumer handles held across routing changes without mutex contention.
     static ref AUDIO_CONSUMER: Mutex<Option<rtrb::Consumer<f32>>> =
         Mutex::new(None);
@@ -1561,25 +1563,27 @@ fn initialize_engine() {
 /// Builds and starts the output stream, replacing any existing one.
 #[cfg(target_os = "android")]
 fn open_output_stream(sample_rate: Option<u32>) {
+    let _open_guard = STREAM_OPEN_LOCK.lock().unwrap();
     *ACTIVE_STREAM.lock().unwrap() = None;
 
-    let (consumer, boundary_consumer, triggered_producer) = {
-        let mut c_guard = AUDIO_CONSUMER.lock().unwrap();
-        let mut b_guard = BOUNDARY_CONSUMER.lock().unwrap();
-        let mut t_guard = TRIGGERED_PRODUCER.lock().unwrap();
-        match (c_guard.take(), b_guard.take()) {
-            (Some(c), Some(b)) => (c, b, t_guard.take()),
-            _ => return,
+    let (consumer, boundary_consumer, triggered_producer) = match acquire_audio_consumers(10) {
+        Some(handles) => handles,
+        None => {
+            eprintln!("[bitdrop] audio ringbuffer consumers unavailable for output stream");
+            return;
         }
     };
 
+    let init_sr = sample_rate.filter(|&r| r > 0).unwrap_or(48000) as f64;
+
     fn make_callback(
+        initial_sample_rate: f64,
         consumer: rtrb::Consumer<f32>,
         boundary_consumer: rtrb::Consumer<BoundaryMarker>,
         triggered_producer: Option<rtrb::Producer<BoundaryMarker>>,
     ) -> PlayerCallback {
         let mut renderer = crate::renderer::OutputRenderer::new(
-            48000.0,
+            initial_sample_rate,
             Some(consumer),
             Some(boundary_consumer),
             triggered_producer,
@@ -1604,32 +1608,32 @@ fn open_output_stream(sample_rate: Option<u32>) {
 
     let opened = builder
         .set_callback(make_callback(
+            init_sr,
             consumer,
             boundary_consumer,
             triggered_producer,
         ))
         .open_stream();
 
-    let opened = match opened {
+    let (opened, is_exclusive) = match opened {
         Ok(stream) => {
             eprintln!(
                 "[bitdrop] opened exclusive stream: rate={}",
                 stream.get_sample_rate()
             );
-            Some(stream)
+            (Some(stream), true)
         }
         Err(e) => {
             eprintln!(
                 "[bitdrop] exclusive stream at {:?} unavailable ({e:?}); falling back to shared",
                 sample_rate
             );
-            let (consumer, boundary_consumer, triggered_producer) = {
-                let mut c_guard = AUDIO_CONSUMER.lock().unwrap();
-                let mut b_guard = BOUNDARY_CONSUMER.lock().unwrap();
-                let mut t_guard = TRIGGERED_PRODUCER.lock().unwrap();
-                match (c_guard.take(), b_guard.take()) {
-                    (Some(c), Some(b)) => (c, b, t_guard.take()),
-                    _ => return,
+            // Re-acquire consumers returned by the failed exclusive callback's Drop.
+            let (consumer, boundary_consumer, triggered_producer) = match acquire_audio_consumers(10) {
+                Some(handles) => handles,
+                None => {
+                    eprintln!("[bitdrop] audio ringbuffer consumers unavailable for shared fallback");
+                    return;
                 }
             };
             let mut shared_builder = AudioStreamBuilder::default()
@@ -1643,15 +1647,17 @@ fn open_output_stream(sample_rate: Option<u32>) {
                     shared_builder = shared_builder.set_sample_rate(sr as i32);
                 }
             }
-            shared_builder
+            let shared_stream = shared_builder
                 .set_callback(make_callback(
+                    init_sr,
                     consumer,
                     boundary_consumer,
                     triggered_producer,
                 ))
                 .open_stream()
                 .map_err(|e| eprintln!("[bitdrop] no audio output: {e:?}"))
-                .ok()
+                .ok();
+            (shared_stream, false)
         }
     };
 
@@ -1660,7 +1666,7 @@ fn open_output_stream(sample_rate: Option<u32>) {
         {
             let mut state = PLAYER_STATE.lock().unwrap();
             state.target_sample_rate = rate;
-            if state.hardware_sample_rate == 0 {
+            if is_exclusive || state.hardware_sample_rate == 0 {
                 state.hardware_sample_rate = rate;
             }
             state.hardware_format = "PCM_FLOAT".to_string();
@@ -1678,31 +1684,16 @@ fn open_output_stream(sample_rate: Option<u32>) {
 /// Builds and starts the CPAL CoreAudio / Desktop output stream, replacing any existing one.
 #[cfg(not(target_os = "android"))]
 fn open_cpal_output_stream(sample_rate: Option<u32>) {
+    let _open_guard = STREAM_OPEN_LOCK.lock().unwrap();
     // 1. Drop existing stream so its callback drops and restores consumers to AUDIO_CONSUMER
     *CPAL_STREAM.lock().unwrap() = CpalStreamWrapper(None);
 
     // 2. Acquire consumer handles, with a brief retry loop in case the audio thread needs a moment to exit
-    let (consumer, boundary_consumer, triggered_producer) = {
-        let mut acquired = None;
-        for _ in 0..10 {
-            let mut c_guard = AUDIO_CONSUMER.lock().unwrap();
-            let mut b_guard = BOUNDARY_CONSUMER.lock().unwrap();
-            let mut t_guard = TRIGGERED_PRODUCER.lock().unwrap();
-            if let (Some(c), Some(b)) = (c_guard.take(), b_guard.take()) {
-                acquired = Some((c, b, t_guard.take()));
-                break;
-            }
-            drop(c_guard);
-            drop(b_guard);
-            drop(t_guard);
-            thread::sleep(Duration::from_millis(5));
-        }
-        match acquired {
-            Some(handles) => handles,
-            None => {
-                eprintln!("[bitdrop] audio ringbuffer consumers unavailable for CPAL stream");
-                return;
-            }
+    let (consumer, boundary_consumer, triggered_producer) = match acquire_audio_consumers(10) {
+        Some(handles) => handles,
+        None => {
+            eprintln!("[bitdrop] audio ringbuffer consumers unavailable for CPAL stream");
+            return;
         }
     };
 
@@ -2470,6 +2461,31 @@ impl From<crate::usb_dac::UsbDacDiagnostics> for EngineUsbDacDiagnostics {
             feedback_rate_q16: d.feedback_rate_q16,
         }
     }
+}
+
+/// Acquires the ring-buffer consumer handles, retrying briefly while an old
+/// stream callback finishes dropping and returning them.
+pub(crate) fn acquire_audio_consumers(
+    max_retries: usize,
+) -> Option<(
+    rtrb::Consumer<f32>,
+    rtrb::Consumer<crate::dsp::BoundaryMarker>,
+    Option<rtrb::Producer<crate::dsp::BoundaryMarker>>,
+)> {
+    for attempt in 0..max_retries.max(1) {
+        {
+            let mut c_guard = AUDIO_CONSUMER.lock().unwrap();
+            let mut b_guard = BOUNDARY_CONSUMER.lock().unwrap();
+            let mut t_guard = TRIGGERED_PRODUCER.lock().unwrap();
+            if let (Some(c), Some(b)) = (c_guard.take(), b_guard.take()) {
+                return Some((c, b, t_guard.take()));
+            }
+        }
+        if attempt + 1 < max_retries.max(1) {
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+    None
 }
 
 pub(crate) fn return_audio_consumers(
