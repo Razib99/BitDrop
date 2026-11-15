@@ -157,8 +157,8 @@ fn gate_1_eq_frequency_response() {
             let w = 2.0 * std::f64::consts::PI * f / fs;
             let mut total_re = dsp.target_bank.preamp_linear;
             let mut total_im = 0.0f64;
-            for i in 0..dsp.target_bank.active {
-                let (h_re, h_im) = dsp.target_bank.bands[i].complex_response(w);
+            for band in dsp.target_bank.bands.iter().take(dsp.target_bank.active) {
+                let (h_re, h_im) = band.complex_response(w);
                 let next_re = total_re * h_re - total_im * h_im;
                 let next_im = total_re * h_im + total_im * h_re;
                 total_re = next_re;
