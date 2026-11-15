@@ -11,7 +11,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUpAll(() async {
-    const soPath = '/home/razib/Desktop/BitDrop/app/rust/target/debug/librust_lib_bitdrop.so';
+    final soPath =
+        '${Directory.current.path}/rust/target/debug/librust_lib_bitdrop.so';
     if (File(soPath).existsSync()) {
       try {
         await RustLib.init(externalLibrary: ExternalLibrary.open(soPath));
