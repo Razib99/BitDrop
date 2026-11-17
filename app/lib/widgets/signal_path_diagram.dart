@@ -222,8 +222,11 @@ class SignalPathDiagram extends StatelessWidget {
                   OutputTier.nativeRate => path.dspActive
                       ? 'Native rate · 64-bit DSP'
                       : 'Native rate · System mixed',
-                  OutputTier.resampled =>
-                    'Android mixer → ${Fmt.kHz(path.actual.sampleRate)}',
+                  OutputTier.resampled => path.explanation.contains('256-tap Sinc')
+                      ? '64-bit Sinc → ${Fmt.kHz(path.actual.sampleRate)}'
+                      : (device?.type == DeviceType.bluetooth
+                          ? 'Bluetooth → ${Fmt.kHz(path.actual.sampleRate)}'
+                          : 'Android mixer → ${Fmt.kHz(path.actual.sampleRate)}'),
                   OutputTier.unknown => 'Unknown',
                 },
                 secondary: path.formatsMatch
@@ -265,15 +268,16 @@ class SignalPathDiagram extends StatelessWidget {
                     const routing =
                         'Direct USB (Tier D) · Zero OS mixer interaction';
                     return capStr.isNotEmpty ? '$capStr · $routing' : routing;
-                  } else if (!device.supportsBitPerfect) {
+                  } else if (path.tier == OutputTier.bitPerfect &&
+                      device.supportsBitPerfect) {
+                    return capStr.isNotEmpty
+                        ? '$capStr · Direct bit-perfect access'
+                        : 'Direct bit-perfect access';
+                  } else {
                     final routing = device.apiLevel != null
                         ? 'Routed via Android ${device.apiLevel} system mixer'
                         : 'Routed via system mixer';
                     return capStr.isNotEmpty ? '$capStr · $routing' : routing;
-                  } else {
-                    return capStr.isNotEmpty
-                        ? '$capStr · Direct bit-perfect access'
-                        : 'Direct bit-perfect access';
                   }
                 }(),
                 color: c.textSecondary,

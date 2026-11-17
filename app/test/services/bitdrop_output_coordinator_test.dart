@@ -228,5 +228,53 @@ void main() {
 
       expect(resolvedCount, greaterThanOrEqualTo(1));
     });
+
+    test('explainSignalPath distinguishes wired 256-tap Sinc, Bluetooth, and USB guidance', () {
+      const src44 = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 44100);
+      const out48 = AudioFormat(codec: Codec.flac, bitDepth: 16, sampleRate: 48000);
+      const wired = OutputDevice(
+        id: 'wired-1',
+        name: 'Wired IEM',
+        type: DeviceType.wiredAnalog,
+        supportedRates: [48000],
+        bitDepths: [16, 24],
+        hardwareVolume: HardwareVolume.no,
+        maxTier: OutputTier.nativeRate,
+        apiLevel: 14,
+        systemSampleRate: 48000,
+      );
+
+      final wiredMsg = BitDropOutputCoordinator.explainSignalPath(
+        OutputTier.resampled,
+        src44,
+        out48,
+        false,
+        wired,
+        engineSincResampled: true,
+      );
+      expect(wiredMsg, contains('44.1 kHz'));
+      expect(wiredMsg, contains('48 kHz'));
+      expect(wiredMsg, contains('256-tap Sinc'));
+
+      const bt = OutputDevice(
+        id: 'bt-1',
+        name: 'Wireless IEM',
+        type: DeviceType.bluetooth,
+        supportedRates: [48000],
+        bitDepths: [16],
+        hardwareVolume: HardwareVolume.yes,
+        maxTier: OutputTier.resampled,
+      );
+      final btMsg = BitDropOutputCoordinator.explainSignalPath(
+        OutputTier.resampled,
+        src44,
+        out48,
+        false,
+        bt,
+        engineSincResampled: true,
+      );
+      expect(btMsg, contains('Bluetooth'));
+      expect(btMsg, contains('256-tap Sinc'));
+    });
   });
 }

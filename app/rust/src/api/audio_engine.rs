@@ -1687,20 +1687,29 @@ fn open_output_stream(sample_rate: Option<u32>) {
                         return;
                     }
                 };
+            let shared_sr = {
+                let state = PLAYER_STATE.lock().unwrap();
+                if state.hardware_sample_rate > 0 {
+                    Some(state.hardware_sample_rate)
+                } else {
+                    None
+                }
+            };
+            let shared_init_sr = shared_sr.filter(|&r| r > 0).unwrap_or(48000) as f64;
             let mut shared_builder = AudioStreamBuilder::default()
                 .set_performance_mode(PerformanceMode::None)
                 .set_sharing_mode(SharingMode::Shared)
                 .set_output()
                 .set_stereo()
                 .set_f32();
-            if let Some(sr) = sample_rate {
+            if let Some(sr) = shared_sr {
                 if sr > 0 {
                     shared_builder = shared_builder.set_sample_rate(sr as i32);
                 }
             }
             let shared_stream = shared_builder
                 .set_callback(make_callback(
-                    init_sr,
+                    shared_init_sr,
                     consumer,
                     boundary_consumer,
                     triggered_producer,

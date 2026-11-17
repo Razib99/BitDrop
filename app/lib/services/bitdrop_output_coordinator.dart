@@ -370,6 +370,12 @@ class BitDropOutputCoordinator {
     final cloud = cloudProvider?.call();
     final currentTrackId = track?.id ?? '';
 
+    final bool engineSincResampled = !isDirectUsb &&
+        source.codec != Codec.dsf &&
+        out.outputSampleRate != 0 &&
+        out.outputSampleRate != source.sampleRate &&
+        actualSampleRate == out.outputSampleRate;
+
     _signalPath.add(SignalPath(
       tier: tier,
       source: source,
@@ -387,8 +393,15 @@ class BitDropOutputCoordinator {
               : '${source.shortLabel} -> 176.4 kHz / 24-bit Polyphase FIR Decimation')
           : '${source.codec.label} -> '
               '${source.bitDepth}-bit integer PCM',
-      explanation:
-          _explain(tier, source, actual, dsp, device, isDirectUsb: isDirectUsb),
+      explanation: _explain(
+        tier,
+        source,
+        actual,
+        dsp,
+        device,
+        isDirectUsb: isDirectUsb,
+        engineSincResampled: engineSincResampled,
+      ),
     ));
   }
 
@@ -499,6 +512,33 @@ class BitDropOutputCoordinator {
         _ => Codec.flac,
       };
 
+  static String _fmtKhz(int hz) {
+    final khz = hz / 1000.0;
+    return khz == khz.roundToDouble()
+        ? '${khz.round()} kHz'
+        : '${khz.toStringAsFixed(1)} kHz';
+  }
+
+  @visibleForTesting
+  static String explainSignalPath(
+    OutputTier tier,
+    AudioFormat source,
+    AudioFormat actual,
+    bool dsp,
+    OutputDevice? device, {
+    bool isDirectUsb = false,
+    bool engineSincResampled = false,
+  }) =>
+      _explain(
+        tier,
+        source,
+        actual,
+        dsp,
+        device,
+        isDirectUsb: isDirectUsb,
+        engineSincResampled: engineSincResampled,
+      );
+
   static String _explain(
     OutputTier tier,
     AudioFormat source,
@@ -506,7 +546,11 @@ class BitDropOutputCoordinator {
     bool dsp,
     OutputDevice? device, {
     bool isDirectUsb = false,
+    bool engineSincResampled = false,
   }) {
+    final srcRate = _fmtKhz(source.sampleRate);
+    final outRate = _fmtKhz(actual.sampleRate);
+
     if (source.codec == Codec.dsf) {
       if (tier == OutputTier.bitPerfect) {
         if (isDirectUsb) {
@@ -525,19 +569,19 @@ class BitDropOutputCoordinator {
       if (isDirectUsb) {
         return 'Bit-perfect direct stream active via User-Space USB Audio (Tier D). '
             'The audio engine has direct hardware control over your ${device?.name ?? "USB DAC"} at '
-            '${actual.sampleRate ~/ 1000} kHz / ${actual.bitDepth}-bit format with zero OS mixer interaction or resampling.';
+            '$outRate / ${actual.bitDepth}-bit format with zero OS mixer interaction or resampling.';
       }
       if (defaultTargetPlatform == TargetPlatform.iOS) {
         return 'Bit-perfect direct stream active via iOS CoreAudio & AVAudioSession (Tier A). '
             'The audio engine has native hardware clock control over your ${device?.name ?? "USB DAC"} at '
-            '${source.sampleRate ~/ 1000} kHz / ${source.bitDepth}-bit format with zero OS resampling or DSP.';
+            '$srcRate / ${source.bitDepth}-bit format with zero OS resampling or DSP.';
       }
       return 'Bit-perfect direct stream active via Android 14+ Mixer Attributes. '
           'The audio engine has exclusive access to your ${device?.name ?? "USB DAC"} at its native '
-          '${source.sampleRate ~/ 1000} kHz / ${source.bitDepth}-bit format with zero resampling or DSP.';
+          '$srcRate / ${source.bitDepth}-bit format with zero resampling or DSP.';
     }
     if (dsp && actual.sampleRate == source.sampleRate) {
-      return 'Audio is running at native ${source.sampleRate ~/ 1000} kHz. '
+      return 'Audio is running at native $srcRate. '
           'The 64-bit floating-point equaliser or DSP is active, altering the audio samples. '
           'Bypass the equaliser to restore bit-perfect output.';
     }
@@ -545,18 +589,22 @@ class BitDropOutputCoordinator {
       final osName =
           defaultTargetPlatform == TargetPlatform.iOS ? 'iOS' : 'Android';
       if (actual.sampleRate != source.sampleRate) {
-        return 'Phone speakers route through the $osName mixer at '
-            '${actual.sampleRate ~/ 1000} kHz, so your '
-            '${source.sampleRate ~/ 1000} kHz audio is resampled. Connect a USB DAC '
-            'for bit-perfect playback.';
+        return engineSincResampled
+            ? 'Phone speakers run at $outRate via the $osName mixer; $srcRate audio is converted using BitDrop\'s 64-bit 256-tap Sinc resampler. Connect a USB DAC for bit-perfect playback.'
+            : 'Phone speakers route through the $osName mixer at '
+                '$outRate, so your $srcRate audio is resampled. Connect a USB DAC '
+                'for bit-perfect playback.';
       } else {
         return 'Phone speaker output is routed through the $osName shared audio mixer at native '
-            '${source.sampleRate ~/ 1000} kHz. Connect a USB DAC for direct exclusive bit-perfect playback.';
+            '$srcRate. Connect a USB DAC for direct exclusive bit-perfect playback.';
       }
     }
     if (device?.type == DeviceType.bluetooth) {
-      return 'Bluetooth re-encodes audio with its own codec (lossy compression), '
-          'so lossless bit-perfect playback is not possible over Bluetooth.';
+      final rateNote = actual.sampleRate != source.sampleRate && engineSincResampled
+          ? ' ($srcRate converted via 64-bit 256-tap Sinc to $outRate).'
+          : '';
+      return 'Bluetooth re-encodes audio wirelessly with its codec (lossy compression)$rateNote, '
+          'so bit-perfect playback is not possible over Bluetooth.';
     }
     if (tier == OutputTier.resampled &&
         actual.sampleRate != source.sampleRate) {
@@ -564,10 +612,17 @@ class BitDropOutputCoordinator {
           ? "Android ${device!.apiLevel}'s"
           : 'the Android';
       final devName = device?.name ?? 'your audio device';
+      if (device?.type == DeviceType.usb) {
+        return engineSincResampled
+            ? '$apiText mixer for $devName runs at $outRate (converted from $srcRate via 64-bit 256-tap Sinc). Enable Direct USB access to stream $srcRate bit-perfect.'
+            : '$apiText system mixer (AudioFlinger) mixes audio at $outRate, so your $srcRate file is resampled before reaching $devName. Enable Direct USB access to unlock bit-perfect output.';
+      }
+      if (engineSincResampled) {
+        return '$devName is locked to $apiText $outRate hardware mixer clock, so $srcRate audio is converted in-engine via BitDrop\'s 64-bit 256-tap Sinc resampler to avoid Android mixer distortion.';
+      }
       return '$apiText system mixer (AudioFlinger) mixes audio at '
-          '${actual.sampleRate ~/ 1000} kHz, so your '
-          '${source.sampleRate ~/ 1000} kHz file is resampled before it reaches $devName. '
-          '${device?.type == DeviceType.usb ? "Enable the Direct USB DAC driver in Settings to bypass the mixer." : "Connect a USB DAC for bit-perfect output."}';
+          '$outRate, so your $srcRate file is resampled before it reaches $devName. '
+          'Connect a USB DAC for bit-perfect output.';
     }
     if (dsp) {
       return 'The equaliser or DSP is active, altering the audio samples. '
@@ -577,20 +632,20 @@ class BitDropOutputCoordinator {
       final apiText = device.apiLevel != null
           ? "Android ${device.apiLevel}'s"
           : 'the Android';
-      return 'Your ${device.name} is running at native ${source.sampleRate ~/ 1000} kHz, '
+      return 'Your ${device.name} is running at native $srcRate, '
           'routed through $apiText shared system mixer (AudioFlinger). '
-          'Enable the Direct USB DAC driver in Settings to bypass the mixer and unlock bit-perfect output.';
+          'Enable Direct USB access to bypass the mixer and unlock bit-perfect output.';
     }
     if (device != null && !device.supportsBitPerfect) {
       final apiText = device.apiLevel != null
           ? "Android ${device.apiLevel}'s"
           : 'the Android';
-      return 'Your ${device.name} is running at native ${source.sampleRate ~/ 1000} kHz, '
+      return 'Your ${device.name} is running at native $srcRate, '
           'routed through $apiText system mixer (AudioFlinger).';
     }
     if (tier == OutputTier.nativeRate) {
       return "No resampling is happening: the stream runs at the file's native rate "
-          '(${source.sampleRate ~/ 1000} kHz).';
+          '($srcRate).';
     }
     return 'The output path could not be determined.';
   }
