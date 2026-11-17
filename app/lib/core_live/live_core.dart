@@ -222,6 +222,7 @@ class LiveBitDropCore implements BitDropCore {
         Timer.periodic(const Duration(seconds: 1), (_) => _pollDiagnostics());
 
     _outputCoord.start();
+    _audioHandler.onPrepareOutputFormat = _outputCoord.prepareForTrackFormat;
 
     _playbackSub = _audioHandler.playbackState.listen((state) {
       _outputCoord.recomputeSignalPath();
@@ -1585,6 +1586,8 @@ class LiveBitDropCore implements BitDropCore {
               path: _stripFileUri(t.id),
               sizeBytes: t.sizeBytes,
               ext: t.format.codec.label.toLowerCase(),
+              sampleRate: t.format.sampleRate,
+              bitDepth: t.format.bitDepth,
             )
           : isCloud
               ? cloudTrackExtras(
@@ -1593,6 +1596,8 @@ class LiveBitDropCore implements BitDropCore {
                       'https://www.googleapis.com/drive/v3/files/${t.id}?alt=media',
                   sizeBytes: t.sizeBytes,
                   ext: t.format.codec.label.toLowerCase(),
+                  sampleRate: t.format.sampleRate,
+                  bitDepth: t.format.bitDepth,
                 )
               : null;
       return audio_svc.MediaItem(

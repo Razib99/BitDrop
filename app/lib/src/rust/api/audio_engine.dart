@@ -11,9 +11,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'audio_engine.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_dsp_config_snapshot`, `emit_event`, `initialize_engine`, `is_current`, `open_cpal_output_stream`, `open_media_source`, `request_load`, `return_audio_consumers`, `set_ramp`, `stage_load`, `start_stream_watchdog`, `stream_opens`
-// These types are ignored because they are not used by any `pub` functions: `AUDIO_CONSUMER`, `BOUNDARY_CONSUMER`, `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DSP_TRIPLE_BUFFER`, `DecoderCmd`, `DsdDecoderSession`, `EVENT_SINK`, `LOAD_SENDER`, `LoadRequest`, `OpenedTrack`, `PLAYER_STATE`, `TRIGGERED_PRODUCER`, `TrackDecoderBackend`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `default`, `default`, `default`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `eq`, `fmt`, `fmt`, `fmt`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
+// These functions are ignored because they are not marked as `pub`: `acquire_audio_consumers`, `build_dsp_config_snapshot`, `effective_pcm_stream_rate`, `emit_event`, `initialize_engine`, `is_current`, `open_cpal_output_stream`, `open_media_source`, `request_load`, `return_audio_consumers`, `set_ramp`, `stage_load`, `start_stream_watchdog`, `stream_opens`
+// These types are ignored because they are not used by any `pub` functions: `AUDIO_CONSUMER`, `BOUNDARY_CONSUMER`, `CMD_SENDER`, `CPAL_STREAM`, `CpalStreamWrapper`, `DSP_TRIPLE_BUFFER`, `DecoderCmd`, `DsdDecoderSession`, `EVENT_SINK`, `LOAD_SENDER`, `LoadRequest`, `OpenedTrack`, `PLAYER_STATE`, `STREAM_OPEN_LOCK`, `TRIGGERED_PRODUCER`, `TrackDecoderBackend`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `default`, `default`, `default`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `deref`, `eq`, `fmt`, `fmt`, `fmt`, `from`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`, `initialize`
 
 /// Enables hardware Flush-to-Zero (FTZ) and Denormals-are-Zero (DAZ) mode.
 /// On ARM64 (Android), this sets bits 24 (FZ) and 19 (DN) of FPCR.
@@ -119,6 +119,12 @@ EngineOutputState engineOutputState() =>
 
 void engineSetHardwareSampleRate({required int rate}) => RustLib.instance.api
     .crateApiAudioEngineEngineSetHardwareSampleRate(rate: rate);
+
+/// Reopens the OS output stream (Oboe/AAudio or CPAL) at the current track's
+/// effective PCM rate, used after Android 14+ mixer attributes or DSP bypass
+/// state changes while a USB DAC is attached.
+void engineReopenOutputStream() =>
+    RustLib.instance.api.crateApiAudioEngineEngineReopenOutputStream();
 
 void engineSetDopMode({required bool active}) =>
     RustLib.instance.api.crateApiAudioEngineEngineSetDopMode(active: active);

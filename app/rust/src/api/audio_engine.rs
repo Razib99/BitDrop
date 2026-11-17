@@ -2267,6 +2267,24 @@ pub fn engine_set_hardware_sample_rate(rate: u32) {
     }
 }
 
+/// Reopens the OS output stream (Oboe/AAudio or CPAL) at the current track's
+/// effective PCM rate, used after Android 14+ mixer attributes or DSP bypass
+/// state changes while a USB DAC is attached.
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_reopen_output_stream() {
+    if crate::usb_dac::get_active_stream_backend() == crate::usb_dac::StreamBackend::DirectUsb {
+        return;
+    }
+    let stream_sr = {
+        let state = PLAYER_STATE.lock().unwrap();
+        effective_pcm_stream_rate(&state)
+    };
+    #[cfg(not(target_os = "android"))]
+    open_cpal_output_stream(stream_sr);
+    #[cfg(target_os = "android")]
+    open_output_stream(stream_sr);
+}
+
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_set_dop_mode(active: bool) {
     crate::dsp::DOP_BYPASS_LOCKOUT.store(active, Ordering::Release);

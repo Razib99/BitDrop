@@ -19,6 +19,8 @@ Map<String, dynamic> cloudTrackExtras({
   required String url,
   required int sizeBytes,
   required String ext,
+  int sampleRate = 0,
+  int bitDepth = 0,
 }) =>
     {
       'source': 'cloud',
@@ -26,6 +28,8 @@ Map<String, dynamic> cloudTrackExtras({
       'url': url,
       'sizeBytes': sizeBytes,
       'ext': ext,
+      if (sampleRate > 0) 'sampleRate': sampleRate,
+      if (bitDepth > 0) 'bitDepth': bitDepth,
     };
 
 /// Marks a [MediaItem] as living in local filesystem storage.
@@ -33,6 +37,8 @@ Map<String, dynamic> localTrackExtras({
   required String path,
   int sizeBytes = 0,
   String ext = '',
+  int sampleRate = 0,
+  int bitDepth = 0,
 }) =>
     {
       'source': 'local',
@@ -40,6 +46,8 @@ Map<String, dynamic> localTrackExtras({
       'path': path,
       'sizeBytes': sizeBytes,
       'ext': ext,
+      if (sampleRate > 0) 'sampleRate': sampleRate,
+      if (bitDepth > 0) 'bitDepth': bitDepth,
     };
 
 class BitDropAudioHandler extends BaseAudioHandler
@@ -88,6 +96,10 @@ class BitDropAudioHandler extends BaseAudioHandler
   /// Set once Drive is connected. Null means cloud tracks cannot be opened.
   AccessTokenProvider? accessTokenProvider;
   AccessTokenProvider? refreshAccessTokenProvider;
+
+  /// Invoked right before opening a track so Android 14+ / iOS mixer attributes
+  /// can be matched to the track's sample rate and bit depth prior to stream open.
+  Future<void> Function(int sampleRate, int bitDepth)? onPrepareOutputFormat;
 
   final PlaybackEngine _engine;
 
@@ -498,6 +510,16 @@ class BitDropAudioHandler extends BaseAudioHandler
     mediaItem.add(item);
 
     final isCloud = item.extras?['source'] == 'cloud';
+    final sr = item.extras?['sampleRate'] as int? ?? 0;
+    final bits = item.extras?['bitDepth'] as int? ?? 0;
+    if (sr > 0 && onPrepareOutputFormat != null) {
+      try {
+        await onPrepareOutputFormat!(sr, bits);
+      } catch (e) {
+        debugPrint('[play] prepare output format failed: $e');
+      }
+      if (generation != _playGeneration) return;
+    }
     debugPrint('[play] opening ${item.id} '
         'source=${item.extras?['source'] ?? 'local'}');
 

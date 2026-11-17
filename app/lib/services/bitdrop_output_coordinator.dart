@@ -17,6 +17,9 @@ class BitDropOutputCoordinator {
   final _signalPath = BehaviorSubject<SignalPath>.seeded(_unknownPath);
 
   StreamSubscription<OutputDevice?>? _outputProbeSub;
+  (String deviceId, int sampleRate, int bitDepth, bool bitPerfect)?
+      _lastMixerConfigKey;
+  Future<void> _mixerUpdateChain = Future<void>.value();
 
   VoidCallback? onEarphoneDisconnected;
   VoidCallback? onBecomingNoisy;
@@ -192,9 +195,15 @@ class BitDropOutputCoordinator {
     final isDirectUsb = streamBackend == 'DirectUsb';
 
     final dsp = out.dspActive;
+    final effectiveStreamRate = source.codec == Codec.dsf && !isDirectUsb
+        ? 176400
+        : source.sampleRate;
+    final supportsSourceRateBitPerfect = device != null &&
+        device.supportsBitPerfect &&
+        (device.bitPerfectRates.isEmpty ||
+            device.bitPerfectRates.contains(effectiveStreamRate));
     final isExclusiveBitPerfect = isDirectUsb ||
-        ((device?.type == DeviceType.usb &&
-                device?.supportsBitPerfect == true) &&
+        ((device?.type == DeviceType.usb && supportsSourceRateBitPerfect) &&
             !dsp);
 
     final hwRate = out.hardwareSampleRate != 0
@@ -245,11 +254,15 @@ class BitDropOutputCoordinator {
     }
 
     if (device?.type == DeviceType.usb && _supported && !isDirectUsb) {
-      unawaited(_outputProbe.setPreferredMixerAttributes(
-        sampleRate: source.sampleRate,
+      _syncUsbMixerAttributesAndReopenIfNeeded(
+        device: device!,
+        sampleRate: effectiveStreamRate,
         bitDepth: source.bitDepth,
-        bitPerfect: !dsp,
-      ));
+        bitPerfect: !dsp && supportsSourceRateBitPerfect,
+        currentOutputRate: out.outputSampleRate,
+      );
+    } else {
+      _lastMixerConfigKey = null;
     }
 
     final eqState = eqStateProvider?.call();
@@ -280,6 +293,93 @@ class BitDropOutputCoordinator {
       explanation:
           _explain(tier, source, actual, dsp, device, isDirectUsb: isDirectUsb),
     ));
+  }
+
+  bool _isDspCurrentlyActive() {
+    try {
+      return rust.engineOutputState().dspActive;
+    } catch (_) {
+      final eq = eqStateProvider?.call();
+      if (eq == null) return false;
+      final eqBandsActive = !eq.bypass &&
+          (eq.preampDb.abs() > 0.01 ||
+              eq.bands.any((b) => b.enabled && b.gainDb.abs() > 0.01) ||
+              eq.graphicGains.any((g) => g.abs() > 0.01));
+      return eqBandsActive ||
+          eq.replayGain != ReplayGainMode.off ||
+          eq.crossfeed != CrossfeedPreset.off;
+    }
+  }
+
+  /// Synchronizes Android 14+ / iOS preferred mixer attributes BEFORE Rust opens
+  /// a new track's output stream so exclusive/bit-perfect engages on frame 0.
+  Future<void> prepareForTrackFormat(int sampleRate, int bitDepth) {
+    final op = _mixerUpdateChain.then((_) async {
+      if (sampleRate <= 0 || !_supported) return;
+      final device = _outputProbe.current;
+      if (device == null || device.type != DeviceType.usb) {
+        _lastMixerConfigKey = null;
+        return;
+      }
+
+      String streamBackend = 'Standard';
+      try {
+        streamBackend = rust.engineGetStreamBackend();
+      } catch (_) {}
+      if (streamBackend == 'DirectUsb') return;
+
+      final bits = bitDepth > 0 ? bitDepth : 16;
+      final dsp = _isDspCurrentlyActive();
+      final supportsRate = device.supportsBitPerfect &&
+          (device.bitPerfectRates.isEmpty ||
+              device.bitPerfectRates.contains(sampleRate));
+      final bitPerfect = !dsp && supportsRate;
+      final key = (device.id, sampleRate, bits, bitPerfect);
+      if (key == _lastMixerConfigKey) return;
+      _lastMixerConfigKey = key;
+
+      await _outputProbe.setPreferredMixerAttributes(
+        sampleRate: sampleRate,
+        bitDepth: bits,
+        bitPerfect: bitPerfect,
+      );
+    }).catchError((Object e) {
+      debugPrint('[output] prepareForTrackFormat failed: $e');
+    });
+    _mixerUpdateChain = op;
+    return op;
+  }
+
+  void _syncUsbMixerAttributesAndReopenIfNeeded({
+    required OutputDevice device,
+    required int sampleRate,
+    required int bitDepth,
+    required bool bitPerfect,
+    required int currentOutputRate,
+  }) {
+    final bits = bitDepth > 0 ? bitDepth : 16;
+    final key = (device.id, sampleRate, bits, bitPerfect);
+    if (key == _lastMixerConfigKey) return;
+    final previousKey = _lastMixerConfigKey;
+    _lastMixerConfigKey = key;
+
+    _mixerUpdateChain = _mixerUpdateChain.then((_) async {
+      final ok = await _outputProbe.setPreferredMixerAttributes(
+        sampleRate: sampleRate,
+        bitDepth: bits,
+        bitPerfect: bitPerfect,
+      );
+      if (ok &&
+          (currentOutputRate != sampleRate ||
+              (previousKey != null && previousKey.$4 != bitPerfect))) {
+        try {
+          rust.engineReopenOutputStream();
+        } catch (_) {}
+        recomputeSignalPath();
+      }
+    }).catchError((Object e) {
+      debugPrint('[output] sync USB mixer failed: $e');
+    });
   }
 
   static bool get _supported =>

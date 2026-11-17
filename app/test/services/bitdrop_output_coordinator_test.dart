@@ -2,6 +2,7 @@ import 'package:bitdrop/core_api/enums.dart';
 import 'package:bitdrop/core_api/models.dart';
 import 'package:bitdrop/core_live/output_device.dart';
 import 'package:bitdrop/services/bitdrop_output_coordinator.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -107,6 +108,55 @@ void main() {
       await pumpEventQueue();
 
       expect(coordinator.currentDevice?.name, equals('Qudelix 5K'));
+    });
+
+    test('prepareForTrackFormat negotiates and deduplicates mixer attributes before track open', () async {
+      final mixerCalls = <Map<String, dynamic>>[];
+      const channel = MethodChannel('com.bitdrop/audio_device');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'setPreferredMixerAttributes') {
+          mixerCalls.add(Map<String, dynamic>.from(call.arguments as Map));
+          return true;
+        }
+        return null;
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+      });
+
+      const usbDac = OutputDevice(
+        id: 'usb-dac-1',
+        name: 'USB-C DAC',
+        type: DeviceType.usb,
+        supportedRates: [44100, 48000, 96000],
+        bitDepths: [16, 24],
+        hardwareVolume: HardwareVolume.unknown,
+        maxTier: OutputTier.bitPerfect,
+        supportsBitPerfect: true,
+        bitPerfectRates: [48000, 96000],
+      );
+      probe.emitForTesting(usbDac);
+      await pumpEventQueue();
+
+      await coordinator.prepareForTrackFormat(96000, 24);
+      // Duplicate call with identical parameters must be deduplicated.
+      await coordinator.prepareForTrackFormat(96000, 24);
+      // Rate absent from bitPerfectRates falls back to bitPerfect=false.
+      await coordinator.prepareForTrackFormat(44100, 16);
+
+      expect(mixerCalls, hasLength(2));
+      expect(mixerCalls[0], equals({
+        'sampleRate': 96000,
+        'bitDepth': 24,
+        'bitPerfect': true,
+      }));
+      expect(mixerCalls[1], equals({
+        'sampleRate': 44100,
+        'bitDepth': 16,
+        'bitPerfect': false,
+      }));
     });
   });
 }
