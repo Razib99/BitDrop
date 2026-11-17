@@ -52,7 +52,7 @@ void main() {
       expect(repo.currentSettings.directUsbDriver, isFalse);
       expect(repo.currentEq.mode, equals(EqMode.graphic));
       expect(repo.currentEq.bypass, isTrue);
-      expect(repo.currentDeviceProfiles, isNotEmpty);
+      expect(repo.currentDeviceProfiles, isEmpty);
     });
 
     test('handleSetSetting updates settings stream and invokes callback', () async {
@@ -200,10 +200,44 @@ void main() {
       expect(rust_audio.engineOutputState().dspActive, isFalse);
     });
 
-    test('handleAssignEqToDevice links profile to device', () async {
+    test('ensureProfileForDevice creates neutral profiles for any connected device', () async {
+      const usbDac = OutputDevice(
+        id: 'android-usb-Generic USB-C DAC',
+        name: 'Generic USB-C DAC',
+        type: DeviceType.usb,
+        supportedRates: [44100, 48000, 96000],
+        bitDepths: [16, 24],
+        hardwareVolume: HardwareVolume.unknown,
+        maxTier: OutputTier.bitPerfect,
+      );
+      const wiredIem = OutputDevice(
+        id: 'android-wired-Wired IEM',
+        name: 'Wired IEM',
+        type: DeviceType.wiredAnalog,
+        supportedRates: [48000],
+        bitDepths: [16, 24],
+        hardwareVolume: HardwareVolume.no,
+        maxTier: OutputTier.nativeRate,
+      );
+
+      final p1 = await repo.ensureProfileForDevice(usbDac);
+      final p2 = await repo.ensureProfileForDevice(wiredIem);
+      // Duplicate call for same device must not duplicate entry.
+      await repo.ensureProfileForDevice(usbDac);
+
+      expect(p1.eqPresetName, isNull);
+      expect(p2.eqPresetName, isNull);
+      expect(repo.currentDeviceProfiles, hasLength(2));
+      expect(
+        repo.currentDeviceProfiles.map((p) => p.deviceId),
+        containsAll(['android-usb-Generic USB-C DAC', 'android-wired-Wired IEM']),
+      );
+    });
+
+    test('handleAssignEqToDevice upserts profile for any device', () async {
       const dev = OutputDevice(
-        id: 'dev-titanx',
-        name: 'DUNU Titan X',
+        id: 'android-usb-Generic USB-C IEM',
+        name: 'Generic USB-C IEM',
         type: DeviceType.usb,
         supportedRates: [44100, 48000, 96000],
         bitDepths: [16, 24],
@@ -212,13 +246,16 @@ void main() {
       );
 
       await repo.handleAssignEqToDevice(
-        const AssignEqToDevice(deviceId: 'dev-titanx', assign: true),
+        const AssignEqToDevice(
+          deviceId: 'android-usb-Generic USB-C IEM',
+          assign: true,
+        ),
         dev,
       );
 
-      expect(repo.currentEq.assignedDeviceName, equals('DUNU Titan X'));
+      expect(repo.currentEq.assignedDeviceName, equals('Generic USB-C IEM'));
       final profile = repo.currentDeviceProfiles
-          .firstWhere((p) => p.deviceId == 'dev-titanx');
+          .firstWhere((p) => p.deviceId == 'android-usb-Generic USB-C IEM');
       expect(profile.eqPresetName, isNotNull);
     });
 

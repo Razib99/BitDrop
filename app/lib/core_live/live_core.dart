@@ -82,6 +82,7 @@ class LiveBitDropCore implements BitDropCore {
   Album? _realAlbum;
 
   StreamSubscription<SyncStatus>? _cloudStatusSub;
+  StreamSubscription<OutputDevice?>? _deviceProfileSub;
   StreamSubscription<EqState>? _eqSub;
   StreamSubscription<audio_svc.PlaybackState>? _playbackSub;
   StreamSubscription<List<audio_svc.MediaItem>>? _queueSub;
@@ -226,6 +227,11 @@ class LiveBitDropCore implements BitDropCore {
 
     _outputCoord.start();
     _audioHandler.onPrepareOutputFormat = _outputCoord.prepareForTrackFormat;
+    _deviceProfileSub = _outputCoord.outputDevice.listen((device) {
+      if (device != null && !_disposed) {
+        unawaited(_settingsRepo.ensureProfileForDevice(device));
+      }
+    });
 
     _playbackSub = _audioHandler.playbackState.listen((state) {
       _outputCoord.recomputeSignalPath();
@@ -523,13 +529,7 @@ class LiveBitDropCore implements BitDropCore {
   late final BehaviorSubject<DiagnosticsSnapshot> _diagnostics;
   @override
   Stream<DiagnosticsSnapshot> get diagnostics => _diagnostics.stream;
-  final _deviceProfiles = BehaviorSubject<List<DeviceProfile>>.seeded(const [
-    DeviceProfile(
-      deviceId: 'dev-titanx',
-      deviceName: 'DUNU Titan X',
-      replayGain: ReplayGainMode.off,
-    ),
-  ]);
+  final _deviceProfiles = BehaviorSubject<List<DeviceProfile>>.seeded(const []);
   @override
   Stream<List<DeviceProfile>> get deviceProfiles => _deviceProfiles.stream;
   final _settings = BehaviorSubject<AppSettings>.seeded(const AppSettings());
@@ -779,16 +779,6 @@ class LiveBitDropCore implements BitDropCore {
       await rust_cache.cloudDbSetKv(key: 'app_settings', value: json);
     } catch (e) {
       debugPrint('[persistence] failed to save app settings: $e');
-    }
-  }
-
-  Future<void> _saveDeviceProfiles() async {
-    try {
-      final json =
-          PersistenceCodec.serializeDeviceProfiles(_deviceProfiles.value);
-      await rust_cache.cloudDbSetKv(key: 'device_profiles', value: json);
-    } catch (e) {
-      debugPrint('[persistence] failed to save device profiles: $e');
     }
   }
 
@@ -1984,36 +1974,13 @@ class LiveBitDropCore implements BitDropCore {
       unawaited(_saveEqState());
       _outputCoord.recomputeSignalPath();
     } else if (cmd is AssignEqToDevice) {
-      final currentDev = _outputProbe.current;
-      final devName = currentDev?.id == cmd.deviceId
-          ? currentDev?.name
-          : (cmd.assign ? 'Headphones' : null);
-      final updatedEq = _eq.value.copyWith(
-        assignedDeviceName: cmd.assign ? devName : null,
-      );
-      _eq.add(updatedEq);
-      final updatedProfiles = _deviceProfiles.value.map((p) {
-        if (p.deviceId == cmd.deviceId) {
-          return DeviceProfile(
-            deviceId: p.deviceId,
-            deviceName: p.deviceName,
-            eqPresetName:
-                cmd.assign ? (_eq.value.presetName ?? 'Custom EQ') : null,
-            replayGain: p.replayGain,
-            safetyAttenuationDb: p.safetyAttenuationDb,
-            preferredVolumeDb: p.preferredVolumeDb,
-            autoApply: p.autoApply,
-          );
-        }
-        return p;
-      }).toList();
-      _deviceProfiles.add(updatedProfiles);
-      _settingsRepo.syncFromLiveState(
-        eq: updatedEq,
-        deviceProfiles: updatedProfiles,
-      );
-      unawaited(_saveDeviceProfiles());
-      unawaited(_saveEqState());
+      await _settingsRepo.handleAssignEqToDevice(cmd, _outputProbe.current);
+      if (!_disposed && !_eq.isClosed) {
+        _eq.add(_settingsRepo.currentEq);
+      }
+      if (!_disposed && !_deviceProfiles.isClosed) {
+        _deviceProfiles.add(_settingsRepo.currentDeviceProfiles);
+      }
     } else if (cmd is ApplyAutoEqProfile) {
       try {
         final profileData =
@@ -2270,6 +2237,7 @@ class LiveBitDropCore implements BitDropCore {
     _visualizerTimer?.cancel();
     _diagnosticsTimer?.cancel();
     _cloudStatusSub?.cancel();
+    _deviceProfileSub?.cancel();
     _eqSub?.cancel();
     _playbackSub?.cancel();
     _queueSub?.cancel();

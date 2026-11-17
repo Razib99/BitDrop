@@ -19,28 +19,8 @@ import '../util/biquad.dart';
 class BitDropSettingsRepository {
   final _settings = BehaviorSubject<AppSettings>.seeded(const AppSettings());
   final _eq = BehaviorSubject<EqState>.seeded(PersistenceCodec.defaultEqState());
-  final _deviceProfiles = BehaviorSubject<List<DeviceProfile>>.seeded(const [
-    DeviceProfile(
-      deviceId: 'dev-titanx',
-      deviceName: 'DUNU Titan X',
-      replayGain: ReplayGainMode.off,
-    ),
-    DeviceProfile(
-      deviceId: 'dev-qudelix',
-      deviceName: 'Qudelix 5K',
-      replayGain: ReplayGainMode.album,
-    ),
-    DeviceProfile(
-      deviceId: 'dev-schiit',
-      deviceName: 'Schiit Hel',
-      replayGain: ReplayGainMode.track,
-    ),
-    DeviceProfile(
-      deviceId: 'dev-s23-spk',
-      deviceName: 'Phone Speaker',
-      replayGain: ReplayGainMode.off,
-    ),
-  ]);
+  final _deviceProfiles =
+      BehaviorSubject<List<DeviceProfile>>.seeded(const []);
 
   void Function(AppSettings settings)? onSettingsChanged;
   void Function(EqState eq)? onEqChanged;
@@ -487,25 +467,75 @@ class BitDropSettingsRepository {
     await saveEqState();
   }
 
+  /// Ensures a neutral [DeviceProfile] exists for any connected audio device
+  /// (USB DAC, wired IEM, Bluetooth headphone, or speaker) without assuming a
+  /// specific brand or preset curve.
+  Future<DeviceProfile> ensureProfileForDevice(OutputDevice device) async {
+    final existing = _deviceProfiles.value.cast<DeviceProfile?>().firstWhere(
+          (p) => p!.deviceId == device.id,
+          orElse: () => null,
+        );
+    if (existing != null) {
+      if (existing.deviceName != device.name && device.name.trim().isNotEmpty) {
+        final renamed = DeviceProfile(
+          deviceId: existing.deviceId,
+          deviceName: device.name,
+          eqPresetName: existing.eqPresetName,
+          replayGain: existing.replayGain,
+          safetyAttenuationDb: existing.safetyAttenuationDb,
+          preferredVolumeDb: existing.preferredVolumeDb,
+          autoApply: existing.autoApply,
+        );
+        final updated = _deviceProfiles.value
+            .map((p) => p.deviceId == existing.deviceId ? renamed : p)
+            .toList();
+        _deviceProfiles.add(updated);
+        onDeviceProfilesChanged?.call(updated);
+        await saveDeviceProfiles();
+        return renamed;
+      }
+      return existing;
+    }
+
+    final created = DeviceProfile(
+      deviceId: device.id,
+      deviceName: device.name,
+      replayGain: _settings.value.replayGain,
+      autoApply: true,
+    );
+    final updated = [..._deviceProfiles.value, created];
+    _deviceProfiles.add(updated);
+    onDeviceProfilesChanged?.call(updated);
+    await saveDeviceProfiles();
+    return created;
+  }
+
   Future<void> handleAssignEqToDevice(
     AssignEqToDevice cmd,
     OutputDevice? currentDev,
   ) async {
+    final matchingExisting = _deviceProfiles.value
+        .cast<DeviceProfile?>()
+        .firstWhere((p) => p!.deviceId == cmd.deviceId, orElse: () => null);
     final devName = currentDev?.id == cmd.deviceId
         ? currentDev?.name
-        : (cmd.assign ? 'Headphones' : null);
+        : (matchingExisting?.deviceName ?? (cmd.assign ? cmd.deviceId : null));
     final updatedEq = _eq.value.copyWith(
       assignedDeviceName: cmd.assign ? devName : null,
     );
     _eq.add(updatedEq);
 
+    final presetLabel = cmd.assign ? (_eq.value.presetName ?? 'Custom EQ') : null;
+    var found = false;
     final updatedProfiles = _deviceProfiles.value.map((p) {
       if (p.deviceId == cmd.deviceId) {
+        found = true;
         return DeviceProfile(
           deviceId: p.deviceId,
-          deviceName: p.deviceName,
-          eqPresetName:
-              cmd.assign ? (_eq.value.presetName ?? 'Custom EQ') : null,
+          deviceName: currentDev?.id == cmd.deviceId
+              ? currentDev!.name
+              : p.deviceName,
+          eqPresetName: presetLabel,
           replayGain: p.replayGain,
           safetyAttenuationDb: p.safetyAttenuationDb,
           preferredVolumeDb: p.preferredVolumeDb,
@@ -514,6 +544,19 @@ class BitDropSettingsRepository {
       }
       return p;
     }).toList();
+
+    if (!found) {
+      updatedProfiles.add(
+        DeviceProfile(
+          deviceId: cmd.deviceId,
+          deviceName: devName ?? cmd.deviceId,
+          eqPresetName: presetLabel,
+          replayGain: _eq.value.replayGain,
+          autoApply: true,
+        ),
+      );
+    }
+
     _deviceProfiles.add(updatedProfiles);
     await saveEqState();
     await saveDeviceProfiles();
