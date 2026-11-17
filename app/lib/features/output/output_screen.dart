@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 import '../../core_api/commands.dart';
 import '../../core_api/enums.dart';
 import '../../core_api/models.dart';
-import '../../core_mock/catalog.dart';
 import '../../l10n/l10n.dart';
 import '../../providers/core_providers.dart';
 import '../../routing/routes.dart';
@@ -55,11 +54,29 @@ class OutputScreen extends ConsumerWidget {
                     ? 'Bluetooth uses its own codec — lossless bit-perfect '
                         'is not possible on any phone.'
                     : (device.type == DeviceType.usb && signal?.tier != OutputTier.bitPerfect
-                        ? 'Currently routed via Android system mixer. Enable Direct USB DAC driver below to unlock bit-perfect playback.'
+                        ? (signal?.dspActive == true
+                            ? '64-bit DSP / EQ is active, altering samples. Bypass EQ to restore bit-perfect playback.'
+                            : 'Currently routed via Android system mixer. Enable Direct USB DAC access below to unlock bit-perfect playback.')
                         : null),
                 onRunSafetyCheck: () => context.push(Routes.safety),
               ),
             ),
+            if (device.type == DeviceType.usb &&
+                signal?.tier != OutputTier.bitPerfect &&
+                signal?.dspActive != true)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    Spacing.md, Spacing.sm, Spacing.md, 0),
+                child: FilledButton.icon(
+                  onPressed: () =>
+                      sendCommand(ref, const RequestDirectUsbAccess()),
+                  icon: const Icon(Icons.usb, size: 18),
+                  label: const Text('Unlock Direct USB Bit-Perfect'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(double.infinity, Sizes.touchTarget),
+                  ),
+                ),
+              ),
             if (signal != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(
@@ -102,17 +119,38 @@ class OutputScreen extends ConsumerWidget {
             onTap: () => context.push(Routes.safety),
           ),
           const SectionHeader(
-            title: 'Known devices',
-            subtitle: 'Each keeps its own EQ, volume and safety settings',
+            title: 'Saved devices',
+            subtitle: 'Auto-created per connected IEM, headphone, or USB DAC',
           ),
-          for (final d in MockCatalog.knownDevices)
-            _KnownDeviceRow(
-              device: d,
-              profile: profiles
-                  .cast<DeviceProfile?>()
-                  .firstWhere((p) => p!.deviceId == d.id, orElse: () => null),
-              connected: d.id == device?.id,
-            ),
+          if (profiles.isEmpty && device == null)
+            const Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: Spacing.md,
+                vertical: Spacing.sm,
+              ),
+              child: Text(
+                'Connect any IEM, headphone, or USB DAC to save per-device EQ, ReplayGain, and safety settings.',
+              ),
+            )
+          else ...[
+            if (device != null &&
+                !profiles.any((p) => p.deviceId == device.id))
+              _KnownDeviceRow(
+                name: device.name,
+                type: device.type,
+                maxTier: device.maxTier,
+                profile: null,
+                connected: true,
+              ),
+            for (final p in profiles)
+              _KnownDeviceRow(
+                name: p.deviceName,
+                type: p.deviceId == device?.id ? device!.type : null,
+                maxTier: p.deviceId == device?.id ? device!.maxTier : null,
+                profile: p,
+                connected: p.deviceId == device?.id,
+              ),
+          ],
           const SectionHeader(title: 'Advanced'),
           SwitchListTile(
             value: settings.preferBitPerfect,
@@ -121,8 +159,8 @@ class OutputScreen extends ConsumerWidget {
             secondary: const Icon(Icons.diamond_outlined),
             title: const Text('Prefer bit-perfect when available'),
             subtitle: const Text(
-              'Asks Android for an untouched path. Needs Android 14 or later '
-              'and a DAC that supports it.',
+              'Uses Android 14+ Bit-Perfect mixer attributes or prompts for '
+              'Direct USB DAC access automatically.',
             ),
           ),
           SwitchListTile(
@@ -133,7 +171,7 @@ class OutputScreen extends ConsumerWidget {
             title: const Text('Direct USB DAC driver (Tier D)'),
             subtitle: const Text(
               'Bypasses the Android audio mixer completely via user-space '
-              'USB Audio Class 2.0. Unlocks bit-perfect playback on Android 12+.',
+              'UAC1/UAC2 USB audio. Works across Android 12+ for USB-C DACs and IEMs.',
             ),
           ),
         ],
@@ -220,20 +258,35 @@ class _VolumePanelState extends ConsumerState<_VolumePanel> {
 
 class _KnownDeviceRow extends StatelessWidget {
   const _KnownDeviceRow({
-    required this.device,
+    required this.name,
+    required this.type,
+    required this.maxTier,
     required this.profile,
     required this.connected,
   });
 
-  final OutputDevice device;
+  final String name;
+  final DeviceType? type;
+  final OutputTier? maxTier;
   final DeviceProfile? profile;
   final bool connected;
+
+  static DeviceType _inferType(String name) {
+    final lower = name.toLowerCase();
+    if (lower.contains('usb') || lower.contains('dac')) return DeviceType.usb;
+    if (lower.contains('speaker')) return DeviceType.phoneSpeaker;
+    if (lower.contains('bluetooth') || lower.contains('airpods')) {
+      return DeviceType.bluetooth;
+    }
+    return DeviceType.wiredAnalog;
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.c;
+    final effectiveType = type ?? _inferType(name);
     return ListTile(
-      leading: Icon(switch (device.type) {
+      leading: Icon(switch (effectiveType) {
         DeviceType.usb => Icons.usb,
         DeviceType.bluetooth => Icons.bluetooth,
         DeviceType.phoneSpeaker => Icons.smartphone,
@@ -241,7 +294,7 @@ class _KnownDeviceRow extends StatelessWidget {
       }),
       title: Row(
         children: [
-          Flexible(child: Text(device.name, overflow: TextOverflow.ellipsis)),
+          Flexible(child: Text(name, overflow: TextOverflow.ellipsis)),
           if (connected) ...[
             const SizedBox(width: Spacing.xs),
             Container(
@@ -266,7 +319,8 @@ class _KnownDeviceRow extends StatelessWidget {
                   Fmt.db(profile!.preferredVolumeDb!),
               ].join(' · '),
       ),
-      trailing: TierChip(tier: device.maxTier, dense: true),
+      trailing:
+          maxTier == null ? null : TierChip(tier: maxTier!, dense: true),
     );
   }
 }

@@ -141,15 +141,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           SwitchSettingsTile(
             title: 'Prefer bit-perfect when available',
-            subtitle: 'Asks Android for an untouched path. Needs Android 14 '
-                'or later and a DAC that supports it.',
+            subtitle: 'Uses Android 14+ Bit-Perfect mixer attributes or prompts '
+                'for Direct USB DAC access automatically.',
             value: s.preferBitPerfect,
             onChanged: (v) => _set('preferBitPerfect', v),
           ),
           SwitchSettingsTile(
             title: 'Direct USB driver (Tier D)',
             subtitle: 'Bypasses the Android audio mixer completely via user-space '
-                'USB Audio Class 2.0. Unlocks bit-perfect playback on Android 12+.',
+                'UAC1/UAC2 USB audio for USB-C DACs and IEMs.',
             value: s.directUsbDriver,
             onChanged: (v) => _set('directUsbDriver', v),
           ),
