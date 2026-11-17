@@ -202,6 +202,11 @@ class RunSafetyCheck extends PlayerCommand {
   final String? deviceId;
 }
 
+class RequestDirectUsbAccess extends PlayerCommand {
+  const RequestDirectUsbAccess({this.deviceId});
+  final int? deviceId;
+}
+
 class SetSafetyAttenuation extends PlayerCommand {
   const SetSafetyAttenuation({required this.enabled, this.db});
   final bool enabled;

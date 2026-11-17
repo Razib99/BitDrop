@@ -26,10 +26,13 @@ class BitDropOutputCoordinator {
   VoidCallback? onInterruptionBegan;
   ValueChanged<bool>? onInterruptionEnded;
   VoidCallback? onDirectUsbAutoAttachNeeded;
+  ValueChanged<UsbAudioDevice>? onUsbPermissionNeeded;
+  VoidCallback? onUsbPermissionResolved;
 
   Track? Function()? currentTrackProvider;
   CloudLibrary? Function()? cloudProvider;
   bool Function()? isDirectUsbDriverEnabled;
+  bool Function()? isPreferBitPerfectEnabled;
   EqState? Function()? eqStateProvider;
 
   static const _unknownPath = SignalPath(
@@ -49,9 +52,12 @@ class BitDropOutputCoordinator {
     this.onInterruptionBegan,
     this.onInterruptionEnded,
     this.onDirectUsbAutoAttachNeeded,
+    this.onUsbPermissionNeeded,
+    this.onUsbPermissionResolved,
     this.currentTrackProvider,
     this.cloudProvider,
     this.isDirectUsbDriverEnabled,
+    this.isPreferBitPerfectEnabled,
     this.eqStateProvider,
   }) : _outputProbe = outputProbe ?? OutputDeviceProbe();
 
@@ -86,17 +92,23 @@ class BitDropOutputCoordinator {
         onEarphoneDisconnected?.call();
       }
 
-      if (isDirectUsbDriverEnabled?.call() == true &&
-          newType == DeviceType.usb) {
-        if (onDirectUsbAutoAttachNeeded != null) {
+      if (newType == DeviceType.usb) {
+        if (isDirectUsbDriverEnabled?.call() == true &&
+            onDirectUsbAutoAttachNeeded != null) {
           onDirectUsbAutoAttachNeeded!();
         } else {
-          unawaited(autoAttachDirectUsbIfPossible());
+          unawaited(evaluateUsbAutoAttach(device: device));
         }
+      } else {
+        onUsbPermissionResolved?.call();
       }
       previousType = newType;
       recomputeSignalPath();
     });
+
+    if (_outputProbe.current?.type == DeviceType.usb) {
+      unawaited(evaluateUsbAutoAttach(device: _outputProbe.current));
+    }
 
     _outputProbe.onBecomingNoisy = () {
       onBecomingNoisy?.call();
@@ -112,51 +124,136 @@ class BitDropOutputCoordinator {
 
     _outputProbe.onUsbDeviceDetached = (devId) {
       onBecomingNoisy?.call();
+      onUsbPermissionResolved?.call();
       recomputeSignalPath();
     };
   }
 
-  Future<void> autoAttachDirectUsbIfPossible() async {
-    try {
-      final backend = _outputProbe.getStreamBackend();
-      if (backend == 'DirectUsb') return;
-      final usbDevices = await _outputProbe.listUsbAudioDevices();
-      if (usbDevices.isNotEmpty) {
-        final dev = usbDevices.first;
-        if (dev.hasPermission) {
-          await _outputProbe.attachDirectUsbDac(deviceId: dev.deviceId);
-          recomputeSignalPath();
+  static bool supportsOsBitPerfectForRate(OutputDevice device, int? sampleRate) {
+    if (!device.supportsBitPerfect) return false;
+    if (sampleRate == null || sampleRate <= 0) return true;
+    return device.bitPerfectRates.isEmpty ||
+        device.bitPerfectRates.contains(sampleRate);
+  }
+
+  bool shouldAutoEngageDirectUsb(OutputDevice? device, {int? trackSampleRate}) {
+    if (device == null || device.type != DeviceType.usb) return false;
+    if (isDirectUsbDriverEnabled?.call() == true) return true;
+    if (isPreferBitPerfectEnabled?.call() == true) {
+      return !supportsOsBitPerfectForRate(device, trackSampleRate);
+    }
+    return false;
+  }
+
+  /// Checks whether Direct USB should engage for the active USB device and
+  /// attaches immediately if permission is already granted, or notifies UI
+  /// via [onUsbPermissionNeeded] so the user can authorize in one tap.
+  Future<bool> evaluateUsbAutoAttach({
+    OutputDevice? device,
+    int? trackSampleRate,
+  }) async {
+    final target = device ?? _outputProbe.current;
+    final sr = trackSampleRate ?? currentTrackProvider?.call()?.format.sampleRate;
+    if (!shouldAutoEngageDirectUsb(target, trackSampleRate: sr)) {
+      if (target?.type != DeviceType.usb) {
+        onUsbPermissionResolved?.call();
+      }
+      return false;
+    }
+    return engageDirectUsb(
+      requestPermission: false,
+      sampleRate: sr ?? 0,
+      bitDepth: currentTrackProvider?.call()?.format.bitDepth ?? 0,
+    );
+  }
+
+  UsbAudioDevice? _selectUsbDevice(
+    List<UsbAudioDevice> devices, {
+    int? deviceId,
+    String? preferredName,
+  }) {
+    if (devices.isEmpty) return null;
+    if (deviceId != null) {
+      for (final d in devices) {
+        if (d.deviceId == deviceId) return d;
+      }
+    }
+    final wanted = preferredName?.trim().toLowerCase() ?? '';
+    if (wanted.isNotEmpty) {
+      for (final d in devices) {
+        final p = d.productName.trim().toLowerCase();
+        if (p.isNotEmpty && (wanted.contains(p) || p.contains(wanted))) {
+          return d;
         }
       }
-    } catch (_) {}
+    }
+    return devices.first;
   }
+
+  Future<bool> engageDirectUsb({
+    bool requestPermission = true,
+    int? deviceId,
+    int sampleRate = 0,
+    int bitDepth = 0,
+  }) async {
+    try {
+      final backend = _outputProbe.getStreamBackend();
+      if (backend == 'DirectUsb') {
+        onUsbPermissionResolved?.call();
+        return true;
+      }
+      final usbDevices = await _outputProbe.listUsbAudioDevices();
+      final targetDev = _selectUsbDevice(
+        usbDevices,
+        deviceId: deviceId,
+        preferredName: _outputProbe.current?.name,
+      );
+      if (targetDev == null) return false;
+
+      if (!targetDev.hasPermission) {
+        if (!requestPermission) {
+          onUsbPermissionNeeded?.call(targetDev);
+          return false;
+        }
+        final granted =
+            await _outputProbe.requestUsbPermission(targetDev.deviceId);
+        if (!granted) {
+          debugPrint(
+            '[usb] Permission denied for direct USB device ${targetDev.deviceId}',
+          );
+          return false;
+        }
+      }
+
+      final trackFormat = currentTrackProvider?.call()?.format;
+      final sr = sampleRate > 0 ? sampleRate : (trackFormat?.sampleRate ?? 0);
+      final bits = bitDepth > 0 ? bitDepth : (trackFormat?.bitDepth ?? 0);
+      final diag = await _outputProbe.attachDirectUsbDac(
+        deviceId: targetDev.deviceId,
+        sampleRate: sr,
+        bitDepth: bits,
+      );
+      if (diag == null) return false;
+      onUsbPermissionResolved?.call();
+      recomputeSignalPath();
+      return true;
+    } catch (e) {
+      debugPrint('[usb] Failed to engage direct USB DAC: $e');
+      return false;
+    }
+  }
+
+  Future<void> autoAttachDirectUsbIfPossible() =>
+      engageDirectUsb(requestPermission: false);
 
   Future<void> handleDirectUsbDriverSetting(bool enabled) async {
     if (!enabled) {
       await _outputProbe.detachDirectUsbDac();
+      onUsbPermissionResolved?.call();
       recomputeSignalPath();
       return;
     }
-    try {
-      final usbDevices = await _outputProbe.listUsbAudioDevices();
-      if (usbDevices.isNotEmpty) {
-        final targetDev = usbDevices.first;
-        if (!targetDev.hasPermission) {
-          final granted =
-              await _outputProbe.requestUsbPermission(targetDev.deviceId);
-          if (!granted) {
-            debugPrint(
-              '[usb] Permission denied for direct USB device ${targetDev.deviceId}',
-            );
-            return;
-          }
-        }
-        await _outputProbe.attachDirectUsbDac(deviceId: targetDev.deviceId);
-        recomputeSignalPath();
-      }
-    } catch (e) {
-      debugPrint('[usb] Failed to engage direct USB DAC: $e');
-    }
+    await engageDirectUsb(requestPermission: true);
   }
 
   void recomputeSignalPath() {
@@ -330,9 +427,12 @@ class BitDropOutputCoordinator {
 
       final bits = bitDepth > 0 ? bitDepth : 16;
       final dsp = _isDspCurrentlyActive();
-      final supportsRate = device.supportsBitPerfect &&
-          (device.bitPerfectRates.isEmpty ||
-              device.bitPerfectRates.contains(sampleRate));
+      final supportsRate = supportsOsBitPerfectForRate(device, sampleRate);
+      if (!supportsRate && isPreferBitPerfectEnabled?.call() == true) {
+        unawaited(
+          evaluateUsbAutoAttach(device: device, trackSampleRate: sampleRate),
+        );
+      }
       final bitPerfect = !dsp && supportsRate;
       final key = (device.id, sampleRate, bits, bitPerfect);
       if (key == _lastMixerConfigKey) return;

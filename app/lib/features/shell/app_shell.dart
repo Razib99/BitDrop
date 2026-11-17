@@ -252,6 +252,8 @@ class _BannerStack extends ConsumerWidget {
         context.push(Routes.storage);
       case 'output':
         context.push(Routes.output);
+      case 'usb_direct':
+        sendCommand(ref, const RequestDirectUsbAccess());
     }
   }
 }

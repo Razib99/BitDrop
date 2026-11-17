@@ -158,5 +158,75 @@ void main() {
         'bitPerfect': false,
       }));
     });
+
+    test('evaluateUsbAutoAttach prompts when preferBitPerfect is on and OS HAL lacks bit-perfect', () async {
+      final promptedDevices = <UsbAudioDevice>[];
+      var resolvedCount = 0;
+
+      const channel = MethodChannel('com.bitdrop/audio_device');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'listUsbAudioDevices') {
+          return [
+            {
+              'deviceId': 42,
+              'deviceName': '/dev/bus/usb/001/002',
+              'productName': 'Generic USB-C IEM DAC',
+              'manufacturerName': 'AudioCo',
+              'vendorId': 1234,
+              'productId': 5678,
+              'hasPermission': false,
+            },
+          ];
+        }
+        return null;
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+      });
+
+      final autoCoordinator = BitDropOutputCoordinator(
+        outputProbe: probe,
+        isDirectUsbDriverEnabled: () => false,
+        isPreferBitPerfectEnabled: () => true,
+        onUsbPermissionNeeded: promptedDevices.add,
+        onUsbPermissionResolved: () => resolvedCount++,
+      );
+      autoCoordinator.start();
+      addTearDown(autoCoordinator.dispose);
+
+      // Android < 14 USB DAC: supportsBitPerfect is false -> auto-engage needed.
+      const preApi34Usb = OutputDevice(
+        id: 'usb-iem-1',
+        name: 'Generic USB-C IEM DAC',
+        type: DeviceType.usb,
+        supportedRates: [44100, 48000, 96000],
+        bitDepths: [16, 24],
+        hardwareVolume: HardwareVolume.unknown,
+        maxTier: OutputTier.nativeRate,
+        supportsBitPerfect: false,
+      );
+      probe.emitForTesting(preApi34Usb);
+      await pumpEventQueue();
+
+      expect(promptedDevices, hasLength(1));
+      expect(promptedDevices.first.productName, equals('Generic USB-C IEM DAC'));
+
+      // Switching back to speaker clears USB permission prompt.
+      const speaker = OutputDevice(
+        id: 'speaker-1',
+        name: 'Phone Speaker',
+        type: DeviceType.phoneSpeaker,
+        supportedRates: [48000],
+        bitDepths: [16],
+        hardwareVolume: HardwareVolume.yes,
+        maxTier: OutputTier.resampled,
+      );
+      probe.emitForTesting(speaker);
+      await pumpEventQueue();
+
+      expect(resolvedCount, greaterThanOrEqualTo(1));
+    });
   });
 }

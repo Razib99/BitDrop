@@ -151,6 +151,7 @@ class LiveBitDropCore implements BitDropCore {
           currentTrackProvider: () => _nowPlaying.value?.track,
           cloudProvider: () => _cloud,
           isDirectUsbDriverEnabled: () => _settings.value.directUsbDriver,
+          isPreferBitPerfectEnabled: () => _settings.value.preferBitPerfect,
           eqStateProvider: () => _eq.value,
           onEarphoneDisconnected: _pauseIfPlaying,
           onBecomingNoisy: _pauseIfPlaying,
@@ -161,6 +162,8 @@ class LiveBitDropCore implements BitDropCore {
               unawaited(_audioHandler.play());
             }
           },
+          onUsbPermissionNeeded: _showUsbPermissionBanner,
+          onUsbPermissionResolved: _clearUsbPermissionBanner,
         );
     try {
       rust.initEngine();
@@ -328,6 +331,35 @@ class LiveBitDropCore implements BitDropCore {
     });
 
     _eqSub = _eq.listen(_pushEqToEngine);
+  }
+
+  void _showUsbPermissionBanner(UsbAudioDevice dev) {
+    if (_disposed || _banners.isClosed) return;
+    final name = dev.productName.trim().isEmpty
+        ? 'USB audio device'
+        : dev.productName.trim();
+    final filtered =
+        _banners.value.where((b) => b.id != 'b-usb-permission').toList();
+    _banners.add([
+      AppBanner(
+        id: 'b-usb-permission',
+        kind: BannerKind.info,
+        message:
+            'Grant USB audio access for $name to bypass system resampling and play bit-perfect.',
+        actionLabel: 'Enable',
+        actionCommandId: 'usb_direct',
+      ),
+      ...filtered,
+    ]);
+  }
+
+  void _clearUsbPermissionBanner() {
+    if (_disposed || _banners.isClosed) return;
+    if (_banners.value.any((b) => b.id == 'b-usb-permission')) {
+      _banners.add(
+        _banners.value.where((b) => b.id != 'b-usb-permission').toList(),
+      );
+    }
   }
 
   void _pauseIfPlaying() {
@@ -1866,6 +1898,13 @@ class LiveBitDropCore implements BitDropCore {
       }
       if (cmd.key == 'directUsbDriver') {
         unawaited(_outputCoord.handleDirectUsbDriverSetting(cmd.value as bool));
+      } else if (cmd.key == 'preferBitPerfect') {
+        if (cmd.value == true) {
+          unawaited(_outputCoord.evaluateUsbAutoAttach());
+        } else if (!_settings.value.directUsbDriver) {
+          _clearUsbPermissionBanner();
+        }
+        _outputCoord.recomputeSignalPath();
       }
     } else if (cmd is SetSafetyAttenuation) {
       final updated = _settings.value.copyWith(
@@ -2027,6 +2066,17 @@ class LiveBitDropCore implements BitDropCore {
       // No-op or disconnect
     } else if (cmd is RunSafetyCheck) {
       // Diagnostic safety check completed
+    } else if (cmd is RequestDirectUsbAccess) {
+      final attached = await _outputCoord.engageDirectUsb(
+        requestPermission: true,
+        deviceId: cmd.deviceId,
+      );
+      if (attached && !_settings.value.directUsbDriver) {
+        final updated = _settings.value.copyWith(directUsbDriver: true);
+        _settings.add(updated);
+        _settingsRepo.syncFromLiveState(settings: updated);
+        unawaited(_saveSettings());
+      }
     } else if (cmd is SetVolumeDb) {
       // Set volume mode
     }

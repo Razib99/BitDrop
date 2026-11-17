@@ -1907,6 +1907,11 @@ class MockBitDropCore implements BitDropCore {
       case DismissBanner(:final bannerId):
         _banners.emit(_banners.value.where((b) => b.id != bannerId).toList());
 
+      case RequestDirectUsbAccess():
+        _banners.emit(
+          _banners.value.where((b) => b.id != 'b-usb-permission').toList(),
+        );
+
       case CreatePlaylist(:final name):
         _events.add(CoreEvent.snack('Created playlist "$name".'));
 
