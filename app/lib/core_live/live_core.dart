@@ -1879,7 +1879,7 @@ class LiveBitDropCore implements BitDropCore {
               includeDiscovered: _settings.value.autoSyncLocalMusic,
             );
           }
-          if (_cloud.currentFolders.isNotEmpty) {
+          if (_cloud.isDriveSignedIn || _cloud.currentFolders.isNotEmpty) {
             unawaited(_cloud.scan());
           }
         }

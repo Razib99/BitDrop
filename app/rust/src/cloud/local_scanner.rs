@@ -845,7 +845,8 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
         fs::set_permissions(&temp_dir, fs::Permissions::from_mode(0o000)).unwrap();
 
-        let res = scan_local_directory_incremental(&temp_dir, "Locked", None, &HashMap::new(), |_| {});
+        let res =
+            scan_local_directory_incremental(&temp_dir, "Locked", None, &HashMap::new(), |_| {});
         // Restore permissions before asserting so cleanup always succeeds.
         let _ = fs::set_permissions(&temp_dir, fs::Permissions::from_mode(0o755));
         let _ = fs::remove_dir_all(&temp_dir);
