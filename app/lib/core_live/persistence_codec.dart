@@ -164,6 +164,7 @@ abstract final class PersistenceCodec {
       'artistSeparators': s.artistSeparators,
       'scanWifiOnly': s.scanWifiOnly,
       'includeSharedDrives': s.includeSharedDrives,
+      'autoSyncLocalMusic': s.autoSyncLocalMusic,
       'artworkPreference': s.artworkPreference.name,
       'notificationsEnabled': s.notificationsEnabled,
       'lockScreenArtwork': s.lockScreenArtwork,
@@ -268,6 +269,8 @@ abstract final class PersistenceCodec {
             if (val is bool) s = s.copyWith(scanWifiOnly: val);
           case 'includeSharedDrives':
             if (val is bool) s = s.copyWith(includeSharedDrives: val);
+          case 'autoSyncLocalMusic':
+            if (val is bool) s = s.copyWith(autoSyncLocalMusic: val);
           case 'artworkPreference':
             final v = ArtworkPreference.values
                 .where((e) => e.name == val)

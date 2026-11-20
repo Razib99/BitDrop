@@ -11,8 +11,29 @@ import 'package:rxdart/rxdart.dart';
 import '../core_api/enums.dart';
 import '../core_api/models.dart';
 import '../features/storage/google_drive_service.dart';
+import '../services/local_storage_bridge.dart';
 import '../src/rust/api/cloud_library.dart' as rust;
 import '../src/rust/cloud/db.dart' as rust_db;
+
+/// Outcome of a local device music sync pass.
+@immutable
+class LocalSyncResult {
+  const LocalSyncResult({
+    this.tracksIndexed = 0,
+    this.foldersScanned = 0,
+    this.permissionDenied = false,
+    this.permanentlyDenied = false,
+    this.errorMessage,
+  });
+
+  final int tracksIndexed;
+  final int foldersScanned;
+  final bool permissionDenied;
+  final bool permanentlyDenied;
+  final String? errorMessage;
+
+  bool get ok => !permissionDenied && errorMessage == null;
+}
 
 /// A local music directory chosen by the user.
 @immutable
@@ -71,12 +92,15 @@ class CloudLibrary {
     required GoogleDriveService drive,
     required String dbPath,
     required String cacheDir,
+    LocalStorageBridge? storageBridge,
   })  : _drive = drive,
         _dbPath = dbPath,
-        _cacheDir = cacheDir;
+        _cacheDir = cacheDir,
+        _storageBridge = storageBridge ?? LocalStorageBridge();
 
   final GoogleDriveService _drive;
   final String _dbPath;
+  final LocalStorageBridge _storageBridge;
 
   /// Where tag reads cache byte ranges, on whichever platform this is.
   final String _cacheDir;
@@ -91,6 +115,8 @@ class CloudLibrary {
   /// of things that are not music.
   final _folders = BehaviorSubject<List<DriveFolder>>.seeded(const []);
   final _localFolders = BehaviorSubject<List<LocalFolder>>.seeded(const []);
+  final _localSyncing = BehaviorSubject<bool>.seeded(false);
+  final Set<String> _excludedLocalPaths = {};
 
   final _status = BehaviorSubject<SyncStatus>.seeded(SyncStatus.idle);
   final _tracks = BehaviorSubject<List<Track>>.seeded(const []);
@@ -104,6 +130,8 @@ class CloudLibrary {
 
   Stream<List<LocalFolder>> get localFolders => _localFolders.stream;
   List<LocalFolder> get currentLocalFolders => _localFolders.value;
+  bool get isLocalSyncing => _localSyncing.value;
+  Set<String> get excludedLocalPaths => Set.unmodifiable(_excludedLocalPaths);
 
   Stream<SyncStatus> get status => _status.stream;
   Stream<List<Track>> get tracks => _tracks.stream;
@@ -128,15 +156,16 @@ class CloudLibrary {
   /// Sources combining connected cloud providers (Google Drive) and local
   /// device music storage roots. Emits an empty list when neither is present,
   /// which drives Home's "no source yet" state.
-  Stream<List<SourceAccount>> get sourceAccounts => Rx.combineLatest4(
+  Stream<List<SourceAccount>> get sourceAccounts => Rx.combineLatest5(
         _drive.accountStream.startWith(_drive.currentUser),
         _status.stream,
         _tracks.stream,
         _localFolders.stream,
-        (account, status, tracks, localFolders) {
+        _localSyncing.stream,
+        (account, status, tracks, localFolders, localSyncing) {
           final result = <SourceAccount>[];
 
-          if (localFolders.isNotEmpty) {
+          if (localFolders.isNotEmpty || localSyncing) {
             final localTracks =
                 tracks.where((t) => _isLocalTrackId(t.id)).toList();
             final lastScan = localFolders
@@ -147,12 +176,16 @@ class CloudLibrary {
               SourceAccount(
                 id: 'local',
                 provider: 'This Device',
-                accountLabel:
-                    '${localFolders.length} folder${localFolders.length == 1 ? '' : 's'} indexed',
+                accountLabel: localFolders.isEmpty
+                    ? 'Syncing device music'
+                    : '${localFolders.length} folder${localFolders.length == 1 ? '' : 's'} indexed',
                 trackCount: localTracks.length,
                 folderCount: localFolders.length,
-                status: SourceStatus.upToDate,
+                status: localSyncing
+                    ? SourceStatus.syncing
+                    : SourceStatus.upToDate,
                 lastSync: lastScan,
+                activityLabel: localSyncing ? 'Scanning device music' : null,
               ),
             );
           }
@@ -201,6 +234,7 @@ class CloudLibrary {
   /// drops both together and they can never disagree.
   File get _folderFile => File('$_dbPath.folders.json');
   File get _localFolderFile => File('$_dbPath.local_folders.json');
+  File get _excludedLocalFile => File('$_dbPath.local_excluded.json');
 
   Future<void> open() async {
     if (_opened) return;
@@ -208,6 +242,7 @@ class CloudLibrary {
     _opened = true;
     await _loadFolders();
     await _loadLocalFolders();
+    await _loadExcludedLocalPaths();
     await _reload();
     unawaited(_artworkPass());
   }
@@ -247,6 +282,29 @@ class CloudLibrary {
     }
   }
 
+  Future<void> _loadExcludedLocalPaths() async {
+    try {
+      if (!_excludedLocalFile.existsSync()) return;
+      final raw =
+          jsonDecode(await _excludedLocalFile.readAsString()) as List<dynamic>;
+      _excludedLocalPaths
+        ..clear()
+        ..addAll(raw.map((e) => e.toString().trim()).where((s) => s.isNotEmpty));
+    } catch (e) {
+      debugPrint('[library] could not read excluded local folders: $e');
+    }
+  }
+
+  Future<void> _saveExcludedLocalPaths() async {
+    try {
+      await _excludedLocalFile.writeAsString(
+        jsonEncode(_excludedLocalPaths.toList()..sort()),
+      );
+    } catch (e) {
+      debugPrint('[library] could not save excluded local folders: $e');
+    }
+  }
+
   /// Replaces the chosen folders. Clears the index, because rows from a
   /// folder that is no longer selected would otherwise linger forever.
   Future<void> setFolders(List<DriveFolder> folders) async {
@@ -283,6 +341,10 @@ class CloudLibrary {
           label: folderLabel,
         );
 
+    if (_excludedLocalPaths.remove(cleanPath)) {
+      await _saveExcludedLocalPaths();
+    }
+
     if (existing == null) {
       _localFolders.add([..._localFolders.value, folder]);
       await _saveLocalFolders();
@@ -302,6 +364,10 @@ class CloudLibrary {
         _localFolders.value.where((f) => f.path != directoryPath).toList();
     _localFolders.add(updated);
     await _saveLocalFolders();
+
+    if (_excludedLocalPaths.add(directoryPath)) {
+      await _saveExcludedLocalPaths();
+    }
 
     final pruned = await rust.cloudLibraryPruneMissing(
       folderPrefixes: [folder.label],
@@ -365,11 +431,127 @@ class CloudLibrary {
   /// Scans all configured local directories sequentially.
   Future<int> scanAllLocalFolders() async {
     await open();
-    var totalScanned = 0;
-    for (final folder in _localFolders.value) {
-      totalScanned += await scanLocalFolder(folder);
+    if (_localSyncing.value) return 0;
+    _localSyncing.add(true);
+    try {
+      var totalScanned = 0;
+      for (final folder in List.of(_localFolders.value)) {
+        try {
+          totalScanned += await scanLocalFolder(folder);
+        } catch (e) {
+          debugPrint('[library] skipping failed local folder ${folder.path}: $e');
+        }
+      }
+      return totalScanned;
+    } finally {
+      if (!_localSyncing.isClosed) _localSyncing.add(false);
     }
-    return totalScanned;
+  }
+
+  Future<AudioStoragePermissionStatus> checkLocalAudioPermission() =>
+      _storageBridge.getAudioPermissionStatus();
+
+  Future<AudioStoragePermissionStatus> requestLocalAudioPermission() =>
+      _storageBridge.requestAudioPermission();
+
+  Future<bool> openLocalPermissionSettings() =>
+      _storageBridge.openAppSettings();
+
+  Future<List<DiscoveredMusicDirectory>> discoverDeviceMusicDirectories() =>
+      _storageBridge.discoverMusicDirectories();
+
+  /// Automatically discovers standard & MediaStore music directories on the
+  /// device (respecting user-removed exclusions) and runs an incremental scan.
+  Future<LocalSyncResult> syncDeviceMusic({
+    bool requestPermission = true,
+    bool includeDiscovered = true,
+  }) async {
+    var perm = await _storageBridge.getAudioPermissionStatus();
+    if (!perm.granted && requestPermission) {
+      perm = await _storageBridge.requestAudioPermission();
+    }
+    if (!perm.granted) {
+      return LocalSyncResult(
+        permissionDenied: true,
+        permanentlyDenied: perm.permanentlyDenied,
+      );
+    }
+
+    await open();
+    if (_localSyncing.value) {
+      return const LocalSyncResult();
+    }
+
+    _localSyncing.add(true);
+    try {
+      if (includeDiscovered) {
+        final discovered = await _storageBridge.discoverMusicDirectories();
+        final current = List<LocalFolder>.from(_localFolders.value);
+        final existingPaths = current.map((f) => f.path).toSet();
+        var addedAny = false;
+
+        for (final dir in discovered) {
+          if (dir.path.isEmpty ||
+              existingPaths.contains(dir.path) ||
+              _excludedLocalPaths.contains(dir.path)) {
+            continue;
+          }
+          // Prefer directories that have discovered audio files, or standard
+          // Music/Download roots when the user has not configured any folder yet.
+          final isStandardRoot = dir.label == 'Music' ||
+              dir.label == 'Download' ||
+              dir.label.endsWith('· Music');
+          if (dir.audioFileCount > 0 || (current.isEmpty && isStandardRoot)) {
+            current.add(
+              LocalFolder(
+                path: dir.path,
+                label: dir.label.isEmpty ? 'Local Music' : dir.label,
+              ),
+            );
+            existingPaths.add(dir.path);
+            addedAny = true;
+          }
+        }
+
+        if (addedAny) {
+          _localFolders.add(current);
+          await _saveLocalFolders();
+        }
+      }
+
+      var totalTracks = 0;
+      var foldersScanned = 0;
+      var sawPermissionError = false;
+      String? lastError;
+
+      for (final folder in List.of(_localFolders.value)) {
+        try {
+          totalTracks += await scanLocalFolder(folder);
+          foldersScanned += 1;
+        } catch (e) {
+          final msg = e.toString();
+          if (msg.contains('PERMISSION_DENIED')) {
+            sawPermissionError = true;
+          } else {
+            lastError = msg;
+          }
+          debugPrint('[library] syncDeviceMusic folder ${folder.path} failed: $e');
+        }
+      }
+
+      if (foldersScanned > 0) {
+        unawaited(_artworkPass());
+      }
+
+      return LocalSyncResult(
+        tracksIndexed: totalTracks,
+        foldersScanned: foldersScanned,
+        permissionDenied: sawPermissionError && foldersScanned == 0,
+        errorMessage: foldersScanned == 0 ? lastError : null,
+      );
+    } finally {
+      if (!_localSyncing.isClosed) _localSyncing.add(false);
+    }
   }
 
   /// Proactively fetches missing posters and synchronizes album artwork.
@@ -856,6 +1038,7 @@ class CloudLibrary {
     cancelScan();
     unawaited(_folders.close());
     unawaited(_localFolders.close());
+    unawaited(_localSyncing.close());
     unawaited(_status.close());
     unawaited(_tracks.close());
     unawaited(_albums.close());

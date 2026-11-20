@@ -43,6 +43,7 @@ class AppSettings {
     this.artistSeparators = '; / feat.',
     this.scanWifiOnly = true,
     this.includeSharedDrives = false,
+    this.autoSyncLocalMusic = true,
     this.artworkPreference = ArtworkPreference.embedded,
     this.notificationsEnabled = true,
     this.lockScreenArtwork = true,
@@ -84,6 +85,7 @@ class AppSettings {
   final String artistSeparators;
   final bool scanWifiOnly;
   final bool includeSharedDrives;
+  final bool autoSyncLocalMusic;
   final ArtworkPreference artworkPreference;
 
   final bool notificationsEnabled;
@@ -119,6 +121,7 @@ class AppSettings {
     String? artistSeparators,
     bool? scanWifiOnly,
     bool? includeSharedDrives,
+    bool? autoSyncLocalMusic,
     ArtworkPreference? artworkPreference,
     bool? notificationsEnabled,
     bool? lockScreenArtwork,
@@ -157,6 +160,7 @@ class AppSettings {
         artistSeparators: artistSeparators ?? this.artistSeparators,
         scanWifiOnly: scanWifiOnly ?? this.scanWifiOnly,
         includeSharedDrives: includeSharedDrives ?? this.includeSharedDrives,
+        autoSyncLocalMusic: autoSyncLocalMusic ?? this.autoSyncLocalMusic,
         artworkPreference: artworkPreference ?? this.artworkPreference,
         notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
         lockScreenArtwork: lockScreenArtwork ?? this.lockScreenArtwork,
@@ -202,6 +206,7 @@ class AppSettings {
         'artistSeparators' => copyWith(artistSeparators: value as String),
         'scanWifiOnly' => copyWith(scanWifiOnly: value as bool),
         'includeSharedDrives' => copyWith(includeSharedDrives: value as bool),
+        'autoSyncLocalMusic' => copyWith(autoSyncLocalMusic: value as bool),
         'artworkPreference' =>
           copyWith(artworkPreference: value as ArtworkPreference),
         'notificationsEnabled' => copyWith(notificationsEnabled: value as bool),
