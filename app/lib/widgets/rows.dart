@@ -227,17 +227,11 @@ class TrackRow extends StatelessWidget {
                         children: [
                           if (track.format.codec.isSupported &&
                               track.format.codec.isLossless) ...[
-                            track.format.isHiRes
-                                ? Icon(
-                                    Icons.diamond_rounded,
-                                    size: 11,
-                                    color: dim ? c.textTertiary : c.accent,
-                                  )
-                                : LosslessWaveGlyph(
-                                    color:
-                                        dim ? c.textTertiary : c.tierBitPerfect,
-                                    size: 10,
-                                  ),
+                            LosslessInlineSign(
+                              format: track.format,
+                              dimmed: dim,
+                              size: 10,
+                            ),
                             const SizedBox(width: 4),
                           ],
                           Expanded(
@@ -780,15 +774,33 @@ class FolderRow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      entry.isDirectory
-                          ? '${entry.itemCount} item'
-                              '${entry.itemCount == 1 ? '' : 's'} · '
-                              '${Fmt.bytes(entry.sizeBytes)}'
-                          : '${Fmt.bytes(entry.sizeBytes)} · '
-                              '${Fmt.duration(track?.durationMs ?? 0)}',
-                      style:
-                          context.t.bodySmall.copyWith(color: c.textSecondary),
+                    Row(
+                      children: [
+                        if (track != null &&
+                            track.format.codec.isSupported &&
+                            track.format.codec.isLossless) ...[
+                          LosslessInlineSign(
+                            format: track.format,
+                            dimmed: dim,
+                            size: 10,
+                          ),
+                          const SizedBox(width: 4),
+                        ],
+                        Expanded(
+                          child: Text(
+                            entry.isDirectory
+                                ? '${entry.itemCount} item'
+                                    '${entry.itemCount == 1 ? '' : 's'} · '
+                                    '${Fmt.bytes(entry.sizeBytes)}'
+                                : '${Fmt.bytes(entry.sizeBytes)} · '
+                                    '${Fmt.duration(track?.durationMs ?? 0)}',
+                            style: context.t.bodySmall
+                                .copyWith(color: c.textSecondary),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

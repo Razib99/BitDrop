@@ -359,6 +359,14 @@ class _MiniBarLayer extends ConsumerWidget {
                                       padding: const EdgeInsets.only(right: 5),
                                       child: _TierDot(tier: signal.tier),
                                     ),
+                                  if (nowPlaying.track.format.codec.isSupported &&
+                                      nowPlaying.track.format.codec.isLossless) ...[
+                                    LosslessInlineSign(
+                                      format: nowPlaying.track.format,
+                                      size: 9,
+                                    ),
+                                    const SizedBox(width: 4),
+                                  ],
                                   Expanded(
                                     child: Text(
                                       nowPlaying.track.artist,

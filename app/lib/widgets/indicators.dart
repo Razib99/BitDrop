@@ -74,6 +74,42 @@ class _LosslessWavePainter extends CustomPainter {
       oldDelegate.color != color;
 }
 
+/// Compact inline quality sign for track rows, folder files, and mini players.
+///
+/// Renders an accent diamond for Hi-Res Lossless, an emerald dual-wave glyph
+/// for standard CD Lossless, and nothing for lossy or unsupported streams.
+class LosslessInlineSign extends StatelessWidget {
+  const LosslessInlineSign({
+    super.key,
+    required this.format,
+    this.dimmed = false,
+    this.size = 10,
+  });
+
+  final AudioFormat format;
+  final bool dimmed;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!format.codec.isSupported || !format.codec.isLossless) {
+      return const SizedBox.shrink();
+    }
+    final c = context.c;
+    if (format.isHiRes) {
+      return Icon(
+        Icons.diamond_rounded,
+        size: size + 1,
+        color: dimmed ? c.textTertiary : c.accent,
+      );
+    }
+    return LosslessWaveGlyph(
+      color: dimmed ? c.textTertiary : c.tierBitPerfect,
+      size: size,
+    );
+  }
+}
+
 /// Format chip: `FLAC 24/96`.
 ///
 /// Four visual treatments carry the quality class without relying on colour:

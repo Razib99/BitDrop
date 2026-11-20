@@ -74,5 +74,38 @@ void main() {
       expect(find.byIcon(Icons.diamond_outlined), findsNothing);
       expect(find.text('320 kbps'), findsOneWidget);
     });
+
+    testWidgets('FolderRow renders LosslessInlineSign and FormatBadge for lossless files',
+        (tester) async {
+      final track = makeTrack(
+        const AudioFormat(codec: Codec.alac, bitDepth: 16, sampleRate: 44100),
+      );
+      final entry = FolderEntry(
+        id: 'Music/01.m4a',
+        name: '01.m4a',
+        isDirectory: false,
+        itemCount: 0,
+        sizeBytes: 25000000,
+        track: track,
+      );
+
+      await tester.pumpWidget(wrap(FolderRow(entry: entry)));
+
+      expect(find.byType(LosslessInlineSign), findsOneWidget);
+      expect(find.byType(LosslessWaveGlyph), findsNWidgets(2));
+      expect(find.text('16/44.1'), findsOneWidget);
+    });
+
+    testWidgets('LosslessInlineSign omits glyph for unsupported codecs',
+        (tester) async {
+      await tester.pumpWidget(wrap(
+        const LosslessInlineSign(
+          format: AudioFormat(codec: Codec.ape, bitDepth: 16, sampleRate: 44100),
+        ),
+      ));
+
+      expect(find.byType(LosslessWaveGlyph), findsNothing);
+      expect(find.byIcon(Icons.diamond_rounded), findsNothing);
+    });
   });
 }

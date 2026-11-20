@@ -17,6 +17,7 @@ import '../../util/poster_color.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/cache_seek_bar.dart';
 import '../../widgets/common.dart';
+import '../../widgets/indicators.dart';
 import '../../widgets/marquee.dart';
 import '../../widgets/meters.dart';
 import '../../widgets/transport.dart';
@@ -751,12 +752,28 @@ class NowPlayingTitleBlock extends ConsumerWidget {
                   textAlign: alignStart ? TextAlign.start : TextAlign.center,
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  '${track.artist} · ${track.albumTitle}',
-                  style: context.t.bodySmall.copyWith(color: c.textSecondary),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: alignStart ? TextAlign.start : TextAlign.center,
+                Row(
+                  mainAxisAlignment: alignStart
+                      ? MainAxisAlignment.start
+                      : MainAxisAlignment.center,
+                  children: [
+                    if (track.format.codec.isSupported &&
+                        track.format.codec.isLossless) ...[
+                      LosslessInlineSign(format: track.format, size: 10),
+                      const SizedBox(width: 5),
+                    ],
+                    Flexible(
+                      child: Text(
+                        '${track.artist} · ${track.albumTitle}',
+                        style: context.t.bodySmall
+                            .copyWith(color: c.textSecondary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign:
+                            alignStart ? TextAlign.start : TextAlign.center,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

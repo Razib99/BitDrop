@@ -107,6 +107,14 @@ class MiniPlayer extends ConsumerWidget {
                                       padding: const EdgeInsets.only(right: 5),
                                       child: _TierDot(tier: signal.tier),
                                     ),
+                                  if (np.track.format.codec.isSupported &&
+                                      np.track.format.codec.isLossless) ...[
+                                    LosslessInlineSign(
+                                      format: np.track.format,
+                                      size: 9,
+                                    ),
+                                    const SizedBox(width: 4),
+                                  ],
                                   Expanded(
                                     child: Text(
                                       np.track.artist,
