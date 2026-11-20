@@ -319,6 +319,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: (v) => _set('showUnsupportedFiles', v),
           ),
           SwitchSettingsTile(
+            title: 'Auto-sync device music',
+            subtitle: 'Automatically scan local music folders and SD card on '
+                'startup and refresh.',
+            value: s.autoSyncLocalMusic,
+            onChanged: (v) => _set('autoSyncLocalMusic', v),
+          ),
+          SwitchSettingsTile(
             title: 'Scan on Wi-Fi only',
             subtitle: 'Tag reading waits for Wi-Fi.',
             value: s.scanWifiOnly,
@@ -360,7 +367,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           NavigationSettingsTile(
             title: 'Rescan library',
-            subtitle: 'Re-reads folders and tags from your cloud',
+            subtitle: 'Re-reads local device and cloud folders and tags',
             onTap: () => sendCommand(ref, const Rescan()),
             advanced: true,
           ),

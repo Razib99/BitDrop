@@ -1,7 +1,11 @@
 import 'dart:io';
 
+import 'package:bitdrop/core_api/commands.dart';
 import 'package:bitdrop/core_api/settings.dart';
+import 'package:bitdrop/core_live/audio_handler.dart';
 import 'package:bitdrop/core_live/cloud_library.dart';
+import 'package:bitdrop/core_live/live_core.dart';
+import 'package:bitdrop/core_live/output_device.dart';
 import 'package:bitdrop/core_live/persistence_codec.dart';
 import 'package:bitdrop/features/storage/google_drive_service.dart';
 import 'package:bitdrop/services/local_storage_bridge.dart';
@@ -159,6 +163,35 @@ void main() {
       expect(second.foldersScanned, equals(1));
       expect(second.tracksIndexed, equals(1));
       expect(library.currentLocalFolders, hasLength(1));
+    });
+
+    test('LiveBitDropCore Rescan triggers local device music sync', () async {
+      final tmp = await Directory.systemTemp.createTemp('bitdrop_rescan_local_');
+      addTearDown(() async {
+        if (tmp.existsSync()) await tmp.delete(recursive: true);
+      });
+
+      final bridge = _FakeLocalStorageBridge(
+        initialStatus: const AudioStoragePermissionStatus(granted: false),
+      );
+      final library = CloudLibrary(
+        drive: GoogleDriveService(),
+        dbPath: '${tmp.path}/lib.db',
+        cacheDir: '${tmp.path}/cache',
+        storageBridge: bridge,
+      );
+      final core = LiveBitDropCore(
+        BitDropAudioHandler(),
+        cloudLibrary: library,
+        outputProbe: OutputDeviceProbe(autoPoll: false),
+      );
+      addTearDown(() {
+        core.dispose();
+        library.dispose();
+      });
+
+      await core.send(const Rescan(sourceId: 'local'));
+      expect(bridge.requestCalls, equals(1));
     });
   });
 }

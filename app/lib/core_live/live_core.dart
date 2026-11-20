@@ -761,6 +761,14 @@ class LiveBitDropCore implements BitDropCore {
         eq: _eq.value,
         deviceProfiles: _deviceProfiles.value,
       );
+      if (_cloud != null && _settings.value.autoSyncLocalMusic) {
+        unawaited(
+          _cloud.syncDeviceMusic(
+            requestPermission: false,
+            includeDiscovered: true,
+          ),
+        );
+      }
     }
   }
 
@@ -1856,7 +1864,25 @@ class LiveBitDropCore implements BitDropCore {
       }
     } else if (cmd is Rescan) {
       if (_cloud != null) {
-        unawaited(_cloud.scan());
+        if (cmd.sourceId == 'local') {
+          await _cloud.syncDeviceMusic(
+            requestPermission: true,
+            includeDiscovered: _settings.value.autoSyncLocalMusic,
+          );
+        } else if (cmd.sourceId == 'drive') {
+          unawaited(_cloud.scan());
+        } else {
+          if (_settings.value.autoSyncLocalMusic ||
+              _cloud.currentLocalFolders.isNotEmpty) {
+            await _cloud.syncDeviceMusic(
+              requestPermission: false,
+              includeDiscovered: _settings.value.autoSyncLocalMusic,
+            );
+          }
+          if (_cloud.currentFolders.isNotEmpty) {
+            unawaited(_cloud.scan());
+          }
+        }
       }
     } else if (cmd is SetCacheLimit) {
       _cacheLimitBytes = cmd.bytes;
@@ -1895,6 +1921,15 @@ class LiveBitDropCore implements BitDropCore {
           _clearUsbPermissionBanner();
         }
         _outputCoord.recomputeSignalPath();
+      } else if (cmd.key == 'autoSyncLocalMusic' && cmd.value == true) {
+        if (_cloud != null) {
+          unawaited(
+            _cloud.syncDeviceMusic(
+              requestPermission: true,
+              includeDiscovered: true,
+            ),
+          );
+        }
       }
     } else if (cmd is SetSafetyAttenuation) {
       final updated = _settings.value.copyWith(

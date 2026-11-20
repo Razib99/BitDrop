@@ -340,13 +340,19 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
         if (paged.items.isEmpty) return const _NoMatches();
         return Stack(
           children: [
-            ListView.builder(
-              key: const PageStorageKey('library_tracks_list'),
-              controller: _controller,
-              padding:
-                  const EdgeInsets.only(right: Spacing.lg, bottom: Spacing.xxl),
-              itemCount: paged.items.length,
-              itemExtent: 64,
+            RefreshIndicator(
+              onRefresh: () async {
+                await ref.read(coreProvider).send(const Rescan());
+                ref.invalidate(tracksProvider(query));
+              },
+              child: ListView.builder(
+                key: const PageStorageKey('library_tracks_list'),
+                controller: _controller,
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.only(
+                    right: Spacing.lg, bottom: Spacing.xxl),
+                itemCount: paged.items.length,
+                itemExtent: 64,
               itemBuilder: (context, i) {
                 final t = paged.items[i];
                 final isPlaying = t.id == nowPlayingId;
@@ -385,6 +391,7 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
                   ),
                 );
               },
+            ),
             ),
             _AlphabetScrubber(
               letters: _letters(paged.items),
