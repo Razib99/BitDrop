@@ -19,9 +19,13 @@ import android.media.AudioManager
 import android.media.AudioMixerAttributes
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.storage.StorageManager
+import android.provider.MediaStore
 import android.provider.Settings
+import java.io.File
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -90,6 +94,7 @@ class MainActivity : AudioServiceActivity() {
                 "getAudioPermissionStatus" -> result.success(getAudioPermissionStatus())
                 "requestAudioPermission" -> requestAudioPermission(result)
                 "openAppSettings" -> result.success(openAppSettings())
+                "discoverMusicDirectories" -> result.success(discoverMusicDirectories())
                 else -> result.notImplemented()
             }
         }
@@ -816,5 +821,148 @@ class MainActivity : AudioServiceActivity() {
         } catch (_: Exception) {
             false
         }
+    }
+
+    private fun discoverStorageRoots(): List<Pair<File, Boolean>> {
+        val roots = linkedMapOf<String, Pair<File, Boolean>>()
+        val sm = getSystemService(Context.STORAGE_SERVICE) as? StorageManager
+        if (sm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            for (vol in sm.storageVolumes) {
+                if (vol.state != Environment.MEDIA_MOUNTED &&
+                    vol.state != Environment.MEDIA_MOUNTED_READ_ONLY
+                ) {
+                    continue
+                }
+                val dir = vol.directory ?: continue
+                if (dir.exists() && dir.isDirectory) {
+                    roots[dir.absolutePath] = dir to vol.isRemovable
+                }
+            }
+        }
+
+        @Suppress("DEPRECATION")
+        val primary = Environment.getExternalStorageDirectory()
+        if (primary != null && primary.exists() && primary.isDirectory) {
+            roots.putIfAbsent(primary.absolutePath, primary to false)
+        }
+
+        // Pre-Android 11 fallback for removable SD card roots via app-specific external dirs.
+        getExternalFilesDirs(null).forEachIndexed { idx, appDir ->
+            if (appDir == null) return@forEachIndexed
+            val path = appDir.absolutePath
+            val marker = "/Android/data/"
+            val cut = path.indexOf(marker)
+            if (cut > 0) {
+                val rootDir = File(path.substring(0, cut))
+                if (rootDir.exists() && rootDir.isDirectory) {
+                    roots.putIfAbsent(rootDir.absolutePath, rootDir to (idx > 0))
+                }
+            }
+        }
+
+        return roots.values.toList()
+    }
+
+    private fun discoverMusicDirectories(): List<Map<String, Any>> {
+        val roots = discoverStorageRoots()
+        val standardNames = listOf("Music", "Download", "Audiobooks", "Audio", "FLAC")
+        val excludedTopFolders = setOf(
+            "android",
+            "alarms",
+            "notifications",
+            "ringtones",
+            "dcim",
+            "pictures",
+            "movies",
+            "recordings",
+        )
+
+        data class FoundDir(
+            val path: String,
+            val label: String,
+            val isRemovable: Boolean,
+            var audioCount: Int,
+        )
+
+        val discovered = linkedMapOf<String, FoundDir>()
+
+        // 1. Always probe standard music directories across primary & removable volumes.
+        for ((root, isRemovable) in roots) {
+            for (name in standardNames) {
+                val candidate = File(root, name)
+                if (candidate.exists() && candidate.isDirectory) {
+                    val label = if (isRemovable) "SD Card · $name" else name
+                    discovered.putIfAbsent(
+                        candidate.absolutePath,
+                        FoundDir(candidate.absolutePath, label, isRemovable, 0),
+                    )
+                }
+            }
+        }
+
+        // 2. When audio permission is granted, also discover any custom top-level folders
+        //    containing indexed audio via Android MediaStore (e.g. /FLAC, /Lossless, /HiRes).
+        val perm = requiredAudioPermission()
+        val hasPerm = ContextCompat.checkSelfPermission(this, perm) ==
+            PackageManager.PERMISSION_GRANTED
+        if (hasPerm) {
+            try {
+                @Suppress("DEPRECATION")
+                val projection = arrayOf(MediaStore.Audio.Media.DATA)
+                val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0 OR ${MediaStore.Audio.Media.IS_AUDIOBOOK} != 0"
+                contentResolver.query(
+                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    selection,
+                    null,
+                    null,
+                )?.use { cursor ->
+                    val dataIdx = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
+                    if (dataIdx >= 0) {
+                        while (cursor.moveToNext()) {
+                            val filePath = cursor.getString(dataIdx) ?: continue
+                            val matchedRoot = roots.firstOrNull { (root, _) ->
+                                filePath.startsWith("${root.absolutePath}/")
+                            } ?: continue
+                            val (rootDir, isRemovable) = matchedRoot
+                            val rel = filePath.removePrefix("${rootDir.absolutePath}/")
+                            val topSegment = rel.substringBefore('/', missingDelimiterValue = "")
+                            if (topSegment.isEmpty() || topSegment.startsWith(".")) continue
+                            if (excludedTopFolders.contains(topSegment.lowercase())) continue
+
+                            val folder = File(rootDir, topSegment)
+                            if (!folder.exists() || !folder.isDirectory) continue
+
+                            val key = folder.absolutePath
+                            val existing = discovered[key]
+                            if (existing != null) {
+                                existing.audioCount += 1
+                            } else {
+                                val label = if (isRemovable) "SD Card · $topSegment" else topSegment
+                                discovered[key] = FoundDir(key, label, isRemovable, 1)
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // Ignore MediaStore query failures; standard directories above still apply.
+            }
+        }
+
+        return discovered.values
+            .sortedWith(
+                compareByDescending<FoundDir> { it.audioCount > 0 }
+                    .thenByDescending { it.audioCount }
+                    .thenBy { it.isRemovable }
+                    .thenBy { it.label.lowercase() },
+            )
+            .map { d ->
+                mapOf(
+                    "path" to d.path,
+                    "label" to d.label,
+                    "isRemovable" to d.isRemovable,
+                    "audioFileCount" to d.audioCount,
+                )
+            }
     }
 }

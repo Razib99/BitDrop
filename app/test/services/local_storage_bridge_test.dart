@@ -76,6 +76,55 @@ void main() {
       final status = await bridge.getAudioPermissionStatus();
       expect(status.granted, isFalse);
       expect(await bridge.openAppSettings(), isFalse);
+      expect(await bridge.discoverMusicDirectories(), isEmpty);
+    });
+
+    test('discoverMusicDirectories parses and deduplicates Android roots',
+        () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, equals('discoverMusicDirectories'));
+        return [
+          {
+            'path': '/storage/emulated/0/Music',
+            'label': 'Music',
+            'isRemovable': false,
+            'audioFileCount': 124,
+          },
+          {
+            'path': '/storage/emulated/0/Music',
+            'label': 'Music',
+            'isRemovable': false,
+            'audioFileCount': 124,
+          },
+          {
+            'path': '/storage/9C33-6BBD/FLAC',
+            'label': 'SD Card · FLAC',
+            'isRemovable': true,
+            'audioFileCount': 48,
+          },
+          {
+            'path': '',
+            'label': 'Invalid',
+            'isRemovable': false,
+            'audioFileCount': 0,
+          },
+        ];
+      });
+
+      final bridge = LocalStorageBridge();
+      final dirs = await bridge.discoverMusicDirectories();
+
+      expect(dirs, hasLength(2));
+      expect(dirs[0].path, equals('/storage/emulated/0/Music'));
+      expect(dirs[0].label, equals('Music'));
+      expect(dirs[0].isRemovable, isFalse);
+      expect(dirs[0].audioFileCount, equals(124));
+
+      expect(dirs[1].path, equals('/storage/9C33-6BBD/FLAC'));
+      expect(dirs[1].label, equals('SD Card · FLAC'));
+      expect(dirs[1].isRemovable, isTrue);
+      expect(dirs[1].audioFileCount, equals(48));
     });
   });
 }

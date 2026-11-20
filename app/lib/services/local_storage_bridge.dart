@@ -1,5 +1,42 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+
+/// A discovered local directory on the user's device containing or intended for audio.
+@immutable
+class DiscoveredMusicDirectory {
+  const DiscoveredMusicDirectory({
+    required this.path,
+    required this.label,
+    this.isRemovable = false,
+    this.audioFileCount = 0,
+  });
+
+  final String path;
+  final String label;
+  final bool isRemovable;
+  final int audioFileCount;
+
+  factory DiscoveredMusicDirectory.fromMap(Map<String, dynamic> map) =>
+      DiscoveredMusicDirectory(
+        path: (map['path'] as String? ?? '').trim(),
+        label: (map['label'] as String? ?? '').trim(),
+        isRemovable: map['isRemovable'] as bool? ?? false,
+        audioFileCount: (map['audioFileCount'] as num?)?.toInt() ?? 0,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is DiscoveredMusicDirectory &&
+      other.path == path &&
+      other.label == label &&
+      other.isRemovable == isRemovable &&
+      other.audioFileCount == audioFileCount;
+
+  @override
+  int get hashCode => Object.hash(path, label, isRemovable, audioFileCount);
+}
 
 /// Current Android runtime audio-storage permission state.
 @immutable
@@ -90,5 +127,48 @@ class LocalStorageBridge {
       debugPrint('[storage-bridge] openAppSettings failed: $e');
       return false;
     }
+  }
+
+  /// Discovers standard device music directories (`Music`, `Download`,
+  /// `Audiobooks`, SD card roots) and custom MediaStore audio roots on Android,
+  /// or standard home audio directories on desktop platforms.
+  Future<List<DiscoveredMusicDirectory>> discoverMusicDirectories() async {
+    if (kIsWeb) return const [];
+    if (_isAndroid) {
+      try {
+        final rawList = await _channel.invokeListMethod<Map<dynamic, dynamic>>(
+          'discoverMusicDirectories',
+        );
+        if (rawList == null) return const [];
+        final seen = <String>{};
+        final out = <DiscoveredMusicDirectory>[];
+        for (final entry in rawList) {
+          final dir = DiscoveredMusicDirectory.fromMap(
+            Map<String, dynamic>.from(entry),
+          );
+          if (dir.path.isNotEmpty && seen.add(dir.path)) {
+            out.add(dir);
+          }
+        }
+        return out;
+      } catch (e) {
+        debugPrint('[storage-bridge] discoverMusicDirectories failed: $e');
+        return const [];
+      }
+    }
+
+    // Desktop fallback: probe standard user Music / Downloads directories.
+    final home = Platform.environment['HOME'] ??
+        Platform.environment['USERPROFILE'] ??
+        '';
+    if (home.isEmpty) return const [];
+    final out = <DiscoveredMusicDirectory>[];
+    for (final name in const ['Music', 'Downloads']) {
+      final dir = Directory('$home${Platform.pathSeparator}$name');
+      if (dir.existsSync()) {
+        out.add(DiscoveredMusicDirectory(path: dir.path, label: name));
+      }
+    }
+    return out;
   }
 }
