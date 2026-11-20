@@ -1,10 +1,12 @@
 package com.bitdrop.bitdrop
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
@@ -15,10 +17,14 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioMixerAttributes
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import androidx.annotation.RequiresApi
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -26,7 +32,10 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : AudioServiceActivity() {
 
     private val channelName = "com.bitdrop/audio_device"
+    private val storageChannelName = "com.bitdrop/local_storage"
     private var methodChannel: MethodChannel? = null
+    private var storageChannel: MethodChannel? = null
+    private var pendingAudioPermissionResult: MethodChannel.Result? = null
     private var noisyReceiver: BroadcastReceiver? = null
     private var audioDeviceCallback: AudioDeviceCallback? = null
 
@@ -36,6 +45,9 @@ class MainActivity : AudioServiceActivity() {
     private var usbAttachReceiver: BroadcastReceiver? = null
     private var usbDetachReceiver: BroadcastReceiver? = null
     private val ACTION_USB_PERMISSION = "com.bitdrop.bitdrop.USB_PERMISSION"
+    private val REQ_CODE_AUDIO_PERMISSION = 4201
+    private val PREFS_PERMISSIONS = "bitdrop_permissions"
+    private val KEY_ASKED_AUDIO_PERM = "asked_audio_permission"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -66,6 +78,18 @@ class MainActivity : AudioServiceActivity() {
                     openUsbDevice(deviceId, result)
                 }
                 "closeUsbDevice" -> result.success(closeUsbDevice())
+                else -> result.notImplemented()
+            }
+        }
+
+        val localStorageChannel =
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, storageChannelName)
+        storageChannel = localStorageChannel
+        localStorageChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getAudioPermissionStatus" -> result.success(getAudioPermissionStatus())
+                "requestAudioPermission" -> requestAudioPermission(result)
+                "openAppSettings" -> result.success(openAppSettings())
                 else -> result.notImplemented()
             }
         }
@@ -199,6 +223,9 @@ class MainActivity : AudioServiceActivity() {
 
         closeUsbDevice()
         methodChannel = null
+        storageChannel?.setMethodCallHandler(null)
+        storageChannel = null
+        pendingAudioPermissionResult = null
     }
 
     override fun onDestroy() {
@@ -239,6 +266,9 @@ class MainActivity : AudioServiceActivity() {
 
         closeUsbDevice()
         methodChannel = null
+        storageChannel?.setMethodCallHandler(null)
+        storageChannel = null
+        pendingAudioPermissionResult = null
     }
 
     private fun isUsbOutputType(type: Int): Boolean =
@@ -718,5 +748,73 @@ class MainActivity : AudioServiceActivity() {
         activeUsbConnection = null
         activeUsbDevice = null
         return true
+    }
+
+    private fun requiredAudioPermission(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+
+    private fun getAudioPermissionStatus(): Map<String, Any> {
+        val perm = requiredAudioPermission()
+        val granted = ContextCompat.checkSelfPermission(this, perm) ==
+            PackageManager.PERMISSION_GRANTED
+        val prefs = getSharedPreferences(PREFS_PERMISSIONS, Context.MODE_PRIVATE)
+        val askedBefore = prefs.getBoolean(KEY_ASKED_AUDIO_PERM, false)
+        val permanentlyDenied = !granted && askedBefore &&
+            !ActivityCompat.shouldShowRequestPermissionRationale(this, perm)
+
+        return mapOf(
+            "granted" to granted,
+            "permanentlyDenied" to permanentlyDenied,
+            "permission" to perm,
+            "apiLevel" to Build.VERSION.SDK_INT,
+        )
+    }
+
+    private fun requestAudioPermission(result: MethodChannel.Result) {
+        val perm = requiredAudioPermission()
+        if (ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED) {
+            result.success(getAudioPermissionStatus())
+            return
+        }
+        pendingAudioPermissionResult?.let { previous ->
+            previous.success(getAudioPermissionStatus())
+        }
+        pendingAudioPermissionResult = result
+        getSharedPreferences(PREFS_PERMISSIONS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_ASKED_AUDIO_PERM, true)
+            .apply()
+        ActivityCompat.requestPermissions(this, arrayOf(perm), REQ_CODE_AUDIO_PERMISSION)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_CODE_AUDIO_PERMISSION) {
+            val pending = pendingAudioPermissionResult
+            pendingAudioPermissionResult = null
+            pending?.success(getAudioPermissionStatus())
+        }
+    }
+
+    private fun openAppSettings(): Boolean {
+        return try {
+            val intent = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", packageName, null),
+            )
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 }
