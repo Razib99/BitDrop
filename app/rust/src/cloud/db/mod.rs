@@ -652,6 +652,13 @@ impl MetadataDb {
         self.library().batch_insert_local_tracks(items)
     }
 
+    pub fn get_local_indexed_sizes(
+        &self,
+        root_label: &str,
+    ) -> Result<std::collections::HashMap<String, (u64, String)>> {
+        self.library().get_local_indexed_sizes(root_label)
+    }
+
     pub fn prune_missing_local_tracks(&mut self, root_label: &str) -> Result<usize> {
         self.library().prune_missing_local_tracks(root_label)
     }

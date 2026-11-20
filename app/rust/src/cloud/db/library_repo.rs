@@ -237,6 +237,31 @@ impl<'a> LibraryRepository<'a> {
         Ok(())
     }
 
+    /// Returns `(file_id -> (size_bytes, folder_path))` for tracks already
+    /// indexed under `root_label`, enabling O(1) incremental scan fast-skip.
+    pub fn get_local_indexed_sizes(
+        &self,
+        root_label: &str,
+    ) -> Result<std::collections::HashMap<String, (u64, String)>> {
+        let like_pattern = format!("{} / %", root_label);
+        let mut map = std::collections::HashMap::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT file_id, size_bytes, folder_path FROM tracks
+             WHERE folder_path = ?1 OR folder_path LIKE ?2",
+        )?;
+        let rows = stmt.query_map(params![root_label, like_pattern], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)? as u64,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows.flatten() {
+            map.insert(row.0, (row.1, row.2));
+        }
+        Ok(map)
+    }
+
     /// Prunes local tracks belonging to `root_label` whose underlying files
     /// no longer exist on the local filesystem.
     ///

@@ -2322,7 +2322,7 @@ pub fn cloud_library_scan_local_folder(
     directory_path: String,
     label: String,
 ) -> Result<u32, String> {
-    use crate::cloud::local_scanner::scan_local_directory;
+    use crate::cloud::local_scanner::{scan_local_directory_incremental, LocalScanError};
     use std::path::Path;
 
     let path = Path::new(&directory_path);
@@ -2350,13 +2350,27 @@ pub fn cloud_library_scan_local_folder(
         let _ = std::fs::create_dir_all(dir);
     }
 
-    let scanned = scan_local_directory(path, root_label, art_dir.as_deref(), |_progress| {})
-        .map_err(|e| format!("Scan failed: {:?}", e))?;
+    let existing_index =
+        with_db(|db| Ok(db.get_local_indexed_sizes(root_label)?)).unwrap_or_default();
+
+    let scan_res = scan_local_directory_incremental(
+        path,
+        root_label,
+        art_dir.as_deref(),
+        &existing_index,
+        |_progress| {},
+    )
+    .map_err(|e| match e {
+        LocalScanError::PermissionDenied(p) => format!("PERMISSION_DENIED: {}", p),
+        other => format!("Scan failed: {}", other),
+    })?;
 
     with_db_mut(|db| {
-        db.batch_insert_local_tracks(&scanned)?;
+        if !scan_res.new_or_updated.is_empty() {
+            db.batch_insert_local_tracks(&scan_res.new_or_updated)?;
+        }
         let _ = db.prune_missing_local_tracks(root_label)?;
-        Ok(scanned.len() as u32)
+        Ok(scan_res.total_found)
     })
 }
 

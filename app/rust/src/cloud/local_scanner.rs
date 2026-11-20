@@ -1,5 +1,6 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use symphonia::core::formats::FormatOptions;
@@ -48,12 +49,24 @@ pub struct LocalTrackInfo {
     pub replay_gain_album_peak: Option<f64>,
 }
 
+/// Result of an incremental local directory scan.
+#[derive(Debug, Clone, Default)]
+pub struct IncrementalLocalScanResult {
+    /// Newly added or modified tracks that need DB upsert.
+    pub new_or_updated: Vec<LocalTrackInfo>,
+    /// Total valid audio files present on disk (new/updated + unchanged).
+    pub total_found: u32,
+    /// Unchanged files fast-skipped via `(size_bytes, folder_path)` match.
+    pub skipped_unchanged: u32,
+}
+
 /// Errors encountered during local directory scanning.
 #[derive(Debug)]
 pub enum LocalScanError {
     Io(std::io::Error),
     DirectoryNotFound(String),
     NotADirectory(String),
+    PermissionDenied(String),
     ScanFailed(String),
 }
 
@@ -63,6 +76,7 @@ impl std::fmt::Display for LocalScanError {
             Self::Io(e) => write!(f, "I/O error during scan: {}", e),
             Self::DirectoryNotFound(p) => write!(f, "Directory not found: {}", p),
             Self::NotADirectory(p) => write!(f, "Path is not a directory: {}", p),
+            Self::PermissionDenied(p) => write!(f, "Permission denied reading directory: {}", p),
             Self::ScanFailed(msg) => write!(f, "Local scan failed: {}", msg),
         }
     }
@@ -432,8 +446,32 @@ pub fn scan_local_directory<F>(
     root_path: &Path,
     root_label: &str,
     art_dir: Option<&Path>,
-    mut on_progress: F,
+    on_progress: F,
 ) -> Result<Vec<LocalTrackInfo>, LocalScanError>
+where
+    F: FnMut(&LocalScanProgress),
+{
+    let empty_index: HashMap<String, (u64, String)> = HashMap::new();
+    let res = scan_local_directory_incremental(
+        root_path,
+        root_label,
+        art_dir,
+        &empty_index,
+        on_progress,
+    )?;
+    Ok(res.new_or_updated)
+}
+
+/// Recursively scans `root_path` incrementally, skipping Symphonia metadata
+/// probing for already-indexed files whose `(size_bytes, folder_path)` have
+/// not changed since the last scan.
+pub fn scan_local_directory_incremental<F>(
+    root_path: &Path,
+    root_label: &str,
+    art_dir: Option<&Path>,
+    existing_index: &HashMap<String, (u64, String)>,
+    mut on_progress: F,
+) -> Result<IncrementalLocalScanResult, LocalScanError>
 where
     F: FnMut(&LocalScanProgress),
 {
@@ -450,16 +488,29 @@ where
 
     let root_canonical = fs::canonicalize(root_path).unwrap_or_else(|_| root_path.to_path_buf());
 
+    // Fail fast with an actionable PermissionDenied error if the root directory
+    // itself cannot be read (e.g. Android READ_MEDIA_AUDIO not granted).
+    if let Err(e) = fs::read_dir(&root_canonical) {
+        if e.kind() == ErrorKind::PermissionDenied {
+            return Err(LocalScanError::PermissionDenied(
+                root_path.display().to_string(),
+            ));
+        }
+        return Err(LocalScanError::Io(e));
+    }
+
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
     let mut queue: VecDeque<PathBuf> = VecDeque::new();
     queue.push_back(root_canonical.clone());
 
     let mut files_found: u32 = 0;
+    let mut skipped_unchanged: u32 = 0;
     let mut folders_visited: u32 = 0;
     let mut results: Vec<LocalTrackInfo> = Vec::new();
 
     while let Some(current_dir) = queue.pop_front() {
-        if !visited_dirs.insert(current_dir.clone()) {
+        let canonical_dir = fs::canonicalize(&current_dir).unwrap_or_else(|_| current_dir.clone());
+        if !visited_dirs.insert(canonical_dir.clone()) {
             continue; // Cycle detection
         }
 
@@ -509,21 +560,36 @@ where
                 Err(_) => continue,
             };
 
-            if file_type.is_dir() {
-                // Ignore Android system directories
+            let is_dir = file_type.is_dir() || (file_type.is_symlink() && path.is_dir());
+            let is_file = file_type.is_file() || (file_type.is_symlink() && path.is_file());
+
+            if is_dir {
+                // Ignore Android root system directories (never skip a music subfolder named "data")
                 let lower_name = name_str.to_lowercase();
-                if lower_name == "android" || lower_name == "lost+found" || lower_name == "data" {
+                if lower_name == "lost+found"
+                    || (current_dir == root_canonical && lower_name == "android")
+                {
                     continue;
                 }
                 queue.push_back(path);
-            } else if file_type.is_file() && is_audio_file(&path) {
-                let metadata = match entry.metadata() {
+            } else if is_file && is_audio_file(&path) {
+                let metadata = match fs::metadata(&path) {
                     Ok(m) => m,
                     Err(_) => continue,
                 };
                 let size_bytes = metadata.len();
                 if size_bytes == 0 {
                     continue; // Skip 0-byte corrupt files
+                }
+
+                let path_str = path.to_string_lossy();
+                if let Some((indexed_size, indexed_folder)) = existing_index.get(path_str.as_ref())
+                {
+                    if *indexed_size == size_bytes && indexed_folder == &folder_path {
+                        skipped_unchanged += 1;
+                        files_found += 1;
+                        continue;
+                    }
                 }
 
                 match extract_local_metadata(&path, size_bytes, &folder_path, art_dir) {
@@ -556,7 +622,11 @@ where
         current_folder: root_label.to_string(),
     });
 
-    Ok(results)
+    Ok(IncrementalLocalScanResult {
+        new_or_updated: results,
+        total_found: files_found,
+        skipped_unchanged,
+    })
 }
 
 #[cfg(test)]
@@ -715,5 +785,74 @@ mod tests {
         assert_eq!(track.folder_path, "Local / DSD");
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_local_scanner_incremental_skip_and_data_subfolder() {
+        let temp_dir = std::env::temp_dir().join("bitdrop_incremental_scan_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        let data_album = temp_dir.join("Data");
+        fs::create_dir_all(&data_album).unwrap();
+
+        let track_a = temp_dir.join("01 - Alpha.flac");
+        let track_b = data_album.join("02 - Beta.flac");
+        fs::write(&track_a, b"synthetic flac bytes A").unwrap();
+        fs::write(&track_b, b"synthetic flac bytes B").unwrap();
+
+        let empty = HashMap::new();
+        let first = scan_local_directory_incremental(&temp_dir, "Music", None, &empty, |_| {})
+            .expect("first incremental scan");
+        assert_eq!(first.total_found, 2);
+        assert_eq!(first.skipped_unchanged, 0);
+        assert_eq!(first.new_or_updated.len(), 2);
+        assert!(first
+            .new_or_updated
+            .iter()
+            .any(|t| t.folder_path == "Music / Data"));
+
+        // Second pass with unchanged sizes must fast-skip all files.
+        let mut index = HashMap::new();
+        for t in &first.new_or_updated {
+            index.insert(t.path.clone(), (t.size_bytes, t.folder_path.clone()));
+        }
+        let second = scan_local_directory_incremental(&temp_dir, "Music", None, &index, |_| {})
+            .expect("second incremental scan");
+        assert_eq!(second.total_found, 2);
+        assert_eq!(second.skipped_unchanged, 2);
+        assert!(second.new_or_updated.is_empty());
+
+        // Modify track_a size and add track_c; only those two should re-probe.
+        fs::write(&track_a, b"synthetic flac bytes A - modified longer").unwrap();
+        let track_c = temp_dir.join("03 - Gamma.mp3");
+        fs::write(&track_c, b"synthetic mp3 bytes C").unwrap();
+
+        let third = scan_local_directory_incremental(&temp_dir, "Music", None, &index, |_| {})
+            .expect("third incremental scan");
+        assert_eq!(third.total_found, 3);
+        assert_eq!(third.skipped_unchanged, 1);
+        assert_eq!(third.new_or_updated.len(), 2);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_local_scanner_root_permission_denied() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = std::env::temp_dir().join("bitdrop_perm_denied_scan_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::set_permissions(&temp_dir, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let res = scan_local_directory_incremental(&temp_dir, "Locked", None, &HashMap::new(), |_| {});
+        // Restore permissions before asserting so cleanup always succeeds.
+        let _ = fs::set_permissions(&temp_dir, fs::Permissions::from_mode(0o755));
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        // When running as root (uid 0), chmod 000 is still readable; otherwise must error.
+        if let Err(err) = res {
+            assert!(matches!(err, LocalScanError::PermissionDenied(_)));
+        }
     }
 }
