@@ -223,13 +223,34 @@ class TrackRow extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       )
                     else if (showAlbumLine)
-                      Text(
-                        '${track.artist} · ${track.albumTitle}',
-                        style: t.bodySmall.copyWith(
-                          color: dim ? c.textTertiary : c.textSecondary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      Row(
+                        children: [
+                          if (track.format.codec.isSupported &&
+                              track.format.codec.isLossless) ...[
+                            track.format.isHiRes
+                                ? Icon(
+                                    Icons.diamond_rounded,
+                                    size: 11,
+                                    color: dim ? c.textTertiary : c.accent,
+                                  )
+                                : LosslessWaveGlyph(
+                                    color:
+                                        dim ? c.textTertiary : c.tierBitPerfect,
+                                    size: 10,
+                                  ),
+                            const SizedBox(width: 4),
+                          ],
+                          Expanded(
+                            child: Text(
+                              '${track.artist} · ${track.albumTitle}',
+                              style: t.bodySmall.copyWith(
+                                color: dim ? c.textTertiary : c.textSecondary,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
                   ],
                 ),

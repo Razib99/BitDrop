@@ -9,11 +9,77 @@ import '../theme/tokens.dart';
 import '../util/format.dart';
 import '../l10n/l10n.dart';
 
+/// Crisp dual-wave vector sign identifying lossless PCM audio (FLAC, ALAC, WAV, AIFF).
+class LosslessWaveGlyph extends StatelessWidget {
+  const LosslessWaveGlyph({
+    super.key,
+    required this.color,
+    this.size = 12,
+  });
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size(size * 1.25, size),
+      painter: _LosslessWavePainter(color),
+    );
+  }
+}
+
+class _LosslessWavePainter extends CustomPainter {
+  const _LosslessWavePainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = (size.height * 0.14).clamp(1.1, 1.8)
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
+
+    final midY = size.height * 0.5;
+    final amp = size.height * 0.34;
+    final w = size.width;
+
+    // Primary sine wave
+    final p1 = Path()
+      ..moveTo(0, midY)
+      ..cubicTo(w * 0.22, midY - amp, w * 0.28, midY - amp, w * 0.5, midY)
+      ..cubicTo(w * 0.72, midY + amp, w * 0.78, midY + amp, w, midY);
+    canvas.drawPath(p1, paint);
+
+    // Secondary phase-offset harmonic wave
+    final paint2 = Paint()
+      ..color = color.withOpacity(0.55)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = (size.height * 0.11).clamp(0.9, 1.4)
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
+    final p2 = Path()
+      ..moveTo(w * 0.08, midY)
+      ..cubicTo(
+          w * 0.28, midY + amp * 0.75, w * 0.34, midY + amp * 0.75, w * 0.54, midY)
+      ..cubicTo(
+          w * 0.74, midY - amp * 0.75, w * 0.80, midY - amp * 0.75, w * 0.96, midY);
+    canvas.drawPath(p2, paint2);
+  }
+
+  @override
+  bool shouldRepaint(_LosslessWavePainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
 /// Format chip: `FLAC 24/96`.
 ///
 /// Four visual treatments carry the quality class without relying on colour:
-/// Hi-Res is filled, CD is outlined, lossy is muted, unsupported is
-/// struck through.
+/// Hi-Res Lossless is accent-filled with a diamond glyph, CD Lossless is
+/// emerald-tinted with a dual-wave lossless sign, lossy is muted neutral with
+/// no sign, and unsupported is struck through.
 class FormatBadge extends StatelessWidget {
   const FormatBadge({
     super.key,
@@ -44,7 +110,11 @@ class FormatBadge extends StatelessWidget {
         switch ((supported, lossless, hiRes)) {
       (false, _, _) => (c.textTertiary, Colors.transparent, c.outline),
       (true, true, true) => (c.onAccent, c.accent, c.accent),
-      (true, true, false) => (c.textSecondary, Colors.transparent, c.outline),
+      (true, true, false) => (
+          c.tierBitPerfect,
+          c.tierBitPerfect.withOpacity(0.14),
+          c.tierBitPerfect.withOpacity(0.55),
+        ),
       _ => (c.textTertiary, c.surface3, c.surface3),
     };
 
@@ -55,22 +125,44 @@ class FormatBadge extends StatelessWidget {
       _ => compact ? format.shortLabel : format.badgeLabel,
     };
 
+    Widget? leadingGlyph;
+    if (supported && lossless) {
+      leadingGlyph = hiRes
+          ? Icon(Icons.diamond_outlined, size: 11, color: fg)
+          : LosslessWaveGlyph(color: fg, size: 10);
+    }
+
     return Semantics(
       label: _semanticLabel(context),
       excludeSemantics: true,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        padding: EdgeInsets.symmetric(
+          horizontal: leadingGlyph != null ? 5 : 6,
+          vertical: 2,
+        ),
         decoration: BoxDecoration(
           color: bg,
           borderRadius: Radii.badgeR,
           border: Border.all(color: border),
         ),
-        child: Text(
-          label,
-          style: context.t.monoLabel.copyWith(
-            color: fg,
-            decoration: supported ? null : TextDecoration.lineThrough,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (leadingGlyph != null) ...[
+              leadingGlyph,
+              const SizedBox(width: 3),
+            ],
+            Text(
+              label,
+              style: context.t.monoLabel.copyWith(
+                color: fg,
+                fontWeight: supported && lossless
+                    ? FontWeight.w600
+                    : FontWeight.w500,
+                decoration: supported ? null : TextDecoration.lineThrough,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -81,8 +173,8 @@ class FormatBadge extends StatelessWidget {
       return '${format.codec.label}, ${context.l10n.formatNotSupported}';
     }
     final quality = format.isHiRes
-        ? 'Hi-Res'
-        : (format.codec.isLossless ? 'CD quality' : 'Lossy');
+        ? 'Hi-Res Lossless'
+        : (format.codec.isLossless ? 'Lossless CD quality' : 'Lossy');
     return '${format.codec.label} ${format.longLabel}, $quality';
   }
 }
