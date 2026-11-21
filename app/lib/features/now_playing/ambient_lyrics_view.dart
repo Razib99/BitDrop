@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -9,6 +11,7 @@ import '../../core_api/models.dart';
 import '../../providers/core_providers.dart';
 import '../../theme/tokens.dart';
 import '../../util/poster_color.dart';
+import '../../widgets/artwork.dart';
 
 /// Renders time-synchronized or plain lyrics over an ambient background
 /// with accurate key-based auto-scrolling, adaptive active glow, edge fade,
@@ -115,8 +118,10 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
   Widget build(BuildContext context) {
     final lyricsAsync = ref.watch(lyricsProvider(widget.track));
     final position = ref.watch(positionProvider).valueOrNull?.positionMs ?? 0;
+    final isPlaying = ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
+    final glowColor = _glowColor();
 
-    return lyricsAsync.when(
+    final body = lyricsAsync.when(
       loading: () => const Center(
         child: Padding(
           padding: EdgeInsets.all(Spacing.xl),
@@ -236,7 +241,9 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
           });
         }
 
-        final glowColor = _glowColor();
+        final showPreIntro = lyrics.lines.isNotEmpty &&
+            position < lyrics.lines.first.timestampMs &&
+            lyrics.lines.first.timestampMs >= 2500;
 
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -262,6 +269,15 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          if (showPreIntro)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: Spacing.md),
+                              child: _InstrumentalBreather(
+                                key: const Key('lyrics_pre_intro_breather'),
+                                animate: isPlaying,
+                                color: glowColor,
+                              ),
+                            ),
                           for (int index = 0;
                               index < lyrics.lines.length;
                               index++)
@@ -270,6 +286,7 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
                               line: lyrics.lines[index],
                               isActive: index == _activeLineIndex,
                               isPassed: index < _activeLineIndex,
+                              isPlaying: isPlaying,
                               glowColor: glowColor,
                               onTap: () {
                                 sendCommand(
@@ -302,6 +319,12 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
         );
       },
     );
+
+    return _LyricsBackdropShell(
+      track: widget.track,
+      glowColor: glowColor,
+      child: body,
+    );
   }
 
   Widget _buildEdgeFade({required Widget child}) => ShaderMask(
@@ -321,12 +344,76 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
       );
 }
 
+class _LyricsBackdropShell extends StatelessWidget {
+  const _LyricsBackdropShell({
+    required this.track,
+    required this.glowColor,
+    required this.child,
+  });
+
+  final Track track;
+  final Color glowColor;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: Radii.heroArtR,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF0B0E14),
+          borderRadius: Radii.heroArtR,
+          border: Border.all(color: glowColor.withOpacity(0.20)),
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ExcludeSemantics(
+              child: Opacity(
+                opacity: 0.28,
+                child: ImageFiltered(
+                  imageFilter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    child: AlbumArtwork(
+                      artwork: track.artwork,
+                      size: 280,
+                      title: track.albumTitle,
+                      borderRadius: BorderRadius.zero,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: const Alignment(0, -0.25),
+                  radius: 1.15,
+                  colors: [
+                    glowColor.withOpacity(0.16),
+                    Colors.black.withOpacity(0.55),
+                    Colors.black.withOpacity(0.82),
+                  ],
+                  stops: const [0.0, 0.55, 1.0],
+                ),
+              ),
+            ),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _LyricLineTile extends StatelessWidget {
   const _LyricLineTile({
     super.key,
     required this.line,
     required this.isActive,
     required this.isPassed,
+    required this.isPlaying,
     required this.glowColor,
     required this.onTap,
   });
@@ -334,13 +421,14 @@ class _LyricLineTile extends StatelessWidget {
   final LyricLine line;
   final bool isActive;
   final bool isPassed;
+  final bool isPlaying;
   final Color glowColor;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final text = line.text.trim();
-    final isBreak = text.isEmpty;
+    final isBreak = text.isEmpty || text == '♪' || text == '•••';
 
     return GestureDetector(
       onTap: onTap,
@@ -361,13 +449,10 @@ class _LyricLineTile extends StatelessWidget {
             : null,
         alignment: Alignment.center,
         child: isBreak
-            ? Text(
-                '• • •',
-                style: TextStyle(
-                  color: isActive ? Colors.white70 : Colors.white24,
-                  fontSize: 16,
-                  letterSpacing: 6,
-                ),
+            ? _InstrumentalBreather(
+                key: const Key('lyrics_break_breather'),
+                animate: isActive && isPlaying,
+                color: isActive ? glowColor : Colors.white24,
               )
             : AnimatedDefaultTextStyle(
                 duration: const Duration(milliseconds: 260),
@@ -392,6 +477,86 @@ class _LyricLineTile extends StatelessWidget {
                 child: Text(line.text),
               ),
       ),
+    );
+  }
+}
+
+class _InstrumentalBreather extends StatefulWidget {
+  const _InstrumentalBreather({
+    super.key,
+    required this.animate,
+    required this.color,
+  });
+
+  final bool animate;
+  final Color color;
+
+  @override
+  State<_InstrumentalBreather> createState() => _InstrumentalBreatherState();
+}
+
+class _InstrumentalBreatherState extends State<_InstrumentalBreather>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.animate) _controller.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant _InstrumentalBreather oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.animate && !_controller.isAnimating) {
+      _controller.repeat();
+    } else if (!widget.animate && _controller.isAnimating) {
+      _controller.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (int i = 0; i < 3; i++)
+              Builder(builder: (_) {
+                final phase =
+                    (_controller.value * 2 * math.pi) - (i * math.pi / 2.2);
+                final pulse = widget.animate
+                    ? (0.55 + 0.45 * math.sin(phase)).clamp(0.25, 1.0)
+                    : 0.7;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Transform.scale(
+                    scale: 0.8 + 0.35 * pulse,
+                    child: Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: widget.color.withOpacity(pulse),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+          ],
+        );
+      },
     );
   }
 }

@@ -9,7 +9,7 @@ import '../core_api/models.dart';
 import '../providers/core_providers.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
-import '../l10n/l10n.dart';
+import '../l10n/app_localizations.dart';
 
 /// Seeded placeholder artwork.
 ///
@@ -105,10 +105,11 @@ class AlbumArtwork extends StatelessWidget {
       content = _buildPlaceholder(context);
     }
 
+    final l10n = Localizations.of<AppLocalizations>(context, AppLocalizations);
     return Semantics(
-      label: title == null
-          ? context.l10n.albumArtwork
-          : context.l10n.artworkFor(title!),
+      label: l10n == null
+          ? (title == null ? 'Album artwork' : 'Artwork for $title')
+          : (title == null ? l10n.albumArtwork : l10n.artworkFor(title!)),
       image: true,
       child: ClipRRect(
         borderRadius: radius,

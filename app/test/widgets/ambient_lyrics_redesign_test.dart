@@ -83,7 +83,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(ShaderMask), findsOneWidget);
-      expect(find.text('• • •'), findsOneWidget);
+      expect(find.byType(ImageFiltered), findsOneWidget);
+      expect(find.byKey(const Key('lyrics_break_breather')), findsOneWidget);
 
       await tester.tap(find.text('Starless and bible black'));
       await tester.pump();
@@ -130,6 +131,34 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Sync'), findsNothing);
+    });
+
+    testWidgets('shows pre-intro animated breather before first vocal timestamp',
+        (tester) async {
+      final core = _RecordingCore();
+      const lyrics = TrackLyrics(
+        synced: true,
+        lines: [
+          LyricLine(timestampMs: 8000, text: 'First vocal line'),
+          LyricLine(timestampMs: 16000, text: 'Second vocal line'),
+        ],
+        plainLyrics: '',
+      );
+
+      await tester.pumpWidget(
+        wrap(
+          const AmbientLyricsView(track: track),
+          core: core,
+          lyrics: lyrics,
+          positionMs: 1500,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('lyrics_pre_intro_breather')),
+        findsOneWidget,
+      );
     });
   });
 }
