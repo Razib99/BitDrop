@@ -1,13 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core_api/commands.dart';
 import '../../core_api/models.dart';
 import '../../providers/core_providers.dart';
 import '../../theme/tokens.dart';
+import '../../util/poster_color.dart';
 
 /// Renders time-synchronized or plain lyrics over an ambient background
-/// with smooth auto-scrolling, active line glowing, and tap-to-seek.
+/// with accurate key-based auto-scrolling, adaptive active glow, edge fade,
+/// and tap-to-seek.
 class AmbientLyricsView extends ConsumerStatefulWidget {
   const AmbientLyricsView({
     super.key,
@@ -24,42 +29,86 @@ class AmbientLyricsView extends ConsumerStatefulWidget {
 
 class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
   final ScrollController _scrollController = ScrollController();
+  final Map<int, GlobalKey> _lineKeys = {};
   int _activeLineIndex = -1;
-  bool _userIsScrolling = false;
-  DateTime _lastUserScrollTime = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _manualBrowse = false;
+  Timer? _resumeTimer;
 
-  // Approximate item height for calculating target scroll offset
-  static const double _estimatedLineHeight = 56.0;
+  @override
+  void didUpdateWidget(covariant AmbientLyricsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.track.id != widget.track.id) {
+      _activeLineIndex = -1;
+      _lineKeys.clear();
+      _manualBrowse = false;
+      _resumeTimer?.cancel();
+      if (_scrollController.hasClients) {
+        _scrollController.jumpTo(0);
+      }
+    }
+  }
 
   @override
   void dispose() {
+    _resumeTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
 
-  void _scrollToActiveLine(int index, int totalLines, double viewportHeight) {
-    if (!_scrollController.hasClients || totalLines == 0) return;
+  GlobalKey _keyFor(int index) =>
+      _lineKeys.putIfAbsent(index, () => GlobalKey());
 
-    // If user recently scrolled manually, pause auto-scroll for 2.5 seconds
-    final now = DateTime.now();
-    if (_userIsScrolling ||
-        now.difference(_lastUserScrollTime).inMilliseconds < 2500) {
-      return;
+  void _onUserScroll() {
+    _resumeTimer?.cancel();
+    if (!_manualBrowse && mounted) {
+      setState(() => _manualBrowse = true);
     }
+    _resumeTimer = Timer(const Duration(milliseconds: 3500), () {
+      if (!mounted) return;
+      setState(() => _manualBrowse = false);
+      if (_activeLineIndex >= 0) {
+        _scrollToActiveLine(_activeLineIndex);
+      }
+    });
+  }
 
-    final targetOffset = (index * _estimatedLineHeight) -
-        (viewportHeight / 2) +
-        (_estimatedLineHeight / 2);
-    final clamped = targetOffset.clamp(
-      0.0,
-      _scrollController.position.maxScrollExtent,
-    );
+  void _jumpToActiveLine() {
+    _resumeTimer?.cancel();
+    if (_manualBrowse && mounted) {
+      setState(() => _manualBrowse = false);
+    }
+    if (_activeLineIndex >= 0) {
+      _scrollToActiveLine(_activeLineIndex);
+    }
+  }
 
-    _scrollController.animateTo(
-      clamped,
-      duration: const Duration(milliseconds: 380),
+  void _scrollToActiveLine(int index) {
+    if (!mounted || _manualBrowse || index < 0) return;
+    final ctx = _lineKeys[index]?.currentContext;
+    if (ctx == null) return;
+
+    Scrollable.ensureVisible(
+      ctx,
+      alignment: 0.38,
+      duration: const Duration(milliseconds: 420),
       curve: Curves.easeOutCubic,
     );
+  }
+
+  Color _glowColor() {
+    final base = PosterColor.of(
+      widget.track.artwork,
+      title: widget.track.albumTitle,
+    );
+    final hsl = HSLColor.fromColor(base);
+    if (hsl.saturation < 0.08) {
+      return const Color(0xAAFFFFFF);
+    }
+    return hsl
+        .withSaturation((hsl.saturation * 1.15).clamp(0.45, 0.85))
+        .withLightness(0.62)
+        .toColor()
+        .withOpacity(0.75);
   }
 
   @override
@@ -150,12 +199,13 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
         }
 
         if (!lyrics.synced) {
-          // Unsynced plain-text display
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: Spacing.xl),
+          return _buildEdgeFade(
             child: SingleChildScrollView(
               controller: _scrollController,
-              padding: const EdgeInsets.symmetric(vertical: Spacing.xl),
+              padding: const EdgeInsets.symmetric(
+                vertical: Spacing.xl,
+                horizontal: Spacing.xl,
+              ),
               child: Text(
                 lyrics.plainLyrics,
                 textAlign: TextAlign.center,
@@ -170,7 +220,6 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
           );
         }
 
-        // Time-synced lyrics with active line tracking
         int newActiveIndex = -1;
         for (int i = 0; i < lyrics.lines.length; i++) {
           if (lyrics.lines[i].timestampMs <= position) {
@@ -183,84 +232,210 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
         if (newActiveIndex != _activeLineIndex) {
           _activeLineIndex = newActiveIndex;
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              final viewportHeight = MediaQuery.sizeOf(context).height * 0.45;
-              _scrollToActiveLine(
-                _activeLineIndex,
-                lyrics.lines.length,
-                viewportHeight,
-              );
-            }
+            _scrollToActiveLine(_activeLineIndex);
           });
         }
+
+        final glowColor = _glowColor();
 
         return LayoutBuilder(
           builder: (context, constraints) {
             final viewportHeight = constraints.maxHeight;
-            return NotificationListener<ScrollNotification>(
-              onNotification: (notification) {
-                if (notification is ScrollStartNotification) {
-                  _userIsScrolling = true;
-                } else if (notification is ScrollEndNotification) {
-                  _userIsScrolling = false;
-                  _lastUserScrollTime = DateTime.now();
-                }
-                return false;
-              },
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: EdgeInsets.symmetric(
-                  vertical: viewportHeight * 0.42,
-                  horizontal: Spacing.xl,
-                ),
-                itemCount: lyrics.lines.length,
-                itemBuilder: (context, index) {
-                  final line = lyrics.lines[index];
-                  final isActive = index == _activeLineIndex;
-                  final isPassed = index < _activeLineIndex;
+            final verticalPad = (viewportHeight * 0.36).clamp(48.0, 220.0);
 
-                  return GestureDetector(
-                    onTap: () {
-                      sendCommand(ref, Seek(line.timestampMs));
-                      _lastUserScrollTime = DateTime.fromMillisecondsSinceEpoch(0);
+            return Stack(
+              children: [
+                _buildEdgeFade(
+                  child: NotificationListener<UserScrollNotification>(
+                    onNotification: (notification) {
+                      if (notification.direction != ScrollDirection.idle) {
+                        _onUserScroll();
+                      }
+                      return false;
                     },
-                    behavior: HitTestBehavior.opaque,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeOutCubic,
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 10,
-                        horizontal: Spacing.xs,
+                    child: SingleChildScrollView(
+                      controller: _scrollController,
+                      padding: EdgeInsets.symmetric(
+                        vertical: verticalPad,
+                        horizontal: Spacing.lg,
                       ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        line.text,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: isActive
-                              ? Colors.white
-                              : (isPassed ? Colors.white38 : Colors.white54),
-                          fontSize: isActive ? 22 : 18,
-                          fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-                          height: 1.4,
-                          shadows: isActive
-                              ? const [
-                                  Shadow(
-                                    color: Color(0x9900E5FF),
-                                    blurRadius: 18,
-                                  ),
-                                ]
-                              : null,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (int index = 0;
+                              index < lyrics.lines.length;
+                              index++)
+                            _LyricLineTile(
+                              key: _keyFor(index),
+                              line: lyrics.lines[index],
+                              isActive: index == _activeLineIndex,
+                              isPassed: index < _activeLineIndex,
+                              glowColor: glowColor,
+                              onTap: () {
+                                sendCommand(
+                                  ref,
+                                  Seek(lyrics.lines[index].timestampMs),
+                                );
+                                _resumeTimer?.cancel();
+                                if (_manualBrowse) {
+                                  setState(() => _manualBrowse = false);
+                                }
+                              },
+                            ),
+                        ],
                       ),
                     ),
-                  );
-                },
-              ),
+                  ),
+                ),
+                if (_manualBrowse && _activeLineIndex >= 0)
+                  Positioned(
+                    right: Spacing.md,
+                    bottom: Spacing.md,
+                    child: _JumpToCurrentPill(
+                      accentColor: glowColor,
+                      onTap: _jumpToActiveLine,
+                    ),
+                  ),
+              ],
             );
           },
         );
       },
+    );
+  }
+
+  Widget _buildEdgeFade({required Widget child}) => ShaderMask(
+        shaderCallback: (bounds) => const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.transparent,
+            Colors.white,
+            Colors.white,
+            Colors.transparent,
+          ],
+          stops: [0.0, 0.11, 0.86, 1.0],
+        ).createShader(bounds),
+        blendMode: BlendMode.dstIn,
+        child: child,
+      );
+}
+
+class _LyricLineTile extends StatelessWidget {
+  const _LyricLineTile({
+    super.key,
+    required this.line,
+    required this.isActive,
+    required this.isPassed,
+    required this.glowColor,
+    required this.onTap,
+  });
+
+  final LyricLine line;
+  final bool isActive;
+  final bool isPassed;
+  final Color glowColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = line.text.trim();
+    final isBreak = text.isEmpty;
+
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: EdgeInsets.symmetric(
+          vertical: isActive ? 12 : 9,
+          horizontal: Spacing.sm,
+        ),
+        decoration: isActive
+            ? BoxDecoration(
+                color: Colors.white.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(14),
+              )
+            : null,
+        alignment: Alignment.center,
+        child: isBreak
+            ? Text(
+                '• • •',
+                style: TextStyle(
+                  color: isActive ? Colors.white70 : Colors.white24,
+                  fontSize: 16,
+                  letterSpacing: 6,
+                ),
+              )
+            : AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: isActive
+                      ? Colors.white
+                      : (isPassed ? Colors.white38 : Colors.white60),
+                  fontSize: isActive ? 22 : 18,
+                  fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                  height: 1.42,
+                  shadows: isActive
+                      ? [
+                          Shadow(
+                            color: glowColor,
+                            blurRadius: 20,
+                          ),
+                        ]
+                      : null,
+                ),
+                child: Text(line.text),
+              ),
+      ),
+    );
+  }
+}
+
+class _JumpToCurrentPill extends StatelessWidget {
+  const _JumpToCurrentPill({
+    required this.accentColor,
+    required this.onTap,
+  });
+
+  final Color accentColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black.withOpacity(0.55),
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: accentColor.withOpacity(0.65)),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.my_location, size: 14, color: Colors.white),
+              SizedBox(width: 5),
+              Text(
+                'Sync',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
