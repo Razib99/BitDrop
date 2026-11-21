@@ -12,6 +12,7 @@ import '../../core_api/enums.dart';
 import '../../core_live/cloud_library.dart';
 import '../../core_live/live_core.dart';
 import '../../providers/core_providers.dart';
+import '../../services/local_storage_bridge.dart';
 import '../storage/google_drive_service.dart';
 import 'folder_picker.dart';
 import '../../util/format.dart';
@@ -33,7 +34,57 @@ class SourcesScreen extends ConsumerStatefulWidget {
   ConsumerState<SourcesScreen> createState() => _SourcesScreenState();
 }
 
-class _SourcesScreenState extends ConsumerState<SourcesScreen> {
+class _SourcesScreenState extends ConsumerState<SourcesScreen>
+    with WidgetsBindingObserver {
+  AudioStoragePermissionStatus? _permStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_refreshPermission());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshPermission());
+    }
+  }
+
+  Future<void> _refreshPermission() async {
+    final library = _readCloudLibraryOrNull(ref);
+    final status =
+        await _localBridgeFor(ref, library).getAudioPermissionStatus();
+    if (mounted) {
+      setState(() => _permStatus = status);
+    }
+  }
+
+  Future<void> _runDeviceSync(BuildContext context) async {
+    await _syncDeviceMusicWithFeedback(context, ref);
+    await _refreshPermission();
+  }
+
+  Future<void> _openLocalSettings(BuildContext context) async {
+    final bridge = _localBridgeFor(ref, _readCloudLibraryOrNull(ref));
+    final opened = await bridge.openAppSettings();
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not open app settings. Enable Audio permission in Android Settings.',
+          ),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +92,8 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
     final hasDrive = sources.any((s) => s.id == 'drive');
     final hasLocal = sources.any((s) => s.id == 'local');
     final scan = ref.watch(cloudScanStatusProvider).valueOrNull ?? SyncStatus.idle;
+    final localSyncing = ref.watch(localSyncingProvider).valueOrNull ?? false;
+    final perm = _permStatus;
     final l = context.l10n;
     final c = context.c;
 
@@ -124,6 +177,21 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
               ),
             ),
             const SizedBox(height: Spacing.sm),
+            if (hasLocal && perm != null && !perm.granted)
+              _LocalPermissionBanner(
+                permission: perm,
+                onOpenSettings: () => _openLocalSettings(context),
+                onGrant: () => _runDeviceSync(context),
+              ),
+            if (!hasLocal)
+              _LocalMusicSetupCard(
+                permission: perm,
+                syncing: localSyncing,
+                onSync: () => _runDeviceSync(context),
+                onOpenSettings: () => _openLocalSettings(context),
+                onManageFolders: () => _showLocalFoldersSheet(context),
+                onPickFolder: () => _pickLocalFolder(context),
+              ),
             if (sources.isEmpty) _ConnectDriveCard(scan: scan),
             if (sources.isNotEmpty)
               for (final s in sources)
@@ -142,10 +210,7 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
                             }
                           }
                         : s.id == 'local'
-                            ? () {
-                                final library = ref.read(cloudLibraryProvider);
-                                unawaited(library.scanAllLocalFolders());
-                              }
+                            ? () => _runDeviceSync(context)
                             : () => sendCommand(ref, Rescan(sourceId: s.id)),
                     onCancelSync: s.id == 'drive'
                         ? () {
@@ -177,28 +242,19 @@ class _SourcesScreenState extends ConsumerState<SourcesScreen> {
               const SizedBox(height: Spacing.sm),
               const _CacheCard(),
             ],
-            if (!hasDrive || !hasLocal) ...[
+            if (!hasDrive && sources.isNotEmpty) ...[
               const SectionHeader(title: 'Add a source'),
-              if (!hasLocal)
-                _ProviderTile(
-                  icon: Icons.phone_android,
-                  name: 'This Device',
-                  detail: 'Index local folders from internal storage or SD card',
-                  available: true,
-                  onTap: () => _pickLocalFolder(context),
-                ),
-              if (!hasDrive)
-                _ProviderTile(
-                  icon: Icons.add_to_drive,
-                  name: 'Google Drive',
-                  detail: !GoogleDriveService.isPlatformSupported
-                      ? 'Needs the Android or iOS build'
-                      : 'Connect Google Drive vault',
-                  available: GoogleDriveService.isPlatformSupported,
-                  onTap: GoogleDriveService.isPlatformSupported
-                      ? () => _connectDrive(context)
-                      : null,
-                ),
+              _ProviderTile(
+                icon: Icons.add_to_drive,
+                name: 'Google Drive',
+                detail: !GoogleDriveService.isPlatformSupported
+                    ? 'Needs the Android or iOS build'
+                    : 'Connect Google Drive vault',
+                available: GoogleDriveService.isPlatformSupported,
+                onTap: GoogleDriveService.isPlatformSupported
+                    ? () => _connectDrive(context)
+                    : null,
+              ),
             ],
             const _ComingLater(),
             const SizedBox(height: Spacing.md),
@@ -347,7 +403,291 @@ class _ProviderTile extends StatelessWidget {
   }
 }
 
-/// Modal bottom sheet for viewing and managing chosen local music folders.
+CloudLibrary? _readCloudLibraryOrNull(WidgetRef ref) {
+  try {
+    return ref.read(cloudLibraryProvider);
+  } catch (_) {
+    return null;
+  }
+}
+
+LocalStorageBridge _localBridgeFor(WidgetRef ref, [CloudLibrary? library]) {
+  try {
+    return ref.read(localStorageBridgeProvider);
+  } catch (_) {
+    return library?.storageBridge ?? LocalStorageBridge();
+  }
+}
+
+Future<LocalSyncResult> _syncDeviceMusicWithFeedback(
+  BuildContext context,
+  WidgetRef ref, {
+  bool requestPermission = true,
+}) async {
+  final library = _readCloudLibraryOrNull(ref);
+  final bridge = _localBridgeFor(ref, library);
+  if (library == null) {
+    await ref.read(coreProvider).send(const Rescan(sourceId: 'local'));
+    return const LocalSyncResult();
+  }
+
+  final res = await library.syncDeviceMusic(
+    requestPermission: requestPermission,
+    includeDiscovered: true,
+  );
+  if (!context.mounted) return res;
+
+  final String msg;
+  SnackBarAction? action;
+  if (res.permissionDenied) {
+    msg = res.permanentlyDenied
+        ? 'Audio permission is disabled. Open App Settings to allow scanning.'
+        : 'Audio permission is needed to scan music on this device.';
+    if (res.permanentlyDenied) {
+      action = SnackBarAction(
+        label: 'Settings',
+        onPressed: () => unawaited(bridge.openAppSettings()),
+      );
+    }
+  } else if (res.errorMessage != null) {
+    msg = 'Device sync failed: ${res.errorMessage}';
+  } else if (res.tracksIndexed > 0) {
+    msg =
+        'Synced ${res.tracksIndexed} track${res.tracksIndexed == 1 ? '' : 's'} '
+        'across ${res.foldersScanned} folder${res.foldersScanned == 1 ? '' : 's'}.';
+  } else if (res.foldersScanned > 0) {
+    msg =
+        'Scanned ${res.foldersScanned} folder${res.foldersScanned == 1 ? '' : 's'} · up to date.';
+  } else {
+    msg = 'No audio folders found. Add a custom folder in Manage folders.';
+  }
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(msg), action: action),
+  );
+  return res;
+}
+
+class _LocalPermissionBanner extends StatelessWidget {
+  const _LocalPermissionBanner({
+    required this.permission,
+    required this.onOpenSettings,
+    required this.onGrant,
+  });
+
+  final AudioStoragePermissionStatus permission;
+  final VoidCallback onOpenSettings;
+  final VoidCallback onGrant;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+    final permDenied = permission.permanentlyDenied;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(
+          Spacing.md, Spacing.xs, Spacing.md, Spacing.sm),
+      padding: const EdgeInsets.all(Spacing.sm),
+      decoration: BoxDecoration(
+        color: c.tierResampled.withOpacity(0.1),
+        borderRadius: Radii.cardR,
+        border: Border.all(color: c.tierResampled.withOpacity(0.45)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.lock_outline, size: 18, color: c.tierResampled),
+          const SizedBox(width: Spacing.sm),
+          Expanded(
+            child: Text(
+              permDenied
+                  ? 'Audio access permanently denied. Enable permission in App Settings.'
+                  : 'Audio storage access is needed to scan local folders.',
+              style: context.t.bodySmall.copyWith(color: c.textPrimary),
+            ),
+          ),
+          const SizedBox(width: Spacing.xs),
+          TextButton(
+            onPressed: permDenied ? onOpenSettings : onGrant,
+            child: Text(permDenied ? 'Settings' : 'Allow'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LocalMusicSetupCard extends StatelessWidget {
+  const _LocalMusicSetupCard({
+    required this.permission,
+    required this.syncing,
+    required this.onSync,
+    required this.onOpenSettings,
+    required this.onManageFolders,
+    required this.onPickFolder,
+  });
+
+  final AudioStoragePermissionStatus? permission;
+  final bool syncing;
+  final VoidCallback onSync;
+  final VoidCallback onOpenSettings;
+  final VoidCallback onManageFolders;
+  final VoidCallback onPickFolder;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+    final perm = permission;
+    final permanentlyDenied = perm != null && !perm.granted && perm.permanentlyDenied;
+    final needsPermission = perm != null && !perm.granted;
+
+    final (Color badgeColor, String badgeLabel) = syncing
+        ? (c.accent, 'Syncing')
+        : permanentlyDenied
+            ? (c.tierResampled, 'Settings required')
+            : needsPermission
+                ? (c.tierResampled, 'Permission needed')
+                : (c.success, 'Ready');
+
+    final description = permanentlyDenied
+        ? 'Audio permission was denied in system settings. Open App Settings to grant access, or pick a folder manually.'
+        : needsPermission
+            ? 'Grant audio access to discover lossless music across Music, Downloads, and SD card folders.'
+            : 'Scan Music, Downloads, SD card, and MediaStore directories on this device with one tap.';
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(
+          Spacing.md, Spacing.xs, Spacing.md, Spacing.sm),
+      padding: const EdgeInsets.all(Spacing.md),
+      decoration: BoxDecoration(
+        color: c.surface1,
+        borderRadius: Radii.cardR,
+        border: Border.all(
+          color: (needsPermission ? c.tierResampled : c.accent).withOpacity(0.35),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: c.surface2,
+                  borderRadius: Radii.chipR,
+                  border: Border.all(color: c.outline.withOpacity(0.4)),
+                ),
+                child: Icon(Icons.phone_android, size: 22, color: c.accent),
+              ),
+              const SizedBox(width: Spacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('This Device', style: context.t.titleSmall),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Local & SD card storage',
+                      style:
+                          context.t.bodySmall.copyWith(color: c.textSecondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: Spacing.xs),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: badgeColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: badgeColor.withOpacity(0.35)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (syncing)
+                      SpinningSyncIcon(size: 12, color: badgeColor)
+                    else
+                      Icon(
+                        needsPermission
+                            ? Icons.lock_outline
+                            : Icons.check_circle_outline,
+                        size: 12,
+                        color: badgeColor,
+                      ),
+                    const SizedBox(width: 4),
+                    Text(
+                      badgeLabel,
+                      style: context.t.label.copyWith(
+                        color: badgeColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Spacing.sm),
+          Text(
+            description,
+            style: context.t.bodySmall.copyWith(color: c.textSecondary),
+          ),
+          const SizedBox(height: Spacing.sm),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: syncing
+                      ? null
+                      : (permanentlyDenied ? onOpenSettings : onSync),
+                  icon: syncing
+                      ? SpinningSyncIcon(size: 16, color: c.onAccent)
+                      : Icon(
+                          permanentlyDenied
+                              ? Icons.settings_outlined
+                              : Icons.sync,
+                          size: 16,
+                        ),
+                  label: Text(
+                    permanentlyDenied
+                        ? 'Open App Settings'
+                        : 'Sync Device Music',
+                  ),
+                ),
+              ),
+              const SizedBox(width: Spacing.xs),
+              OutlinedButton.icon(
+                onPressed: syncing
+                    ? null
+                    : (permanentlyDenied ? onPickFolder : onManageFolders),
+                icon: Icon(
+                  permanentlyDenied
+                      ? Icons.create_new_folder_outlined
+                      : Icons.folder_open,
+                  size: 16,
+                ),
+                label: Text(permanentlyDenied ? 'Pick folder' : 'Folders'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Modal bottom sheet for viewing, toggling discovered, and managing local folders.
 class LocalFoldersSheet extends ConsumerStatefulWidget {
   const LocalFoldersSheet({super.key});
 
@@ -357,16 +697,81 @@ class LocalFoldersSheet extends ConsumerStatefulWidget {
 
 class _LocalFoldersSheetState extends ConsumerState<LocalFoldersSheet> {
   bool _scanning = false;
+  bool _loadingDiscovered = true;
+  AudioStoragePermissionStatus? _permStatus;
+  List<DiscoveredMusicDirectory> _discovered = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadDiscoveryAndPermission());
+  }
+
+  Future<void> _loadDiscoveryAndPermission() async {
+    final library = _readCloudLibraryOrNull(ref);
+    final bridge = _localBridgeFor(ref, library);
+    final perm = await bridge.getAudioPermissionStatus();
+    final discovered = perm.granted
+        ? await bridge.discoverMusicDirectories()
+        : const <DiscoveredMusicDirectory>[];
+    if (mounted) {
+      setState(() {
+        _permStatus = perm;
+        _discovered = discovered;
+        _loadingDiscovered = false;
+      });
+    }
+  }
+
+  Future<void> _syncAll() async {
+    setState(() => _scanning = true);
+    try {
+      await _syncDeviceMusicWithFeedback(context, ref);
+      await _loadDiscoveryAndPermission();
+    } finally {
+      if (mounted) setState(() => _scanning = false);
+    }
+  }
+
+  Future<void> _toggleDiscovered(
+    DiscoveredMusicDirectory dir,
+    bool enable,
+  ) async {
+    final library = _readCloudLibraryOrNull(ref);
+    if (library == null) return;
+    setState(() => _scanning = true);
+    try {
+      if (enable) {
+        final count = await library.addLocalFolder(dir.path, label: dir.label);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                count > 0
+                    ? 'Indexed $count track${count == 1 ? '' : 's'} from ${dir.label}.'
+                    : 'Added ${dir.label}.',
+              ),
+            ),
+          );
+        }
+      } else {
+        await library.removeLocalFolder(dir.path);
+      }
+    } finally {
+      if (mounted) setState(() => _scanning = false);
+    }
+  }
 
   Future<void> _addFolder() async {
+    final library = _readCloudLibraryOrNull(ref);
+    if (library == null) return;
     try {
       final selectedPath = await FilePicker.platform.getDirectoryPath(
         dialogTitle: 'Select music folder',
       );
       if (selectedPath == null || selectedPath.isEmpty || !mounted) return;
       setState(() => _scanning = true);
-      final count =
-          await ref.read(cloudLibraryProvider).addLocalFolder(selectedPath);
+      final count = await library.addLocalFolder(selectedPath);
       if (mounted) {
         setState(() => _scanning = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -390,10 +795,11 @@ class _LocalFoldersSheetState extends ConsumerState<LocalFoldersSheet> {
   }
 
   Future<void> _rescanFolder(LocalFolder folder) async {
+    final library = _readCloudLibraryOrNull(ref);
+    if (library == null) return;
     setState(() => _scanning = true);
     try {
-      final count =
-          await ref.read(cloudLibraryProvider).scanLocalFolder(folder);
+      final count = await library.scanLocalFolder(folder);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Rescanned ${folder.label}: $count tracks.')),
@@ -411,6 +817,8 @@ class _LocalFoldersSheetState extends ConsumerState<LocalFoldersSheet> {
   }
 
   Future<void> _removeFolder(LocalFolder folder) async {
+    final library = _readCloudLibraryOrNull(ref);
+    if (library == null) return;
     final ok = await ConfirmDialog.show(
       context,
       title: 'Remove ${folder.label}?',
@@ -420,23 +828,29 @@ class _LocalFoldersSheetState extends ConsumerState<LocalFoldersSheet> {
       destructive: true,
     );
     if (!ok || !mounted) return;
-    await ref.read(cloudLibraryProvider).removeLocalFolder(folder.path);
+    await library.removeLocalFolder(folder.path);
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.c;
-    final library = ref.watch(cloudLibraryProvider);
+    final library = _readCloudLibraryOrNull(ref);
+    final bridge = _localBridgeFor(ref, library);
 
     return StreamBuilder<List<LocalFolder>>(
-      stream: library.localFolders,
-      initialData: library.currentLocalFolders,
+      stream: library?.localFolders ?? const Stream.empty(),
+      initialData: library?.currentLocalFolders ?? const [],
       builder: (context, snapshot) {
         final folders = snapshot.data ?? const [];
+        final configuredPaths = folders.map((f) => f.path).toSet();
+        final discoveredPaths = _discovered.map((d) => d.path).toSet();
+        final customFolders =
+            folders.where((f) => !discoveredPaths.contains(f.path)).toList();
+        final perm = _permStatus;
 
         return BottomSheetScaffold(
-          title: 'Configured local folders',
-          subtitle: 'Music indexed directly from this device',
+          title: 'Device music folders',
+          subtitle: 'Internal storage, SD card & custom folders',
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -446,19 +860,46 @@ class _LocalFoldersSheetState extends ConsumerState<LocalFoldersSheet> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (folders.isEmpty)
+              if (perm != null && !perm.granted)
+                _LocalPermissionBanner(
+                  permission: perm,
+                  onOpenSettings: () => unawaited(bridge.openAppSettings()),
+                  onGrant: _syncAll,
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    Spacing.md, Spacing.xs, Spacing.md, Spacing.sm),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _scanning ? null : _syncAll,
+                    icon: _scanning
+                        ? SpinningSyncIcon(size: 16, color: c.onAccent)
+                        : const Icon(Icons.sync, size: 16),
+                    label: const Text('Sync Device Music'),
+                  ),
+                ),
+              ),
+              const SectionHeader(title: 'Discovered on device'),
+              if (_loadingDiscovered)
+                const Padding(
+                  padding: EdgeInsets.all(Spacing.md),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_discovered.isEmpty)
                 Padding(
-                  padding: const EdgeInsets.all(Spacing.lg),
-                  child: Center(
-                    child: Text(
-                      'No local music folders configured yet.',
-                      style: context.t.bodySmall
-                          .copyWith(color: c.textSecondary),
-                    ),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: Spacing.md, vertical: Spacing.sm),
+                  child: Text(
+                    perm != null && !perm.granted
+                        ? 'Grant audio permission to automatically discover Music and SD card folders.'
+                        : 'No default Music or Download folders found on this device.',
+                    style:
+                        context.t.bodySmall.copyWith(color: c.textSecondary),
                   ),
                 )
               else
-                for (final f in folders)
+                for (final d in _discovered)
                   ListTile(
                     leading: Container(
                       width: 36,
@@ -468,7 +909,82 @@ class _LocalFoldersSheetState extends ConsumerState<LocalFoldersSheet> {
                         borderRadius: Radii.badgeR,
                         border: Border.all(color: c.outline.withOpacity(0.4)),
                       ),
-                      child: Icon(Icons.folder_outlined,
+                      child: Icon(
+                        d.isRemovable
+                            ? Icons.sd_card_outlined
+                            : Icons.folder_outlined,
+                        size: 18,
+                        color: c.accent,
+                      ),
+                    ),
+                    title: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            d.label,
+                            style: context.t.titleSmall
+                                .copyWith(fontWeight: FontWeight.w600),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: Spacing.xs),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: c.surface2,
+                            borderRadius: Radii.badgeR,
+                            border: Border.all(color: c.outline),
+                          ),
+                          child: Text(
+                            d.isRemovable ? 'SD Card' : 'Internal',
+                            style: context.t.monoLabel
+                                .copyWith(color: c.textSecondary, fontSize: 10),
+                          ),
+                        ),
+                      ],
+                    ),
+                    subtitle: Text(
+                      d.audioFileCount > 0
+                          ? '${d.path}\n${d.audioFileCount} audio files'
+                          : d.path,
+                      style: context.t.bodySmall
+                          .copyWith(color: c.textSecondary, fontSize: 11),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    isThreeLine: d.audioFileCount > 0,
+                    trailing: Switch.adaptive(
+                      value: configuredPaths.contains(d.path),
+                      onChanged: _scanning
+                          ? null
+                          : (val) => _toggleDiscovered(d, val),
+                    ),
+                  ),
+              const SectionHeader(title: 'Custom folders'),
+              if (customFolders.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: Spacing.md, vertical: Spacing.xs),
+                  child: Text(
+                    'No custom folders added yet.',
+                    style:
+                        context.t.bodySmall.copyWith(color: c.textSecondary),
+                  ),
+                )
+              else
+                for (final f in customFolders)
+                  ListTile(
+                    leading: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: c.surface2,
+                        borderRadius: Radii.badgeR,
+                        border: Border.all(color: c.outline.withOpacity(0.4)),
+                      ),
+                      child: Icon(Icons.folder_special_outlined,
                           size: 18, color: c.accent),
                     ),
                     title: Text(
@@ -515,7 +1031,7 @@ class _LocalFoldersSheetState extends ConsumerState<LocalFoldersSheet> {
                     onPressed: _scanning ? null : _addFolder,
                     icon: const Icon(Icons.create_new_folder_outlined,
                         size: 16),
-                    label: const Text('Add another folder'),
+                    label: const Text('Add custom folder'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: c.accent,
                       side: BorderSide(color: c.accent.withOpacity(0.5)),

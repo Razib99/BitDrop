@@ -130,6 +130,8 @@ class CloudLibrary {
 
   Stream<List<LocalFolder>> get localFolders => _localFolders.stream;
   List<LocalFolder> get currentLocalFolders => _localFolders.value;
+  LocalStorageBridge get storageBridge => _storageBridge;
+  Stream<bool> get localSyncing => _localSyncing.stream;
   bool get isDriveSignedIn => _drive.isSignedIn;
   bool get isLocalSyncing => _localSyncing.value;
   Set<String> get excludedLocalPaths => Set.unmodifiable(_excludedLocalPaths);

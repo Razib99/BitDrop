@@ -13,6 +13,7 @@ import '../core_live/audio_handler.dart';
 
 import '../core_live/cloud_library.dart';
 import '../features/storage/google_drive_service.dart';
+import '../services/local_storage_bridge.dart';
 
 late final BitDropAudioHandler globalAudioHandler;
 
@@ -40,6 +41,14 @@ final cloudLibraryProvider =
 /// Live scan progress, for the Home banner and the Sources card.
 final cloudScanStatusProvider =
     StreamProvider((ref) => ref.watch(cloudLibraryProvider).status);
+
+/// Platform channel bridge for Android local audio storage permissions & folder discovery.
+final localStorageBridgeProvider =
+    Provider<LocalStorageBridge>((ref) => LocalStorageBridge());
+
+/// Whether a local device folder discovery / sync pass is currently running.
+final localSyncingProvider =
+    StreamProvider<bool>((ref) => ref.watch(cloudLibraryProvider).localSyncing);
 
 /// The signed-in Google account, or null. Drives the Sources screen and the
 /// "needs reconnection" banner.
