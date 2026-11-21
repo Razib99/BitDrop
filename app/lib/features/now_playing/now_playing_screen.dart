@@ -111,20 +111,33 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                         ? _LandscapeLayout(
                             nowPlaying: np,
                             signal: signal,
-                            style: settings.nowPlayingStyle)
+                            style: settings.nowPlayingStyle,
+                            showLyrics: _showLyrics,
+                            onToggleLyrics: () =>
+                                setState(() => _showLyrics = !_showLyrics),
+                          )
                         : switch (settings.nowPlayingStyle) {
-                            NowPlayingStyle.classic =>
-                              _ClassicLayout(
+                            NowPlayingStyle.classic => _ClassicLayout(
                                 nowPlaying: np,
                                 signal: signal,
                                 showLyrics: _showLyrics,
                                 onToggleLyrics: () =>
                                     setState(() => _showLyrics = !_showLyrics),
                               ),
-                            NowPlayingStyle.minimal =>
-                              _MinimalLayout(nowPlaying: np, signal: signal),
-                            NowPlayingStyle.studio =>
-                              _StudioLayout(nowPlaying: np, signal: signal),
+                            NowPlayingStyle.minimal => _MinimalLayout(
+                                nowPlaying: np,
+                                signal: signal,
+                                showLyrics: _showLyrics,
+                                onToggleLyrics: () =>
+                                    setState(() => _showLyrics = !_showLyrics),
+                              ),
+                            NowPlayingStyle.studio => _StudioLayout(
+                                nowPlaying: np,
+                                signal: signal,
+                                showLyrics: _showLyrics,
+                                onToggleLyrics: () =>
+                                    setState(() => _showLyrics = !_showLyrics),
+                              ),
                           },
                   ),
                 ],
@@ -425,10 +438,17 @@ class _ClassicLayout extends ConsumerWidget {
 
 /// Minimal: small art, large type, technical detail up front.
 class _MinimalLayout extends ConsumerWidget {
-  const _MinimalLayout({required this.nowPlaying, required this.signal});
+  const _MinimalLayout({
+    required this.nowPlaying,
+    required this.signal,
+    this.showLyrics = false,
+    this.onToggleLyrics,
+  });
 
   final NowPlaying nowPlaying;
   final SignalPath? signal;
+  final bool showLyrics;
+  final VoidCallback? onToggleLyrics;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -441,46 +461,69 @@ class _MinimalLayout extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: Spacing.xl),
-            AlbumArtwork(
-              artwork: track.artwork,
-              size: 96,
-              title: track.albumTitle,
-            ),
-            const SizedBox(height: Spacing.xl),
-            Marquee(text: track.title, style: context.t.display),
-            const SizedBox(height: Spacing.xs),
-            Text(
-              track.artist,
-              style: context.t.title.copyWith(color: c.textSecondary),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            Text(
-              track.albumTitle,
-              style: context.t.body.copyWith(color: c.textTertiary),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: Spacing.lg),
-            if (signal != null) ...[
-              _TechLine(label: 'SOURCE', value: signal!.source.badgeLabel),
-              _TechLine(label: 'OUTPUT', value: signal!.actual.longLabel),
-              _TechLine(
-                  label: 'BITRATE',
-                  value: Fmt.kbps(signal!.source.effectiveBitrateKbps > 0
-                      ? signal!.source.effectiveBitrateKbps
-                      : signal!.source.bitrateKbps)),
-              _TechLine(
-                label: 'DEVICE',
-                value: signal!.device?.name ?? context.l10n.signalNoDevice,
+            const SizedBox(height: Spacing.md),
+            AnimatedCrossFade(
+              firstChild: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: Spacing.md),
+                  AlbumArtwork(
+                    artwork: track.artwork,
+                    size: 96,
+                    title: track.albumTitle,
+                  ),
+                  const SizedBox(height: Spacing.xl),
+                  Marquee(text: track.title, style: context.t.display),
+                  const SizedBox(height: Spacing.xs),
+                  Text(
+                    track.artist,
+                    style: context.t.title.copyWith(color: c.textSecondary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    track.albumTitle,
+                    style: context.t.body.copyWith(color: c.textTertiary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: Spacing.lg),
+                  if (signal != null) ...[
+                    _TechLine(
+                        label: 'SOURCE', value: signal!.source.badgeLabel),
+                    _TechLine(
+                        label: 'OUTPUT', value: signal!.actual.longLabel),
+                    _TechLine(
+                        label: 'BITRATE',
+                        value: Fmt.kbps(signal!.source.effectiveBitrateKbps > 0
+                            ? signal!.source.effectiveBitrateKbps
+                            : signal!.source.bitrateKbps)),
+                    _TechLine(
+                      label: 'DEVICE',
+                      value:
+                          signal!.device?.name ?? context.l10n.signalNoDevice,
+                    ),
+                    const SizedBox(height: Spacing.sm),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: NowPlayingSignalChip(signal: signal!),
+                    ),
+                  ],
+                ],
               ),
-              const SizedBox(height: Spacing.sm),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: NowPlayingSignalChip(signal: signal!),
+              secondChild: SizedBox(
+                height: 340,
+                width: double.infinity,
+                child: AmbientLyricsView(
+                  track: track,
+                  onClose: onToggleLyrics,
+                ),
               ),
-            ],
+              crossFadeState: showLyrics
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              duration: const Duration(milliseconds: 320),
+            ),
             const SizedBox(height: Spacing.lg),
             CacheSeekBar(
               durationMs: track.durationMs,
@@ -489,7 +532,11 @@ class _MinimalLayout extends ConsumerWidget {
             const SizedBox(height: Spacing.md),
             const TransportControls(compact: true),
             const SizedBox(height: Spacing.md),
-            NowPlayingBottomActions(nowPlaying: nowPlaying),
+            NowPlayingBottomActions(
+              nowPlaying: nowPlaying,
+              showLyrics: showLyrics,
+              onToggleLyrics: onToggleLyrics,
+            ),
             const SizedBox(height: Spacing.lg),
           ],
         ),
@@ -500,10 +547,17 @@ class _MinimalLayout extends ConsumerWidget {
 
 /// Studio: meters, spectrum and a full technical readout.
 class _StudioLayout extends ConsumerWidget {
-  const _StudioLayout({required this.nowPlaying, required this.signal});
+  const _StudioLayout({
+    required this.nowPlaying,
+    required this.signal,
+    this.showLyrics = false,
+    this.onToggleLyrics,
+  });
 
   final NowPlaying nowPlaying;
   final SignalPath? signal;
+  final bool showLyrics;
+  final VoidCallback? onToggleLyrics;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -549,54 +603,75 @@ class _StudioLayout extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: Spacing.md),
-          VuMeter(
-            leftDb: frame.peakLeftDb,
-            rightDb: frame.peakRightDb,
-            clipping: frame.clipping,
-          ),
-          const SizedBox(height: Spacing.sm),
-          SpectrumView(bins: frame.spectrum),
-          const SizedBox(height: Spacing.sm),
-          if (signal != null)
-            Container(
-              padding: const EdgeInsets.all(Spacing.sm),
-              decoration: BoxDecoration(
-                color: c.surface2,
-                borderRadius: Radii.chipR,
-                border: Border.all(color: c.outline),
-              ),
-              child: Column(
-                children: [
-                  _TechLine(
-                      label: 'SOURCE FORMAT', value: signal!.source.badgeLabel),
-                  _TechLine(
-                      label: 'OUTPUT FORMAT', value: signal!.actual.longLabel),
-                  _TechLine(
-                      label: 'BITRATE',
-                      value: Fmt.kbps(signal!.source.effectiveBitrateKbps > 0
-                          ? signal!.source.effectiveBitrateKbps
-                          : signal!.source.bitrateKbps)),
-                  _TechLine(
-                    label: 'BUFFER',
-                    value: info == null
-                        ? '—'
-                        : '${(info.bufferAheadMs / 1000).toStringAsFixed(1)} s',
+          AnimatedCrossFade(
+            firstChild: Column(
+              children: [
+                VuMeter(
+                  leftDb: frame.peakLeftDb,
+                  rightDb: frame.peakRightDb,
+                  clipping: frame.clipping,
+                ),
+                const SizedBox(height: Spacing.sm),
+                SpectrumView(bins: frame.spectrum),
+                const SizedBox(height: Spacing.sm),
+                if (signal != null)
+                  Container(
+                    padding: const EdgeInsets.all(Spacing.sm),
+                    decoration: BoxDecoration(
+                      color: c.surface2,
+                      borderRadius: Radii.chipR,
+                      border: Border.all(color: c.outline),
+                    ),
+                    child: Column(
+                      children: [
+                        _TechLine(
+                            label: 'SOURCE FORMAT',
+                            value: signal!.source.badgeLabel),
+                        _TechLine(
+                            label: 'OUTPUT FORMAT',
+                            value: signal!.actual.longLabel),
+                        _TechLine(
+                            label: 'BITRATE',
+                            value: Fmt.kbps(
+                                signal!.source.effectiveBitrateKbps > 0
+                                    ? signal!.source.effectiveBitrateKbps
+                                    : signal!.source.bitrateKbps)),
+                        _TechLine(
+                          label: 'BUFFER',
+                          value: info == null
+                              ? '—'
+                              : '${(info.bufferAheadMs / 1000).toStringAsFixed(1)} s',
+                        ),
+                        _TechLine(
+                          label: 'CACHED',
+                          value: '${signal!.cachedPercent}%',
+                        ),
+                        _TechLine(
+                          label: 'VOLUME',
+                          value: switch (signal!.volume) {
+                            VolumeMode.dacHardware => 'DAC hardware',
+                            VolumeMode.softwareDithered => 'Software, dithered',
+                            VolumeMode.system => 'System',
+                          },
+                        ),
+                      ],
+                    ),
                   ),
-                  _TechLine(
-                    label: 'CACHED',
-                    value: '${signal!.cachedPercent}%',
-                  ),
-                  _TechLine(
-                    label: 'VOLUME',
-                    value: switch (signal!.volume) {
-                      VolumeMode.dacHardware => 'DAC hardware',
-                      VolumeMode.softwareDithered => 'Software, dithered',
-                      VolumeMode.system => 'System',
-                    },
-                  ),
-                ],
+              ],
+            ),
+            secondChild: SizedBox(
+              height: 300,
+              width: double.infinity,
+              child: AmbientLyricsView(
+                track: nowPlaying.track,
+                onClose: onToggleLyrics,
               ),
             ),
+            crossFadeState: showLyrics
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 320),
+          ),
           const SizedBox(height: Spacing.sm),
           CacheSeekBar(
             durationMs: nowPlaying.track.durationMs,
@@ -605,7 +680,11 @@ class _StudioLayout extends ConsumerWidget {
           const SizedBox(height: Spacing.xs),
           const TransportControls(compact: true),
           const SizedBox(height: Spacing.xs),
-          NowPlayingBottomActions(nowPlaying: nowPlaying),
+          NowPlayingBottomActions(
+            nowPlaying: nowPlaying,
+            showLyrics: showLyrics,
+            onToggleLyrics: onToggleLyrics,
+          ),
           const SizedBox(height: Spacing.md),
         ],
       ),
@@ -618,11 +697,15 @@ class _LandscapeLayout extends ConsumerWidget {
     required this.nowPlaying,
     required this.signal,
     required this.style,
+    this.showLyrics = false,
+    this.onToggleLyrics,
   });
 
   final NowPlaying nowPlaying;
   final SignalPath? signal;
   final NowPlayingStyle style;
+  final bool showLyrics;
+  final VoidCallback? onToggleLyrics;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -634,9 +717,23 @@ class _LandscapeLayout extends ConsumerWidget {
       children: [
         Padding(
           padding: const EdgeInsets.all(Spacing.md),
-          child: NowPlayingSwipeableArt(
-            nowPlaying: nowPlaying,
-            size: artSize.toDouble(),
+          child: AnimatedCrossFade(
+            firstChild: NowPlayingSwipeableArt(
+              nowPlaying: nowPlaying,
+              size: artSize.toDouble(),
+            ),
+            secondChild: SizedBox(
+              width: artSize.toDouble(),
+              height: artSize.toDouble(),
+              child: AmbientLyricsView(
+                track: nowPlaying.track,
+                onClose: onToggleLyrics,
+              ),
+            ),
+            crossFadeState: showLyrics
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 320),
           ),
         ),
         Expanded(
@@ -660,7 +757,11 @@ class _LandscapeLayout extends ConsumerWidget {
                 const SizedBox(height: Spacing.sm),
                 const TransportControls(compact: true),
                 const SizedBox(height: Spacing.xs),
-                NowPlayingBottomActions(nowPlaying: nowPlaying),
+                NowPlayingBottomActions(
+                  nowPlaying: nowPlaying,
+                  showLyrics: showLyrics,
+                  onToggleLyrics: onToggleLyrics,
+                ),
               ],
             ),
           ),

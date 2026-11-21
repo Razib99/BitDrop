@@ -160,5 +160,94 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets(
+        'renders source pill, adjusts sync offset, and shifts tap-to-seek',
+        (tester) async {
+      final core = _RecordingCore();
+      const lyrics = TrackLyrics(
+        synced: true,
+        source: 'lrclib',
+        lines: [
+          LyricLine(timestampMs: 0, text: 'Line one'),
+          LyricLine(timestampMs: 10000, text: 'Line two'),
+        ],
+        plainLyrics: '',
+      );
+
+      await tester.pumpWidget(
+        wrap(
+          const AmbientLyricsView(track: track),
+          core: core,
+          lyrics: lyrics,
+          positionMs: 1000,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('LRCLIB'), findsOneWidget);
+      expect(find.text('0.0s'), findsOneWidget);
+
+      // Tap '+' twice -> +0.5s (+500ms)
+      await tester.tap(find.byKey(const Key('lyrics_offset_plus')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('lyrics_offset_plus')));
+      await tester.pump();
+      expect(find.text('+0.5s'), findsOneWidget);
+
+      // Tap line at 10000ms -> seeks to 9500ms (10000 - 500)
+      await tester.tap(find.text('Line two'));
+      await tester.pump();
+      expect(
+        core.commands,
+        contains(
+          predicate<PlayerCommand>((c) => c is Seek && c.positionMs == 9500),
+        ),
+      );
+
+      // Tap center label -> resets offset to 0.0s
+      await tester.tap(find.byKey(const Key('lyrics_offset_value')));
+      await tester.pump();
+      expect(find.text('0.0s'), findsOneWidget);
+    });
+
+    testWidgets('re-search button invalidates lyricsProvider and retries fetch',
+        (tester) async {
+      var fetchCount = 0;
+      final core = _RecordingCore();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            coreProvider.overrideWithValue(core),
+            lyricsProvider(track).overrideWith((ref) {
+              fetchCount++;
+              return null;
+            }),
+            positionProvider.overrideWith(
+              (ref) =>
+                  Stream.value(const PositionInfo(positionMs: 0, durationMs: 1000)),
+            ),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.dark(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const Scaffold(
+              body: SizedBox(height: 420, child: AmbientLyricsView(track: track)),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(fetchCount, 1);
+      expect(find.text('Re-search lyrics'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('lyrics_retry_button')));
+      await tester.pumpAndSettle();
+
+      expect(fetchCount, 2);
+    });
   });
 }

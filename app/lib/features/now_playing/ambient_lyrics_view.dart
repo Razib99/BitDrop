@@ -114,10 +114,46 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
         .withOpacity(0.75);
   }
 
+  static String _formatSource(TrackLyrics lyrics) {
+    final s = lyrics.source.trim().toLowerCase();
+    if (s.contains('embed') || s.contains('tag')) return 'Embedded';
+    if (s.contains('lrclib') || s.contains('net')) return 'LRCLIB';
+    if (s.contains('cache') || s.contains('db') || s.contains('local')) {
+      return 'Cached';
+    }
+    return lyrics.synced ? 'Synced' : 'Plain';
+  }
+
+  static String _formatOffset(int offsetMs) {
+    if (offsetMs == 0) return '0.0s';
+    final sec = offsetMs / 1000.0;
+    final sign = offsetMs > 0 ? '+' : '';
+    final formatted = (offsetMs % 500 == 0)
+        ? sec.toStringAsFixed(1)
+        : sec.toStringAsFixed(2);
+    return '$sign${formatted}s';
+  }
+
+  void _adjustOffset(int deltaMs) {
+    final current = ref.read(lyricsOffsetProvider(widget.track.id));
+    final next = (current + deltaMs).clamp(-5000, 5000);
+    ref.read(lyricsOffsetProvider(widget.track.id).notifier).state = next;
+  }
+
+  void _resetOffset() {
+    ref.read(lyricsOffsetProvider(widget.track.id).notifier).state = 0;
+  }
+
+  void _refreshLyrics() {
+    ref.invalidate(lyricsProvider(widget.track));
+  }
+
   @override
   Widget build(BuildContext context) {
     final lyricsAsync = ref.watch(lyricsProvider(widget.track));
     final position = ref.watch(positionProvider).valueOrNull?.positionMs ?? 0;
+    final offsetMs = ref.watch(lyricsOffsetProvider(widget.track.id));
+    final effectivePosition = position + offsetMs;
     final isPlaying = ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
     final glowColor = _glowColor();
 
@@ -164,6 +200,13 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: Colors.white38, fontSize: 12),
               ),
+              const SizedBox(height: Spacing.md),
+              OutlinedButton.icon(
+                key: const Key('lyrics_retry_button'),
+                onPressed: _refreshLyrics,
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('Re-search lyrics'),
+              ),
             ],
           ),
         ),
@@ -197,37 +240,63 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Colors.white54, fontSize: 13),
                   ),
+                  const SizedBox(height: Spacing.md),
+                  OutlinedButton.icon(
+                    key: const Key('lyrics_retry_button'),
+                    onPressed: _refreshLyrics,
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('Re-search lyrics'),
+                  ),
                 ],
               ),
             ),
           );
         }
 
+        final header = _LyricsHeaderBar(
+          sourceLabel: _formatSource(lyrics),
+          synced: lyrics.synced,
+          offsetLabel: _formatOffset(offsetMs),
+          offsetActive: offsetMs != 0,
+          accentColor: glowColor,
+          onDecreaseOffset: () => _adjustOffset(-250),
+          onResetOffset: _resetOffset,
+          onIncreaseOffset: () => _adjustOffset(250),
+          onRefresh: _refreshLyrics,
+        );
+
         if (!lyrics.synced) {
-          return _buildEdgeFade(
-            child: SingleChildScrollView(
-              controller: _scrollController,
-              padding: const EdgeInsets.symmetric(
-                vertical: Spacing.xl,
-                horizontal: Spacing.xl,
-              ),
-              child: Text(
-                lyrics.plainLyrics,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  height: 1.8,
-                  fontWeight: FontWeight.w500,
+          return Column(
+            children: [
+              header,
+              Expanded(
+                child: _buildEdgeFade(
+                  child: SingleChildScrollView(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: Spacing.lg,
+                      horizontal: Spacing.xl,
+                    ),
+                    child: Text(
+                      lyrics.plainLyrics,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        height: 1.8,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
+            ],
           );
         }
 
         int newActiveIndex = -1;
         for (int i = 0; i < lyrics.lines.length; i++) {
-          if (lyrics.lines[i].timestampMs <= position) {
+          if (lyrics.lines[i].timestampMs <= effectivePosition) {
             newActiveIndex = i;
           } else {
             break;
@@ -242,80 +311,95 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
         }
 
         final showPreIntro = lyrics.lines.isNotEmpty &&
-            position < lyrics.lines.first.timestampMs &&
+            effectivePosition < lyrics.lines.first.timestampMs &&
             lyrics.lines.first.timestampMs >= 2500;
 
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final viewportHeight = constraints.maxHeight;
-            final verticalPad = (viewportHeight * 0.36).clamp(48.0, 220.0);
+        return Column(
+          children: [
+            header,
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final viewportHeight = constraints.maxHeight;
+                  final verticalPad =
+                      (viewportHeight * 0.36).clamp(48.0, 220.0);
 
-            return Stack(
-              children: [
-                _buildEdgeFade(
-                  child: NotificationListener<UserScrollNotification>(
-                    onNotification: (notification) {
-                      if (notification.direction != ScrollDirection.idle) {
-                        _onUserScroll();
-                      }
-                      return false;
-                    },
-                    child: SingleChildScrollView(
-                      controller: _scrollController,
-                      padding: EdgeInsets.symmetric(
-                        vertical: verticalPad,
-                        horizontal: Spacing.lg,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (showPreIntro)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: Spacing.md),
-                              child: _InstrumentalBreather(
-                                key: const Key('lyrics_pre_intro_breather'),
-                                animate: isPlaying,
-                                color: glowColor,
-                              ),
+                  return Stack(
+                    children: [
+                      _buildEdgeFade(
+                        child: NotificationListener<UserScrollNotification>(
+                          onNotification: (notification) {
+                            if (notification.direction !=
+                                ScrollDirection.idle) {
+                              _onUserScroll();
+                            }
+                            return false;
+                          },
+                          child: SingleChildScrollView(
+                            controller: _scrollController,
+                            padding: EdgeInsets.symmetric(
+                              vertical: verticalPad,
+                              horizontal: Spacing.lg,
                             ),
-                          for (int index = 0;
-                              index < lyrics.lines.length;
-                              index++)
-                            _LyricLineTile(
-                              key: _keyFor(index),
-                              line: lyrics.lines[index],
-                              isActive: index == _activeLineIndex,
-                              isPassed: index < _activeLineIndex,
-                              isPlaying: isPlaying,
-                              glowColor: glowColor,
-                              onTap: () {
-                                sendCommand(
-                                  ref,
-                                  Seek(lyrics.lines[index].timestampMs),
-                                );
-                                _resumeTimer?.cancel();
-                                if (_manualBrowse) {
-                                  setState(() => _manualBrowse = false);
-                                }
-                              },
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (showPreIntro)
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                        bottom: Spacing.md),
+                                    child: _InstrumentalBreather(
+                                      key: const Key(
+                                          'lyrics_pre_intro_breather'),
+                                      animate: isPlaying,
+                                      color: glowColor,
+                                    ),
+                                  ),
+                                for (int index = 0;
+                                    index < lyrics.lines.length;
+                                    index++)
+                                  _LyricLineTile(
+                                    key: _keyFor(index),
+                                    line: lyrics.lines[index],
+                                    isActive: index == _activeLineIndex,
+                                    isPassed: index < _activeLineIndex,
+                                    isPlaying: isPlaying,
+                                    glowColor: glowColor,
+                                    onTap: () {
+                                      final maxMs = widget.track.durationMs > 0
+                                          ? widget.track.durationMs
+                                          : 1 << 30;
+                                      final targetMs =
+                                          (lyrics.lines[index].timestampMs -
+                                                  offsetMs)
+                                              .clamp(0, maxMs);
+                                      sendCommand(ref, Seek(targetMs));
+                                      _resumeTimer?.cancel();
+                                      if (_manualBrowse) {
+                                        setState(() => _manualBrowse = false);
+                                      }
+                                    },
+                                  ),
+                              ],
                             ),
-                        ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                ),
-                if (_manualBrowse && _activeLineIndex >= 0)
-                  Positioned(
-                    right: Spacing.md,
-                    bottom: Spacing.md,
-                    child: _JumpToCurrentPill(
-                      accentColor: glowColor,
-                      onTap: _jumpToActiveLine,
-                    ),
-                  ),
-              ],
-            );
-          },
+                      if (_manualBrowse && _activeLineIndex >= 0)
+                        Positioned(
+                          right: Spacing.md,
+                          bottom: Spacing.md,
+                          child: _JumpToCurrentPill(
+                            accentColor: glowColor,
+                            onTap: _jumpToActiveLine,
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
         );
       },
     );
@@ -342,6 +426,139 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
         blendMode: BlendMode.dstIn,
         child: child,
       );
+}
+
+class _LyricsHeaderBar extends StatelessWidget {
+  const _LyricsHeaderBar({
+    required this.sourceLabel,
+    required this.synced,
+    required this.offsetLabel,
+    required this.offsetActive,
+    required this.accentColor,
+    required this.onDecreaseOffset,
+    required this.onResetOffset,
+    required this.onIncreaseOffset,
+    required this.onRefresh,
+  });
+
+  final String sourceLabel;
+  final bool synced;
+  final String offsetLabel;
+  final bool offsetActive;
+  final Color accentColor;
+  final VoidCallback onDecreaseOffset;
+  final VoidCallback onResetOffset;
+  final VoidCallback onIncreaseOffset;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          Spacing.sm, Spacing.xs, Spacing.xs, 0),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withOpacity(0.14)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  synced ? Icons.graphic_eq : Icons.notes_rounded,
+                  size: 11,
+                  color: synced ? accentColor : Colors.white60,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  sourceLabel,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Spacer(),
+          if (synced) ...[
+            Container(
+              decoration: BoxDecoration(
+                color: offsetActive
+                    ? accentColor.withOpacity(0.18)
+                    : Colors.white.withOpacity(0.07),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: offsetActive
+                      ? accentColor.withOpacity(0.5)
+                      : Colors.white.withOpacity(0.12),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  InkWell(
+                    key: const Key('lyrics_offset_minus'),
+                    onTap: onDecreaseOffset,
+                    borderRadius: const BorderRadius.horizontal(
+                      left: Radius.circular(14),
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                      child: Icon(Icons.remove, size: 13, color: Colors.white70),
+                    ),
+                  ),
+                  InkWell(
+                    key: const Key('lyrics_offset_value'),
+                    onTap: onResetOffset,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 4),
+                      child: Text(
+                        offsetLabel,
+                        style: TextStyle(
+                          color: offsetActive ? Colors.white : Colors.white70,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  InkWell(
+                    key: const Key('lyrics_offset_plus'),
+                    onTap: onIncreaseOffset,
+                    borderRadius: const BorderRadius.horizontal(
+                      right: Radius.circular(14),
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                      child: Icon(Icons.add, size: 13, color: Colors.white70),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
+          IconButton(
+            key: const Key('lyrics_refresh_button'),
+            tooltip: 'Re-search lyrics',
+            onPressed: onRefresh,
+            icon: const Icon(Icons.refresh_rounded,
+                size: 16, color: Colors.white70),
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.all(6),
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _LyricsBackdropShell extends StatelessWidget {

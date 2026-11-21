@@ -309,6 +309,10 @@ final lyricsProvider =
   return ref.watch(coreProvider).lyrics(track);
 });
 
+/// Per-track lyrics synchronization offset in milliseconds (-5000..5000).
+final lyricsOffsetProvider =
+    StateProvider.family<int, String>((ref, trackId) => 0);
+
 /// Live Audiophile Listening Recap metrics.
 final listeningRecapProvider = FutureProvider<ListeningRecap?>((ref) {
   return ref.watch(coreProvider).listeningRecap();
