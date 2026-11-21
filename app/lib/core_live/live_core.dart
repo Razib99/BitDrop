@@ -821,7 +821,8 @@ class LiveBitDropCore implements BitDropCore {
     var avail = t.availability;
     if (isPinned) {
       avail = Availability.pinned;
-    } else if (_isTrackFullyCached(t.id, t.sizeBytes)) {
+    } else if (t.availability == Availability.cached ||
+        _isTrackFullyCached(t.id, t.sizeBytes)) {
       avail = Availability.cached;
     } else if (!_realTracks.containsKey(t.id)) {
       avail = Availability.cloudOnly;
@@ -836,7 +837,11 @@ class LiveBitDropCore implements BitDropCore {
     if (_realAlbum != null && a.id == _realAlbum!.id) return a;
     final isPinned = _pinnedAlbumIds.contains(a.id);
     return a.copyWith(
-      availability: isPinned ? Availability.pinned : Availability.cloudOnly,
+      availability: isPinned
+          ? Availability.pinned
+          : (a.availability == Availability.cached
+              ? Availability.cached
+              : Availability.cloudOnly),
     );
   }
 
@@ -936,17 +941,27 @@ class LiveBitDropCore implements BitDropCore {
   @override
   Future<Paged<Album>> albums(AlbumQuery q) async {
     final favAlbum = _favoritesAlbum();
-    var items = <Album>[
-      if (q.artistId == null) favAlbum,
-      ..._cloudAlbums.map(_enrichAlbum),
-      if (_realAlbum != null) _enrichAlbum(_realAlbum!),
+    final items = <Album>[
+      if (q.artistId == null &&
+          q.filters.matchesAlbum(
+            favAlbum,
+            showUnsupportedSetting: _settings.value.showUnsupportedFiles,
+          ))
+        favAlbum,
+      ..._cloudAlbums.map(_enrichAlbum).where((a) =>
+          (q.artistId == null || a.artistId == q.artistId) &&
+          q.filters.matchesAlbum(
+            a,
+            showUnsupportedSetting: _settings.value.showUnsupportedFiles,
+          )),
+      if (_realAlbum != null)
+        ...[_enrichAlbum(_realAlbum!)].where((a) =>
+            (q.artistId == null || a.artistId == q.artistId) &&
+            q.filters.matchesAlbum(
+              a,
+              showUnsupportedSetting: _settings.value.showUnsupportedFiles,
+            )),
     ];
-    if (q.filters.genre != null && q.filters.genre!.isNotEmpty) {
-      items = items
-          .where(
-              (a) => a.genre?.toLowerCase() == q.filters.genre!.toLowerCase())
-          .toList();
-    }
     return Paged(items: items, total: items.length);
   }
 
@@ -964,7 +979,12 @@ class LiveBitDropCore implements BitDropCore {
         for (final t in favs) {
           unique[t.id] = t;
         }
-        final list = unique.values.toList();
+        final list = unique.values
+            .where((t) => q.filters.matchesTrack(
+                  t,
+                  showUnsupportedSetting: _settings.value.showUnsupportedFiles,
+                ))
+            .toList();
         return Paged(items: list, total: list.length);
       }
       final cloud = _cloudTracks
@@ -985,10 +1005,20 @@ class LiveBitDropCore implements BitDropCore {
       return const Paged(items: [], total: 0);
     }
 
+    final albumArtistById = <String, String>{
+      for (final a in _cloudAlbums) a.id: a.artistId,
+      if (_realAlbum != null) _realAlbum!.id: _realAlbum!.artistId,
+    };
     final items = <Track>[
       ..._cloudTracks.map(_enrichTrack),
       ..._realTracks.values.map(_enrichTrack),
-    ];
+    ]
+        .where((t) => q.filters.matchesTrack(
+              t,
+              showUnsupportedSetting: _settings.value.showUnsupportedFiles,
+              resolvedArtistId: albumArtistById[t.albumId],
+            ))
+        .toList();
     return Paged(items: items, total: items.length);
   }
 
@@ -1144,6 +1174,7 @@ class LiveBitDropCore implements BitDropCore {
 
     bool keepTrack(Track t) {
       if (f.offlineOnly &&
+          t.availability != Availability.cached &&
           !_pinnedTrackIds.contains(t.id) &&
           !_isTrackFullyCached(t.id, t.sizeBytes)) {
         return false;
@@ -1151,13 +1182,7 @@ class LiveBitDropCore implements BitDropCore {
       if (f.codecs.isNotEmpty && !f.codecs.contains(t.format.codec)) {
         return false;
       }
-      if (f.quality == QualityFilter.hiRes && !t.format.isHiRes) return false;
-      if (f.quality == QualityFilter.cdQuality && !t.format.isCdQuality) {
-        return false;
-      }
-      if (f.quality == QualityFilter.lossy && t.format.codec.isLossless) {
-        return false;
-      }
+      if (!f.quality.matches(t.format)) return false;
       return true;
     }
 
@@ -1165,13 +1190,7 @@ class LiveBitDropCore implements BitDropCore {
       if (f.codecs.isNotEmpty && !f.codecs.contains(a.format.codec)) {
         return false;
       }
-      if (f.quality == QualityFilter.hiRes && !a.format.isHiRes) return false;
-      if (f.quality == QualityFilter.cdQuality && !a.format.isCdQuality) {
-        return false;
-      }
-      if (f.quality == QualityFilter.lossy && a.format.codec.isLossless) {
-        return false;
-      }
+      if (!f.quality.matches(a.format)) return false;
       return true;
     }
 

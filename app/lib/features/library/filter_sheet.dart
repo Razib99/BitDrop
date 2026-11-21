@@ -232,6 +232,8 @@ class _FilterControls extends ConsumerWidget {
                   BitChip(
                     label: switch (q) {
                       QualityFilter.any => 'Any',
+                      QualityFilter.lossless =>
+                        'Lossless (FLAC / ALAC / WAV / Hi-Res)',
                       QualityFilter.hiRes => 'Hi-Res (24-bit or >48 kHz)',
                       QualityFilter.cdQuality => 'CD (16/44.1)',
                       QualityFilter.lossy => 'Lossy',

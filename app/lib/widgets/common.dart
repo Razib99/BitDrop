@@ -447,6 +447,7 @@ class BitChip extends StatelessWidget {
     this.selected = false,
     this.onTap,
     this.icon,
+    this.leading,
     this.trailingCount,
     this.mono = false,
   });
@@ -455,6 +456,7 @@ class BitChip extends StatelessWidget {
   final bool selected;
   final VoidCallback? onTap;
   final IconData? icon;
+  final Widget? leading;
   final int? trailingCount;
   final bool mono;
 
@@ -480,7 +482,10 @@ class BitChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (icon != null) ...[
+              if (leading != null) ...[
+                leading!,
+                const SizedBox(width: 5),
+              ] else if (icon != null) ...[
                 Icon(icon, size: 15, color: fg),
                 const SizedBox(width: 5),
               ],

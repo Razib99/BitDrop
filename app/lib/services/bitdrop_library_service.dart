@@ -319,7 +319,8 @@ class BitDropLibraryService {
     var avail = t.availability;
     if (isPinned) {
       avail = Availability.pinned;
-    } else if (isTrackFullyCached(t.id, t.sizeBytes)) {
+    } else if (t.availability == Availability.cached ||
+        isTrackFullyCached(t.id, t.sizeBytes)) {
       avail = Availability.cached;
     } else if (!_realTracks.containsKey(t.id)) {
       avail = Availability.cloudOnly;
@@ -334,7 +335,11 @@ class BitDropLibraryService {
     if (_realAlbum != null && a.id == _realAlbum!.id) return a;
     final isPinned = _pinnedAlbumIds.contains(a.id);
     return a.copyWith(
-      availability: isPinned ? Availability.pinned : Availability.cloudOnly,
+      availability: isPinned
+          ? Availability.pinned
+          : (a.availability == Availability.cached
+              ? Availability.cached
+              : Availability.cloudOnly),
     );
   }
 
@@ -593,17 +598,18 @@ class BitDropLibraryService {
 
   Future<Paged<Album>> albums(AlbumQuery q) async {
     final favAlbum = favoritesAlbum();
-    var items = <Album>[
-      if (q.artistId == null) favAlbum,
-      ..._cloudAlbums.map(enrichAlbum),
-      if (_realAlbum != null) enrichAlbum(_realAlbum!),
+    final items = <Album>[
+      if (q.artistId == null && q.filters.matchesAlbum(favAlbum)) favAlbum,
+      ..._cloudAlbums
+          .map(enrichAlbum)
+          .where((a) =>
+              (q.artistId == null || a.artistId == q.artistId) &&
+              q.filters.matchesAlbum(a)),
+      if (_realAlbum != null)
+        ...[enrichAlbum(_realAlbum!)].where((a) =>
+            (q.artistId == null || a.artistId == q.artistId) &&
+            q.filters.matchesAlbum(a)),
     ];
-    if (q.filters.genre != null && q.filters.genre!.isNotEmpty) {
-      items = items
-          .where(
-              (a) => a.genre?.toLowerCase() == q.filters.genre!.toLowerCase())
-          .toList();
-    }
     return Paged(items: items, total: items.length);
   }
 
@@ -620,7 +626,8 @@ class BitDropLibraryService {
         for (final t in favs) {
           unique[t.id] = t;
         }
-        final list = unique.values.toList();
+        final list =
+            unique.values.where((t) => q.filters.matchesTrack(t)).toList();
         return Paged(items: list, total: list.length);
       }
       final cloud = _cloudTracks
@@ -641,10 +648,19 @@ class BitDropLibraryService {
       return const Paged(items: [], total: 0);
     }
 
+    final albumArtistById = <String, String>{
+      for (final a in _cloudAlbums) a.id: a.artistId,
+      if (_realAlbum != null) _realAlbum!.id: _realAlbum!.artistId,
+    };
     final items = <Track>[
       ..._cloudTracks.map(enrichTrack),
       ..._realTracks.values.map(enrichTrack),
-    ];
+    ]
+        .where((t) => q.filters.matchesTrack(
+              t,
+              resolvedArtistId: albumArtistById[t.albumId],
+            ))
+        .toList();
     return Paged(items: items, total: items.length);
   }
 
@@ -864,6 +880,7 @@ class BitDropLibraryService {
 
     bool keepTrack(Track t) {
       if (f.offlineOnly &&
+          t.availability != Availability.cached &&
           !_pinnedTrackIds.contains(t.id) &&
           !isTrackFullyCached(t.id, t.sizeBytes)) {
         return false;
@@ -871,13 +888,7 @@ class BitDropLibraryService {
       if (f.codecs.isNotEmpty && !f.codecs.contains(t.format.codec)) {
         return false;
       }
-      if (f.quality == QualityFilter.hiRes && !t.format.isHiRes) return false;
-      if (f.quality == QualityFilter.cdQuality && !t.format.isCdQuality) {
-        return false;
-      }
-      if (f.quality == QualityFilter.lossy && t.format.codec.isLossless) {
-        return false;
-      }
+      if (!f.quality.matches(t.format)) return false;
       return true;
     }
 
@@ -885,13 +896,7 @@ class BitDropLibraryService {
       if (f.codecs.isNotEmpty && !f.codecs.contains(a.format.codec)) {
         return false;
       }
-      if (f.quality == QualityFilter.hiRes && !a.format.isHiRes) return false;
-      if (f.quality == QualityFilter.cdQuality && !a.format.isCdQuality) {
-        return false;
-      }
-      if (f.quality == QualityFilter.lossy && a.format.codec.isLossless) {
-        return false;
-      }
+      if (!f.quality.matches(a.format)) return false;
       return true;
     }
 

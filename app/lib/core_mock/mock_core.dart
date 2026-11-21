@@ -1003,8 +1003,9 @@ class MockBitDropCore implements BitDropCore {
           AlbumSort.duration => a.durationMs.compareTo(b.durationMs),
         });
     if (q.descending) list = list.reversed.toList();
+    final favAlbum = _favoritesAlbum();
     final items = <Album>[
-      if (q.artistId == null) _favoritesAlbum(),
+      if (q.artistId == null && _matchesAlbum(favAlbum, q.filters)) favAlbum,
       ...list,
     ];
     return Paged(items: items, total: items.length);
@@ -1024,12 +1025,13 @@ class MockBitDropCore implements BitDropCore {
       final favTracks = MockCatalog.tracks
           .where((t) => _favoriteTrackIds.contains(t.id))
           .map(_enrichTrack)
+          .where((t) => _matchesTrack(t, q.filters))
           .toList();
       return Paged(items: favTracks, total: favTracks.length);
     }
     var list = MockCatalog.tracks
-        .where((t) => _matchesTrack(t, q.filters))
         .map(_enrichTrack)
+        .where((t) => _matchesTrack(t, q.filters))
         .toList();
     if (q.albumId != null) {
       list = (MockCatalog.tracksByAlbum[q.albumId!] ?? const [])
@@ -1323,22 +1325,15 @@ class MockBitDropCore implements BitDropCore {
   }
 
   bool _matchesQuality(AudioFormat fmt, QualityFilter quality) =>
-      switch (quality) {
-        QualityFilter.any => true,
-        QualityFilter.hiRes => fmt.isHiRes,
-        QualityFilter.cdQuality => fmt.isCdQuality,
-        QualityFilter.lossy => !fmt.codec.isLossless,
-      };
+      quality.matches(fmt);
 
   bool _matchesAlbum(Album a, LibraryFilters f) {
-    if (!f.showUnsupported && !a.format.codec.isSupported) return false;
-    if (!_settings.value.showUnsupportedFiles && !a.format.codec.isSupported) {
+    if (!f.matchesAlbum(
+      a,
+      showUnsupportedSetting: _settings.value.showUnsupportedFiles,
+    )) {
       return false;
     }
-    if (f.codecs.isNotEmpty && !f.codecs.contains(a.format.codec)) return false;
-    if (!_matchesQuality(a.format, f.quality)) return false;
-    if (f.genre != null && a.genre != f.genre) return false;
-    if (!_matchesAvailability(a.availability, f.availability)) return false;
     if (_scenario.offline &&
         f.availability == AvailabilityFilter.any &&
         a.availability == Availability.cloudOnly) {
@@ -1348,30 +1343,11 @@ class MockBitDropCore implements BitDropCore {
     return true;
   }
 
-  bool _matchesTrack(Track t, LibraryFilters f) {
-    if (f.artistId != null &&
-        MockCatalog.albumById(t.albumId)?.artistId != f.artistId) {
-      return false;
-    }
-    if (!f.showUnsupported && !t.format.codec.isSupported) return false;
-    if (!_settings.value.showUnsupportedFiles && !t.format.codec.isSupported) {
-      return false;
-    }
-    if (f.codecs.isNotEmpty && !f.codecs.contains(t.format.codec)) return false;
-    if (!_matchesQuality(t.format, f.quality)) return false;
-    if (f.genre != null && t.genre != f.genre) return false;
-    if (!_matchesAvailability(t.availability, f.availability)) return false;
-    return true;
-  }
-
-  bool _matchesAvailability(Availability a, AvailabilityFilter f) =>
-      switch (f) {
-        AvailabilityFilter.any => true,
-        AvailabilityFilter.offline => a == Availability.pinned,
-        AvailabilityFilter.cached =>
-          a == Availability.cached || a == Availability.pinned,
-        AvailabilityFilter.cloudOnly => a == Availability.cloudOnly,
-      };
+  bool _matchesTrack(Track t, LibraryFilters f) => f.matchesTrack(
+        t,
+        showUnsupportedSetting: _settings.value.showUnsupportedFiles,
+        resolvedArtistId: MockCatalog.albumById(t.albumId)?.artistId,
+      );
 
   // ---- Folder tree ---------------------------------------------------------
 

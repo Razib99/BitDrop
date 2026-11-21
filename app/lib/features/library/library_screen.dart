@@ -13,6 +13,7 @@ import '../../routing/routes.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/common.dart';
+import '../../widgets/indicators.dart';
 import '../../widgets/rows.dart';
 import '../folders/folder_browser.dart';
 import 'filter_sheet.dart';
@@ -53,8 +54,14 @@ class LibraryScreen extends ConsumerWidget {
             ref.read(selectionProvider.notifier).state = const {};
           },
         ),
+        if (_supportsQuickFilters(tab)) ...[
+          const SizedBox(height: Spacing.xs),
+          _QuickFilterBar(filters: filters),
+        ],
         const SizedBox(height: Spacing.xs),
-        if (filters.isActive) _ActiveFilterSummary(filters: filters),
+        if (filters.isActive &&
+            (!_supportsQuickFilters(tab) || _hasNonQuickFilters(filters)))
+          _ActiveFilterSummary(filters: filters),
         Expanded(
           child: switch (tab) {
             LibraryTab.tracks => const _TracksTab(),
@@ -132,6 +139,86 @@ class _Toolbar extends ConsumerWidget {
   }
 }
 
+bool _supportsQuickFilters(LibraryTab tab) =>
+    tab == LibraryTab.tracks ||
+    tab == LibraryTab.albums ||
+    tab == LibraryTab.favorites;
+
+bool _hasNonQuickFilters(LibraryFilters f) =>
+    f.codecs.isNotEmpty ||
+    f.genre != null ||
+    !f.showUnsupported ||
+    (f.quality != QualityFilter.any &&
+        f.quality != QualityFilter.lossless &&
+        f.quality != QualityFilter.hiRes) ||
+    (f.availability != AvailabilityFilter.any &&
+        f.availability != AvailabilityFilter.cached);
+
+class _QuickFilterBar extends ConsumerWidget {
+  const _QuickFilterBar({required this.filters});
+
+  final LibraryFilters filters;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.c;
+    final notifier = ref.read(libraryFiltersProvider.notifier);
+
+    void toggleQuality(QualityFilter q) {
+      notifier.state = filters.copyWith(
+        quality: filters.quality == q ? QualityFilter.any : q,
+      );
+    }
+
+    void toggleOnDevice() {
+      notifier.state = filters.copyWith(
+        availability: filters.availability == AvailabilityFilter.cached
+            ? AvailabilityFilter.any
+            : AvailabilityFilter.cached,
+      );
+    }
+
+    final losslessSelected = filters.quality == QualityFilter.lossless;
+    final hiResSelected = filters.quality == QualityFilter.hiRes;
+    final onDeviceSelected = filters.availability == AvailabilityFilter.cached;
+
+    return FilterChipRow(
+      children: [
+        BitChip(
+          label: 'All',
+          selected: !filters.isActive,
+          onTap: () => notifier.state = const LibraryFilters(),
+        ),
+        BitChip(
+          label: 'Lossless',
+          leading: LosslessWaveGlyph(
+            color: losslessSelected ? c.onAccent : c.tierBitPerfect,
+            size: 13,
+          ),
+          selected: losslessSelected,
+          onTap: () => toggleQuality(QualityFilter.lossless),
+        ),
+        BitChip(
+          label: 'Hi-Res',
+          leading: Icon(
+            Icons.diamond_rounded,
+            size: 14,
+            color: hiResSelected ? c.onAccent : c.accent,
+          ),
+          selected: hiResSelected,
+          onTap: () => toggleQuality(QualityFilter.hiRes),
+        ),
+        BitChip(
+          label: 'On Device',
+          icon: Icons.download_done,
+          selected: onDeviceSelected,
+          onTap: toggleOnDevice,
+        ),
+      ],
+    );
+  }
+}
+
 class _ActiveFilterSummary extends ConsumerWidget {
   const _ActiveFilterSummary({required this.filters});
 
@@ -141,20 +228,9 @@ class _ActiveFilterSummary extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final parts = <String>[
       ...filters.codecs.map((c) => c.label),
-      if (filters.quality != QualityFilter.any)
-        switch (filters.quality) {
-          QualityFilter.hiRes => 'Hi-Res',
-          QualityFilter.cdQuality => 'CD',
-          QualityFilter.lossy => 'Lossy',
-          QualityFilter.any => '',
-        },
+      if (filters.quality != QualityFilter.any) filters.quality.shortLabel,
       if (filters.availability != AvailabilityFilter.any)
-        switch (filters.availability) {
-          AvailabilityFilter.offline => 'Pinned',
-          AvailabilityFilter.cached => 'On device',
-          AvailabilityFilter.cloudOnly => 'Cloud only',
-          AvailabilityFilter.any => '',
-        },
+        filters.availability.shortLabel,
       if (filters.genre != null) filters.genre!,
       if (!filters.showUnsupported) 'Supported only',
     ];
@@ -751,7 +827,8 @@ class _FavoritesTab extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    const query = TrackQuery(albumId: 'album-favorites');
+    final filters = ref.watch(libraryFiltersProvider);
+    final query = TrackQuery(albumId: 'album-favorites', filters: filters);
     final async = ref.watch(tracksProvider(query));
     final settings = ref.watch(settingsValueProvider);
     final selection = ref.watch(selectionProvider);
@@ -770,6 +847,7 @@ class _FavoritesTab extends ConsumerWidget {
       ),
       data: (paged) {
         if (paged.items.isEmpty) {
+          if (filters.isActive) return const _NoMatches();
           return const EmptyState(
             icon: Icons.favorite_border,
             title: 'No favourites yet',

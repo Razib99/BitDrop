@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'enums.dart';
+import 'models.dart';
 
 enum AlbumSort {
   title,
@@ -15,9 +16,50 @@ enum AlbumSort {
 
 enum TrackSort { title, artist, album, duration, sampleRate }
 
-enum QualityFilter { any, hiRes, cdQuality, lossy }
+enum QualityFilter { any, lossless, hiRes, cdQuality, lossy }
 
 enum AvailabilityFilter { any, offline, cached, cloudOnly }
+
+extension QualityFilterMatcher on QualityFilter {
+  /// Compact display label used in filter chips and summaries.
+  String get shortLabel => switch (this) {
+        QualityFilter.any => 'All',
+        QualityFilter.lossless => 'Lossless',
+        QualityFilter.hiRes => 'Hi-Res',
+        QualityFilter.cdQuality => 'CD',
+        QualityFilter.lossy => 'Lossy',
+      };
+
+  /// True when [format] satisfies this quality tier.
+  bool matches(AudioFormat format) => switch (this) {
+        QualityFilter.any => true,
+        QualityFilter.lossless =>
+          format.codec.isSupported && format.codec.isLossless,
+        QualityFilter.hiRes => format.isHiRes,
+        QualityFilter.cdQuality => format.isCdQuality,
+        QualityFilter.lossy => !format.codec.isLossless,
+      };
+}
+
+extension AvailabilityFilterMatcher on AvailabilityFilter {
+  /// Compact display label used in filter summaries.
+  String get shortLabel => switch (this) {
+        AvailabilityFilter.any => 'All',
+        AvailabilityFilter.offline => 'Pinned',
+        AvailabilityFilter.cached => 'On device',
+        AvailabilityFilter.cloudOnly => 'Cloud only',
+      };
+
+  /// True when [availability] satisfies this filter.
+  bool matches(Availability availability) => switch (this) {
+        AvailabilityFilter.any => true,
+        AvailabilityFilter.offline => availability == Availability.pinned,
+        AvailabilityFilter.cached =>
+          availability == Availability.cached ||
+              availability == Availability.pinned,
+        AvailabilityFilter.cloudOnly => availability == Availability.cloudOnly,
+      };
+}
 
 /// Shared filter payload for library queries and search.
 @immutable
@@ -51,6 +93,47 @@ class LibraryFilters {
       (availability != AvailabilityFilter.any ? 1 : 0) +
       (!showUnsupported ? 1 : 0) +
       (genre != null ? 1 : 0);
+
+  /// True when [album] passes every active criterion in this filter set.
+  bool matchesAlbum(Album album, {bool showUnsupportedSetting = true}) {
+    if (!showUnsupported && !album.format.codec.isSupported) return false;
+    if (!showUnsupportedSetting && !album.format.codec.isSupported) {
+      return false;
+    }
+    if (codecs.isNotEmpty && !codecs.contains(album.format.codec)) return false;
+    if (!quality.matches(album.format)) return false;
+    if (genre != null &&
+        genre!.isNotEmpty &&
+        album.genre?.toLowerCase() != genre!.toLowerCase()) {
+      return false;
+    }
+    if (!availability.matches(album.availability)) return false;
+    return true;
+  }
+
+  /// True when [track] passes every active criterion in this filter set.
+  bool matchesTrack(
+    Track track, {
+    bool showUnsupportedSetting = true,
+    String? resolvedArtistId,
+  }) {
+    if (artistId != null && resolvedArtistId != artistId) {
+      return false;
+    }
+    if (!showUnsupported && !track.format.codec.isSupported) return false;
+    if (!showUnsupportedSetting && !track.format.codec.isSupported) {
+      return false;
+    }
+    if (codecs.isNotEmpty && !codecs.contains(track.format.codec)) return false;
+    if (!quality.matches(track.format)) return false;
+    if (genre != null &&
+        genre!.isNotEmpty &&
+        track.genre?.toLowerCase() != genre!.toLowerCase()) {
+      return false;
+    }
+    if (!availability.matches(track.availability)) return false;
+    return true;
+  }
 
   @override
   bool operator ==(Object other) =>

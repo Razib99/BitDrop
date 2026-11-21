@@ -10,8 +10,10 @@ import '../../l10n/l10n.dart';
 import '../../providers/core_providers.dart';
 import '../../routing/routes.dart';
 
+import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/common.dart';
+import '../../widgets/indicators.dart';
 import '../../widgets/rows.dart';
 
 /// Instant search, grouped, with format-aware queries.
@@ -87,6 +89,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ),
         FilterChipRow(
           children: [
+            BitChip(
+              label: 'Lossless',
+              leading: LosslessWaveGlyph(
+                color: filters.quality == QualityFilter.lossless
+                    ? context.c.onAccent
+                    : context.c.tierBitPerfect,
+                size: 13,
+              ),
+              selected: filters.quality == QualityFilter.lossless,
+              onTap: () => _setQuality(QualityFilter.lossless),
+            ),
             BitChip(
               label: 'Hi-Res',
               selected: filters.quality == QualityFilter.hiRes,
