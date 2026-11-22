@@ -306,8 +306,16 @@ final selectionProvider = StateProvider<Set<String>>((ref) => const {});
 /// Time-synced or plain lyrics for the given track.
 final lyricsProvider =
     FutureProvider.family<TrackLyrics?, Track>((ref, track) {
-  return ref.watch(coreProvider).lyrics(track);
+  final forceSeq = ref.watch(lyricsForceRefreshProvider(track.id));
+  return ref.watch(coreProvider).lyrics(track, forceRefresh: forceSeq > 0);
 });
+
+/// Bumped when the user requests a forced lyrics re-search bypassing DB cache.
+final lyricsForceRefreshProvider =
+    StateProvider.family<int, String>((ref, trackId) => 0);
+
+/// Preferred font scale multiplier for lyrics readability (0.85, 1.0, 1.2).
+final lyricsFontScaleProvider = StateProvider<double>((ref) => 1.0);
 
 /// Per-track lyrics synchronization offset in milliseconds (-5000..5000).
 final lyricsOffsetProvider =

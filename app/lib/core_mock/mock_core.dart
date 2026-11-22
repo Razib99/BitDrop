@@ -1259,7 +1259,7 @@ class MockBitDropCore implements BitDropCore {
   }
 
   @override
-  Future<TrackLyrics?> lyrics(Track track) async {
+  Future<TrackLyrics?> lyrics(Track track, {bool forceRefresh = false}) async {
     return const TrackLyrics(
       synced: true,
       lines: [

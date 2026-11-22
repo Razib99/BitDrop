@@ -1146,6 +1146,15 @@ impl<'a> LibraryRepository<'a> {
         Ok(())
     }
 
+    /// Removes any cached or negative-cached lyrics entry for `file_id`.
+    pub fn clear_lyrics(&self, file_id: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM track_lyrics WHERE file_id = ?1",
+            params![file_id],
+        )?;
+        Ok(())
+    }
+
     /// Records a qualified playback entry into the `playback_history` table.
     pub fn record_playback(
         &self,
@@ -1552,6 +1561,9 @@ mod tests {
         assert_eq!(cached_none.source, "none");
         assert!(!cached_none.synced);
         assert!(cached_none.lines.is_empty());
+
+        db.clear_lyrics("track-2").unwrap();
+        assert!(db.get_lyrics("track-2").unwrap().is_none());
     }
 
     #[test]

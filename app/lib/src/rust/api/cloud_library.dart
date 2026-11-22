@@ -258,6 +258,11 @@ Future<void> cloudLibrarySaveLyrics(
     RustLib.instance.api.crateApiCloudLibraryCloudLibrarySaveLyrics(
         fileId: fileId, lyrics: lyrics);
 
+/// Clears any cached or negative-cached lyrics entry so a subsequent fetch queries online sources again.
+Future<void> cloudLibraryClearLyrics({required String fileId}) =>
+    RustLib.instance.api
+        .crateApiCloudLibraryCloudLibraryClearLyrics(fileId: fileId);
+
 /// Records a qualified playback entry into the `playback_history` table.
 Future<void> cloudLibraryRecordPlayback(
         {required String fileId,

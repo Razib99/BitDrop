@@ -1097,8 +1097,14 @@ class BitDropLibraryService {
     }
   }
 
-  Future<rust_cache.CloudTrackLyrics?> getLyrics(Track track) async {
+  Future<rust_cache.CloudTrackLyrics?> getLyrics(
+    Track track, {
+    bool forceRefresh = false,
+  }) async {
     try {
+      if (forceRefresh) {
+        await rust_cache.cloudLibraryClearLyrics(fileId: track.id);
+      }
       final res = await rust_cache.cloudLibraryGetLyrics(
         fileId: track.id,
         artist: track.artist,

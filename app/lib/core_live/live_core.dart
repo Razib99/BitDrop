@@ -1422,8 +1422,9 @@ class LiveBitDropCore implements BitDropCore {
   }
 
   @override
-  Future<TrackLyrics?> lyrics(Track track) async {
-    final rustLyrics = await _libraryService.getLyrics(track);
+  Future<TrackLyrics?> lyrics(Track track, {bool forceRefresh = false}) async {
+    final rustLyrics =
+        await _libraryService.getLyrics(track, forceRefresh: forceRefresh);
     if (rustLyrics == null) return null;
     return TrackLyrics(
       synced: rustLyrics.synced,

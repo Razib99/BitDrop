@@ -4,6 +4,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core_api/commands.dart';
@@ -145,7 +146,36 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
   }
 
   void _refreshLyrics() {
+    ref.read(lyricsForceRefreshProvider(widget.track.id).notifier).state++;
     ref.invalidate(lyricsProvider(widget.track));
+  }
+
+  void _cycleFontScale() {
+    final current = ref.read(lyricsFontScaleProvider);
+    final next = switch (current) {
+      < 0.95 => 1.0,
+      < 1.1 => 1.2,
+      _ => 0.85,
+    };
+    ref.read(lyricsFontScaleProvider.notifier).state = next;
+  }
+
+  Future<void> _copyLyrics(TrackLyrics lyrics) async {
+    final text = lyrics.synced && lyrics.lines.isNotEmpty
+        ? lyrics.lines
+            .map((l) => l.text.trim())
+            .where((t) => t.isNotEmpty)
+            .join('\n')
+        : lyrics.plainLyrics.trim();
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Lyrics copied'),
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
@@ -153,6 +183,7 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
     final lyricsAsync = ref.watch(lyricsProvider(widget.track));
     final position = ref.watch(positionProvider).valueOrNull?.positionMs ?? 0;
     final offsetMs = ref.watch(lyricsOffsetProvider(widget.track.id));
+    final fontScale = ref.watch(lyricsFontScaleProvider);
     final effectivePosition = position + offsetMs;
     final isPlaying = ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
     final glowColor = _glowColor();
@@ -258,10 +289,13 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
           synced: lyrics.synced,
           offsetLabel: _formatOffset(offsetMs),
           offsetActive: offsetMs != 0,
+          fontScale: fontScale,
           accentColor: glowColor,
           onDecreaseOffset: () => _adjustOffset(-250),
           onResetOffset: _resetOffset,
           onIncreaseOffset: () => _adjustOffset(250),
+          onCycleFontScale: _cycleFontScale,
+          onCopy: () => unawaited(_copyLyrics(lyrics)),
           onRefresh: _refreshLyrics,
         );
 
@@ -280,9 +314,9 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
                     child: Text(
                       lyrics.plainLyrics,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: Colors.white,
-                        fontSize: 18,
+                        fontSize: 18 * fontScale,
                         height: 1.8,
                         fontWeight: FontWeight.w500,
                       ),
@@ -364,6 +398,7 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
                                     isActive: index == _activeLineIndex,
                                     isPassed: index < _activeLineIndex,
                                     isPlaying: isPlaying,
+                                    fontScale: fontScale,
                                     glowColor: glowColor,
                                     onTap: () {
                                       final maxMs = widget.track.durationMs > 0
@@ -434,10 +469,13 @@ class _LyricsHeaderBar extends StatelessWidget {
     required this.synced,
     required this.offsetLabel,
     required this.offsetActive,
+    required this.fontScale,
     required this.accentColor,
     required this.onDecreaseOffset,
     required this.onResetOffset,
     required this.onIncreaseOffset,
+    required this.onCycleFontScale,
+    required this.onCopy,
     required this.onRefresh,
   });
 
@@ -445,14 +483,18 @@ class _LyricsHeaderBar extends StatelessWidget {
   final bool synced;
   final String offsetLabel;
   final bool offsetActive;
+  final double fontScale;
   final Color accentColor;
   final VoidCallback onDecreaseOffset;
   final VoidCallback onResetOffset;
   final VoidCallback onIncreaseOffset;
+  final VoidCallback onCycleFontScale;
+  final VoidCallback onCopy;
   final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
+    final scaled = (fontScale - 1.0).abs() > 0.01;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
           Spacing.sm, Spacing.xs, Spacing.xs, 0),
@@ -545,6 +587,43 @@ class _LyricsHeaderBar extends StatelessWidget {
             ),
             const SizedBox(width: 4),
           ],
+          InkWell(
+            key: const Key('lyrics_font_scale_button'),
+            onTap: onCycleFontScale,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+              decoration: BoxDecoration(
+                color: scaled
+                    ? accentColor.withOpacity(0.18)
+                    : Colors.white.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: scaled
+                      ? accentColor.withOpacity(0.5)
+                      : Colors.white.withOpacity(0.10),
+                ),
+              ),
+              child: Text(
+                'Aa',
+                style: TextStyle(
+                  color: scaled ? Colors.white : Colors.white70,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            key: const Key('lyrics_copy_button'),
+            tooltip: 'Copy lyrics',
+            onPressed: onCopy,
+            icon: const Icon(Icons.copy_rounded,
+                size: 14, color: Colors.white70),
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.all(5),
+            constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+          ),
           IconButton(
             key: const Key('lyrics_refresh_button'),
             tooltip: 'Re-search lyrics',
@@ -552,8 +631,8 @@ class _LyricsHeaderBar extends StatelessWidget {
             icon: const Icon(Icons.refresh_rounded,
                 size: 16, color: Colors.white70),
             visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.all(6),
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            padding: const EdgeInsets.all(5),
+            constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
           ),
         ],
       ),
@@ -631,6 +710,7 @@ class _LyricLineTile extends StatelessWidget {
     required this.isActive,
     required this.isPassed,
     required this.isPlaying,
+    required this.fontScale,
     required this.glowColor,
     required this.onTap,
   });
@@ -639,6 +719,7 @@ class _LyricLineTile extends StatelessWidget {
   final bool isActive;
   final bool isPassed;
   final bool isPlaying;
+  final double fontScale;
   final Color glowColor;
   final VoidCallback onTap;
 
@@ -679,7 +760,7 @@ class _LyricLineTile extends StatelessWidget {
                   color: isActive
                       ? Colors.white
                       : (isPassed ? Colors.white38 : Colors.white60),
-                  fontSize: isActive ? 22 : 18,
+                  fontSize: (isActive ? 22 : 18) * fontScale,
                   fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
                   height: 1.42,
                   shadows: isActive

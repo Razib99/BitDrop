@@ -760,6 +760,10 @@ impl MetadataDb {
         self.library().save_lyrics(file_id, lyrics)
     }
 
+    pub fn clear_lyrics(&self, file_id: &str) -> Result<()> {
+        self.library().clear_lyrics(file_id)
+    }
+
     pub fn record_playback(
         &self,
         file_id: &str,

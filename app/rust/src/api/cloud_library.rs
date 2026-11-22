@@ -2438,6 +2438,11 @@ pub fn cloud_library_save_lyrics(file_id: String, lyrics: CloudTrackLyrics) -> R
     })
 }
 
+/// Clears any cached or negative-cached lyrics entry so a subsequent fetch queries online sources again.
+pub fn cloud_library_clear_lyrics(file_id: String) -> Result<(), String> {
+    with_db(|db| db.clear_lyrics(&file_id).map_err(|e| anyhow::anyhow!(e)))
+}
+
 /// Records a qualified playback entry into the `playback_history` table.
 pub fn cloud_library_record_playback(
     file_id: String,

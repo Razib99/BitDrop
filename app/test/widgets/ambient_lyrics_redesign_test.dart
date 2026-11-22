@@ -7,15 +7,30 @@ import 'package:bitdrop/l10n/app_localizations.dart';
 import 'package:bitdrop/providers/core_providers.dart';
 import 'package:bitdrop/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _RecordingCore extends Fake implements BitDropCore {
   final List<PlayerCommand> commands = [];
+  final List<bool> forceRefreshCalls = [];
 
   @override
   Future<void> send(PlayerCommand cmd) async {
     commands.add(cmd);
+  }
+
+  @override
+  Future<TrackLyrics?> lyrics(Track track, {bool forceRefresh = false}) async {
+    forceRefreshCalls.add(forceRefresh);
+    return const TrackLyrics(
+      synced: true,
+      source: 'lrclib',
+      lines: [
+        LyricLine(timestampMs: 0, text: 'First line'),
+      ],
+      plainLyrics: 'First line',
+    );
   }
 }
 
@@ -248,6 +263,110 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(fetchCount, 2);
+    });
+
+    testWidgets(
+        'refresh button triggers forceRefresh: true through core.lyrics',
+        (tester) async {
+      final core = _RecordingCore();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            coreProvider.overrideWithValue(core),
+            positionProvider.overrideWith(
+              (ref) => Stream.value(
+                  const PositionInfo(positionMs: 0, durationMs: 1000)),
+            ),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.dark(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const Scaffold(
+              body: SizedBox(height: 420, child: AmbientLyricsView(track: track)),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(core.forceRefreshCalls, [false]);
+
+      await tester.tap(find.byKey(const Key('lyrics_refresh_button')));
+      await tester.pumpAndSettle();
+
+      expect(core.forceRefreshCalls, [false, true]);
+    });
+
+    testWidgets('cycles font scale and copies lyrics to clipboard',
+        (tester) async {
+      final core = _RecordingCore();
+      String? copiedText;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText = (call.arguments as Map)['text'] as String?;
+        }
+        return null;
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null);
+      });
+
+      const lyrics = TrackLyrics(
+        synced: true,
+        source: 'embedded',
+        lines: [
+          LyricLine(timestampMs: 0, text: 'Sundown dazzling day'),
+          LyricLine(timestampMs: 5000, text: ''),
+          LyricLine(timestampMs: 10000, text: 'Gold through my eyes'),
+        ],
+        plainLyrics: '',
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          coreProvider.overrideWithValue(core),
+          lyricsProvider(track).overrideWith((ref) => lyrics),
+          positionProvider.overrideWith(
+            (ref) => Stream.value(
+                const PositionInfo(positionMs: 0, durationMs: 60000)),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: AppTheme.dark(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const Scaffold(
+              body: SizedBox(height: 420, child: AmbientLyricsView(track: track)),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(container.read(lyricsFontScaleProvider), 1.0);
+      await tester.tap(find.byKey(const Key('lyrics_font_scale_button')));
+      await tester.pump();
+      expect(container.read(lyricsFontScaleProvider), 1.2);
+
+      await tester.tap(find.byKey(const Key('lyrics_font_scale_button')));
+      await tester.pump();
+      expect(container.read(lyricsFontScaleProvider), 0.85);
+
+      await tester.tap(find.byKey(const Key('lyrics_copy_button')));
+      await tester.pumpAndSettle();
+
+      expect(copiedText, 'Sundown dazzling day\nGold through my eyes');
+      expect(find.text('Lyrics copied'), findsOneWidget);
     });
   });
 }
