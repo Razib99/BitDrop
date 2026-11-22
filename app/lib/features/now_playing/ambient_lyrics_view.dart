@@ -397,6 +397,10 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
                                     line: lyrics.lines[index],
                                     isActive: index == _activeLineIndex,
                                     isPassed: index < _activeLineIndex,
+                                    distance: _activeLineIndex < 0
+                                        ? 1
+                                        : (index - _activeLineIndex).abs(),
+                                    manualBrowse: _manualBrowse,
                                     isPlaying: isPlaying,
                                     fontScale: fontScale,
                                     glowColor: glowColor,
@@ -527,112 +531,135 @@ class _LyricsHeaderBar extends StatelessWidget {
               ],
             ),
           ),
-          const Spacer(),
-          if (synced) ...[
-            Container(
-              decoration: BoxDecoration(
-                color: offsetActive
-                    ? accentColor.withOpacity(0.18)
-                    : Colors.white.withOpacity(0.07),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: offsetActive
-                      ? accentColor.withOpacity(0.5)
-                      : Colors.white.withOpacity(0.12),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  InkWell(
-                    key: const Key('lyrics_offset_minus'),
-                    onTap: onDecreaseOffset,
-                    borderRadius: const BorderRadius.horizontal(
-                      left: Radius.circular(14),
-                    ),
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-                      child: Icon(Icons.remove, size: 13, color: Colors.white70),
-                    ),
-                  ),
-                  InkWell(
-                    key: const Key('lyrics_offset_value'),
-                    onTap: onResetOffset,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 4),
-                      child: Text(
-                        offsetLabel,
-                        style: TextStyle(
-                          color: offsetActive ? Colors.white : Colors.white70,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
+          const SizedBox(width: Spacing.xs),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (synced) ...[
+                      Container(
+                        decoration: BoxDecoration(
+                          color: offsetActive
+                              ? accentColor.withOpacity(0.18)
+                              : Colors.white.withOpacity(0.07),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: offsetActive
+                                ? accentColor.withOpacity(0.5)
+                                : Colors.white.withOpacity(0.12),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            InkWell(
+                              key: const Key('lyrics_offset_minus'),
+                              onTap: onDecreaseOffset,
+                              borderRadius: const BorderRadius.horizontal(
+                                left: Radius.circular(14),
+                              ),
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 7, vertical: 4),
+                                child: Icon(Icons.remove,
+                                    size: 13, color: Colors.white70),
+                              ),
+                            ),
+                            InkWell(
+                              key: const Key('lyrics_offset_value'),
+                              onTap: onResetOffset,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 5, vertical: 4),
+                                child: Text(
+                                  offsetLabel,
+                                  style: TextStyle(
+                                    color: offsetActive
+                                        ? Colors.white
+                                        : Colors.white70,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            InkWell(
+                              key: const Key('lyrics_offset_plus'),
+                              onTap: onIncreaseOffset,
+                              borderRadius: const BorderRadius.horizontal(
+                                right: Radius.circular(14),
+                              ),
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 7, vertical: 4),
+                                child: Icon(Icons.add,
+                                    size: 13, color: Colors.white70),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    InkWell(
+                      key: const Key('lyrics_font_scale_button'),
+                      onTap: onCycleFontScale,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: scaled
+                              ? accentColor.withOpacity(0.18)
+                              : Colors.white.withOpacity(0.06),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: scaled
+                                ? accentColor.withOpacity(0.5)
+                                : Colors.white.withOpacity(0.10),
+                          ),
+                        ),
+                        child: Text(
+                          'Aa',
+                          style: TextStyle(
+                            color: scaled ? Colors.white : Colors.white70,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  InkWell(
-                    key: const Key('lyrics_offset_plus'),
-                    onTap: onIncreaseOffset,
-                    borderRadius: const BorderRadius.horizontal(
-                      right: Radius.circular(14),
+                    IconButton(
+                      key: const Key('lyrics_copy_button'),
+                      tooltip: 'Copy lyrics',
+                      onPressed: onCopy,
+                      icon: const Icon(Icons.copy_rounded,
+                          size: 14, color: Colors.white70),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.all(5),
+                      constraints:
+                          const BoxConstraints(minWidth: 26, minHeight: 26),
                     ),
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-                      child: Icon(Icons.add, size: 13, color: Colors.white70),
+                    IconButton(
+                      key: const Key('lyrics_refresh_button'),
+                      tooltip: 'Re-search lyrics',
+                      onPressed: onRefresh,
+                      icon: const Icon(Icons.refresh_rounded,
+                          size: 16, color: Colors.white70),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.all(5),
+                      constraints:
+                          const BoxConstraints(minWidth: 26, minHeight: 26),
                     ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 4),
-          ],
-          InkWell(
-            key: const Key('lyrics_font_scale_button'),
-            onTap: onCycleFontScale,
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-              decoration: BoxDecoration(
-                color: scaled
-                    ? accentColor.withOpacity(0.18)
-                    : Colors.white.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: scaled
-                      ? accentColor.withOpacity(0.5)
-                      : Colors.white.withOpacity(0.10),
-                ),
-              ),
-              child: Text(
-                'Aa',
-                style: TextStyle(
-                  color: scaled ? Colors.white : Colors.white70,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
+                  ],
                 ),
               ),
             ),
-          ),
-          IconButton(
-            key: const Key('lyrics_copy_button'),
-            tooltip: 'Copy lyrics',
-            onPressed: onCopy,
-            icon: const Icon(Icons.copy_rounded,
-                size: 14, color: Colors.white70),
-            visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.all(5),
-            constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-          ),
-          IconButton(
-            key: const Key('lyrics_refresh_button'),
-            tooltip: 'Re-search lyrics',
-            onPressed: onRefresh,
-            icon: const Icon(Icons.refresh_rounded,
-                size: 16, color: Colors.white70),
-            visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.all(5),
-            constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
           ),
         ],
       ),
@@ -709,6 +736,8 @@ class _LyricLineTile extends StatelessWidget {
     required this.line,
     required this.isActive,
     required this.isPassed,
+    required this.distance,
+    required this.manualBrowse,
     required this.isPlaying,
     required this.fontScale,
     required this.glowColor,
@@ -718,6 +747,8 @@ class _LyricLineTile extends StatelessWidget {
   final LyricLine line;
   final bool isActive;
   final bool isPassed;
+  final int distance;
+  final bool manualBrowse;
   final bool isPlaying;
   final double fontScale;
   final Color glowColor;
@@ -727,6 +758,14 @@ class _LyricLineTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = line.text.trim();
     final isBreak = text.isEmpty || text == '♪' || text == '•••';
+
+    final double textOpacity = isActive
+        ? 1.0
+        : manualBrowse
+            ? 0.78
+            : isPassed
+                ? (distance == 1 ? 0.44 : 0.30)
+                : (distance == 1 ? 0.68 : 0.44);
 
     return GestureDetector(
       onTap: onTap,
@@ -757,9 +796,7 @@ class _LyricLineTile extends StatelessWidget {
                 curve: Curves.easeOutCubic,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: isActive
-                      ? Colors.white
-                      : (isPassed ? Colors.white38 : Colors.white60),
+                  color: Colors.white.withOpacity(textOpacity),
                   fontSize: (isActive ? 22 : 18) * fontScale,
                   fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
                   height: 1.42,

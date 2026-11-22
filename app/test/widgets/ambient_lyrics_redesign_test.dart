@@ -368,5 +368,48 @@ void main() {
       expect(copiedText, 'Sundown dazzling day\nGold through my eyes');
       expect(find.text('Lyrics copied'), findsOneWidget);
     });
+
+    testWidgets('header bar renders cleanly at narrow 220px landscape width',
+        (tester) async {
+      final core = _RecordingCore();
+      const lyrics = TrackLyrics(
+        synced: true,
+        source: 'lrclib',
+        lines: [
+          LyricLine(timestampMs: 0, text: 'Compact panel line'),
+        ],
+        plainLyrics: '',
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            coreProvider.overrideWithValue(core),
+            lyricsProvider(track).overrideWith((ref) => lyrics),
+            positionProvider.overrideWith(
+              (ref) => Stream.value(
+                  const PositionInfo(positionMs: 0, durationMs: 60000)),
+            ),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.dark(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const Scaffold(
+              body: SizedBox(
+                width: 220,
+                height: 220,
+                child: AmbientLyricsView(track: track),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('LRCLIB'), findsOneWidget);
+      expect(find.text('Compact panel line'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 }
