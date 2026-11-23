@@ -756,6 +756,8 @@ class LiveBitDropCore implements BitDropCore {
     }
 
     if (!_disposed) {
+      _audioHandler.headsetMultiClickEnabled =
+          _settings.value.headsetMultiClickControls;
       _settingsRepo.syncFromLiveState(
         settings: _settings.value,
         eq: _eq.value,
@@ -1941,6 +1943,8 @@ class LiveBitDropCore implements BitDropCore {
           _clearUsbPermissionBanner();
         }
         _outputCoord.recomputeSignalPath();
+      } else if (cmd.key == 'headsetMultiClickControls' && cmd.value is bool) {
+        _audioHandler.headsetMultiClickEnabled = cmd.value as bool;
       } else if (cmd.key == 'autoSyncLocalMusic' && cmd.value == true) {
         if (_cloud != null) {
           unawaited(

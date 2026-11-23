@@ -32,6 +32,7 @@ class AppSettings {
     this.crossfadeSeconds = 0,
     this.replayGain = ReplayGainMode.off,
     this.resumeOnHeadsetConnect = true,
+    this.headsetMultiClickControls = true,
     this.sleepTimerDefaultMinutes = 30,
     this.mobileDataPolicy = MobileDataPolicy.ask,
     this.prefetchPolicy = PrefetchPolicy.wifiOnly,
@@ -70,6 +71,7 @@ class AppSettings {
   final int crossfadeSeconds;
   final ReplayGainMode replayGain;
   final bool resumeOnHeadsetConnect;
+  final bool headsetMultiClickControls;
   final int sleepTimerDefaultMinutes;
 
   final MobileDataPolicy mobileDataPolicy;
@@ -109,6 +111,7 @@ class AppSettings {
     int? crossfadeSeconds,
     ReplayGainMode? replayGain,
     bool? resumeOnHeadsetConnect,
+    bool? headsetMultiClickControls,
     int? sleepTimerDefaultMinutes,
     MobileDataPolicy? mobileDataPolicy,
     PrefetchPolicy? prefetchPolicy,
@@ -146,6 +149,8 @@ class AppSettings {
         replayGain: replayGain ?? this.replayGain,
         resumeOnHeadsetConnect:
             resumeOnHeadsetConnect ?? this.resumeOnHeadsetConnect,
+        headsetMultiClickControls:
+            headsetMultiClickControls ?? this.headsetMultiClickControls,
         sleepTimerDefaultMinutes:
             sleepTimerDefaultMinutes ?? this.sleepTimerDefaultMinutes,
         mobileDataPolicy: mobileDataPolicy ?? this.mobileDataPolicy,
@@ -188,6 +193,8 @@ class AppSettings {
         'replayGain' => copyWith(replayGain: value as ReplayGainMode),
         'resumeOnHeadsetConnect' =>
           copyWith(resumeOnHeadsetConnect: value as bool),
+        'headsetMultiClickControls' =>
+          copyWith(headsetMultiClickControls: value as bool),
         'sleepTimerDefaultMinutes' =>
           copyWith(sleepTimerDefaultMinutes: value as int),
         'mobileDataPolicy' =>

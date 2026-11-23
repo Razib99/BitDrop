@@ -152,6 +152,7 @@ abstract final class PersistenceCodec {
       'crossfadeSeconds': s.crossfadeSeconds,
       'replayGain': s.replayGain.name,
       'resumeOnHeadsetConnect': s.resumeOnHeadsetConnect,
+      'headsetMultiClickControls': s.headsetMultiClickControls,
       'sleepTimerDefaultMinutes': s.sleepTimerDefaultMinutes,
       'mobileDataPolicy': s.mobileDataPolicy.name,
       'prefetchPolicy': s.prefetchPolicy.name,
@@ -231,6 +232,8 @@ abstract final class PersistenceCodec {
             if (v != null) s = s.copyWith(replayGain: v);
           case 'resumeOnHeadsetConnect':
             if (val is bool) s = s.copyWith(resumeOnHeadsetConnect: val);
+          case 'headsetMultiClickControls':
+            if (val is bool) s = s.copyWith(headsetMultiClickControls: val);
           case 'sleepTimerDefaultMinutes':
             if (val is num) {
               s = s.copyWith(sleepTimerDefaultMinutes: val.toInt());

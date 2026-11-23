@@ -214,6 +214,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: (v) => _set('replayGain', v),
           ),
           SwitchSettingsTile(
+            title: 'IEM / headset button multi-press',
+            subtitle: 'Double-press for next track, triple-press for previous track.',
+            value: s.headsetMultiClickControls,
+            onChanged: (v) => _set('headsetMultiClickControls', v),
+          ),
+          SwitchSettingsTile(
             title: 'Resume on headset connect',
             subtitle: 'Starts playing again when you plug in or connect.',
             value: s.resumeOnHeadsetConnect,

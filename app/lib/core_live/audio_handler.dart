@@ -791,6 +791,7 @@ class BitDropAudioHandler extends BaseAudioHandler
   }
 
   Future<void> dispose() async {
+    _cancelPendingMediaClicks();
     await stop();
     await _becomingNoisySub?.cancel();
     _becomingNoisySub = null;
@@ -798,22 +799,72 @@ class BitDropAudioHandler extends BaseAudioHandler
     _eventsSubscription = null;
   }
 
+  /// When enabled, rapid presses of a single-button IEM / headset inline remote
+  /// map to: 1x = play/pause, 2x = next track, 3x = previous track.
+  bool headsetMultiClickEnabled = true;
+
+  /// Time window to accumulate consecutive inline headset button presses.
+  Duration mediaButtonMultiClickWindow = const Duration(milliseconds: 350);
+
+  int _mediaClickCount = 0;
+  Timer? _mediaClickTimer;
+
+  void _cancelPendingMediaClicks() {
+    _mediaClickTimer?.cancel();
+    _mediaClickTimer = null;
+    _mediaClickCount = 0;
+  }
+
+  Future<void> _togglePlayPause() async {
+    bool playing = false;
+    try {
+      playing = _engine.isPlaying;
+    } catch (_) {}
+    if (playing) {
+      await pause();
+    } else {
+      await play();
+    }
+  }
+
+  Future<void> _flushMediaClicks() async {
+    final count = _mediaClickCount;
+    _cancelPendingMediaClicks();
+    if (count <= 0) return;
+    if (count == 1) {
+      await _togglePlayPause();
+    } else if (count == 2) {
+      await skipToNext();
+    } else {
+      await skipToPrevious();
+    }
+  }
+
   @override
   Future<void> click([MediaButton button = MediaButton.media]) async {
     switch (button) {
       case MediaButton.media:
-        bool playing = false;
-        try {
-          playing = _engine.isPlaying;
-        } catch (_) {}
-        if (playing) {
-          await pause();
-        } else {
-          await play();
+        if (!headsetMultiClickEnabled) {
+          _cancelPendingMediaClicks();
+          await _togglePlayPause();
+          return;
         }
+        _mediaClickCount++;
+        _mediaClickTimer?.cancel();
+        if (_mediaClickCount >= 3) {
+          _cancelPendingMediaClicks();
+          await skipToPrevious();
+          return;
+        }
+        _mediaClickTimer = Timer(
+          mediaButtonMultiClickWindow,
+          () => unawaited(_flushMediaClicks()),
+        );
       case MediaButton.next:
+        _cancelPendingMediaClicks();
         await skipToNext();
       case MediaButton.previous:
+        _cancelPendingMediaClicks();
         await skipToPrevious();
     }
   }
