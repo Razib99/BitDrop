@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:rxdart/rxdart.dart';
 
 import '../core_api/enums.dart';
 import '../core_api/models.dart';
@@ -69,7 +70,7 @@ class OutputDeviceProbe {
   final bool _autoPoll;
 
   Timer? _timer;
-  final _controller = StreamController<OutputDevice?>.broadcast();
+  final _controller = BehaviorSubject<OutputDevice?>.seeded(null);
   OutputDevice? _last;
 
   /// Invoked when Android sends AudioManager.ACTION_AUDIO_BECOMING_NOISY
@@ -121,10 +122,7 @@ class OutputDeviceProbe {
     });
   }
 
-  Stream<OutputDevice?> get stream async* {
-    yield _last;
-    yield* _controller.stream;
-  }
+  Stream<OutputDevice?> get stream => _controller.stream;
 
   OutputDevice? get current => _last;
 
