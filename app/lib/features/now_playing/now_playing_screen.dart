@@ -369,6 +369,47 @@ class _ClassicLayout extends ConsumerWidget {
       );
     }
 
+    if (showLyrics) {
+      return Column(
+        children: [
+          _LyricsCompactHeader(
+            nowPlaying: nowPlaying,
+            onClose: onToggleLyrics,
+          ),
+          const SizedBox(height: Spacing.xs),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
+              child: AmbientLyricsView(
+                track: nowPlaying.track,
+                onClose: onToggleLyrics,
+              ),
+            ),
+          ),
+          const SizedBox(height: Spacing.sm),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: Spacing.xl),
+            child: CacheSeekBar(
+              durationMs: nowPlaying.track.durationMs,
+              activeColor: const Color(0xFFF1F5F9),
+            ),
+          ),
+          const SizedBox(height: Spacing.xs),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: Spacing.md),
+            child: TransportControls(compact: true),
+          ),
+          const SizedBox(height: Spacing.xs),
+          NowPlayingBottomActions(
+            nowPlaying: nowPlaying,
+            showLyrics: true,
+            onToggleLyrics: onToggleLyrics,
+          ),
+          const SizedBox(height: Spacing.sm),
+        ],
+      );
+    }
+
     return Column(
       children: [
         Expanded(
@@ -378,23 +419,9 @@ class _ClassicLayout extends ConsumerWidget {
               final size = (side < box.maxHeight ? side : box.maxHeight)
                   .clamp(96.0, 420.0);
               return Center(
-                child: AnimatedCrossFade(
-                  firstChild: NowPlayingSwipeableArt(
-                    nowPlaying: nowPlaying,
-                    size: size.toDouble(),
-                  ),
-                  secondChild: SizedBox(
-                    height: box.maxHeight,
-                    width: width - Spacing.md * 2,
-                    child: AmbientLyricsView(
-                      track: nowPlaying.track,
-                      onClose: onToggleLyrics,
-                    ),
-                  ),
-                  crossFadeState: showLyrics
-                      ? CrossFadeState.showSecond
-                      : CrossFadeState.showFirst,
-                  duration: const Duration(milliseconds: 320),
+                child: NowPlayingSwipeableArt(
+                  nowPlaying: nowPlaying,
+                  size: size.toDouble(),
                 ),
               );
             },
@@ -434,6 +461,83 @@ class _ClassicLayout extends ConsumerWidget {
           onToggleLyrics: onToggleLyrics,
         ),
       ];
+}
+
+/// Compact floating track header displayed above the expanded Lyrics canvas
+/// in Classic Now Playing mode.
+class _LyricsCompactHeader extends StatelessWidget {
+  const _LyricsCompactHeader({
+    required this.nowPlaying,
+    this.onClose,
+  });
+
+  final NowPlaying nowPlaying;
+  final VoidCallback? onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+    final track = nowPlaying.track;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: Spacing.md),
+      child: Container(
+        key: const Key('lyrics_compact_header'),
+        padding: const EdgeInsets.symmetric(
+            horizontal: Spacing.sm, vertical: Spacing.xs),
+        decoration: BoxDecoration(
+          color: c.surface1.withOpacity(0.55),
+          borderRadius: Radii.cardR,
+          border: Border.all(color: Colors.white.withOpacity(0.10)),
+        ),
+        child: Row(
+          children: [
+            AlbumArtwork(
+              artwork: track.artwork,
+              size: 40,
+              title: track.albumTitle,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            const SizedBox(width: Spacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    track.title,
+                    style: context.t.titleSmall.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    track.artist,
+                    style: context.t.bodySmall.copyWith(
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            if (onClose != null)
+              IconButton(
+                key: const Key('lyrics_compact_header_close'),
+                tooltip: 'Show artwork',
+                onPressed: onClose,
+                icon: const Icon(Icons.album_outlined,
+                    size: 20, color: Colors.white70),
+                visualDensity: VisualDensity.compact,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Minimal: small art, large type, technical detail up front.

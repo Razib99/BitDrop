@@ -1,6 +1,9 @@
+import 'package:bitdrop/core_api/bitdrop_core.dart';
+import 'package:bitdrop/core_api/commands.dart';
 import 'package:bitdrop/core_api/enums.dart';
 import 'package:bitdrop/core_api/models.dart';
 import 'package:bitdrop/core_api/queries.dart';
+import 'package:bitdrop/core_api/settings.dart';
 import 'package:bitdrop/core_mock/mock_core.dart';
 import 'package:bitdrop/features/library/library_screen.dart';
 import 'package:bitdrop/l10n/app_localizations.dart';
@@ -164,5 +167,63 @@ void main() {
 
       expect(container.read(libraryFiltersProvider).isActive, isFalse);
     });
+
+    testWidgets(
+        'empty library shows Sync Device Music onboarding and triggers local Rescan',
+        (tester) async {
+      final emptyCore = _EmptyTracksCore();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            coreProvider.overrideWithValue(emptyCore),
+            libraryTabProvider.overrideWith((ref) => LibraryTab.tracks),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.dark(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const Scaffold(body: LibraryScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('No music in your library yet'), findsOneWidget);
+      expect(find.text('Sync Device Music'), findsOneWidget);
+      expect(find.text('Nothing matches these filters'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('library_empty_sync_button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        emptyCore.commands,
+        contains(
+          predicate<PlayerCommand>((c) => c is Rescan && c.sourceId == 'local'),
+        ),
+      );
+    });
   });
+}
+
+class _EmptyTracksCore extends Fake implements BitDropCore {
+  final List<PlayerCommand> commands = [];
+
+  @override
+  Stream<AppSettings> get settings => Stream.value(const AppSettings());
+
+  @override
+  Stream<NowPlaying?> get nowPlaying => Stream.value(null);
+
+  @override
+  Stream<PlaybackState> get playback => Stream.value(const IdleState());
+
+  @override
+  Future<Paged<Track>> tracks(TrackQuery query) async =>
+      const Paged(items: [], total: 0);
+
+  @override
+  Future<void> send(PlayerCommand cmd) async {
+    commands.add(cmd);
+  }
 }

@@ -287,7 +287,18 @@ class _AlbumsTab extends ConsumerWidget {
         onRetry: () => ref.invalidate(albumsProvider(query)),
       ),
       data: (paged) {
-        if (paged.items.isEmpty) return const _NoMatches();
+        if (paged.items.isEmpty) {
+          return query.filters.isActive
+              ? const _NoMatches()
+              : _EmptyLibraryState(
+                  onSyncDevice: () async {
+                    await ref
+                        .read(coreProvider)
+                        .send(const Rescan(sourceId: 'local'));
+                    ref.invalidate(albumsProvider(query));
+                  },
+                );
+        }
         if (!grid) {
           return ListView.builder(
             key: const PageStorageKey('library_albums_list'),
@@ -413,7 +424,18 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
         onRetry: () => ref.invalidate(tracksProvider(query)),
       ),
       data: (paged) {
-        if (paged.items.isEmpty) return const _NoMatches();
+        if (paged.items.isEmpty) {
+          return query.filters.isActive
+              ? const _NoMatches()
+              : _EmptyLibraryState(
+                  onSyncDevice: () async {
+                    await ref
+                        .read(coreProvider)
+                        .send(const Rescan(sourceId: 'local'));
+                    ref.invalidate(tracksProvider(query));
+                  },
+                );
+        }
         return Stack(
           children: [
             RefreshIndicator(
@@ -720,6 +742,93 @@ class _PlaylistsTab extends ConsumerWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _EmptyLibraryState extends StatefulWidget {
+  const _EmptyLibraryState({required this.onSyncDevice});
+
+  final Future<void> Function() onSyncDevice;
+
+  @override
+  State<_EmptyLibraryState> createState() => _EmptyLibraryStateState();
+}
+
+class _EmptyLibraryStateState extends State<_EmptyLibraryState> {
+  bool _syncing = false;
+
+  Future<void> _runSync() async {
+    if (_syncing) return;
+    setState(() => _syncing = true);
+    try {
+      await widget.onSyncDevice();
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+    return RefreshIndicator(
+      onRefresh: _runSync,
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(Spacing.xl),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.library_music_outlined,
+                      size: 48,
+                      color: c.textTertiary,
+                    ),
+                    const SizedBox(height: Spacing.md),
+                    Text(
+                      'No music in your library yet',
+                      style: context.t.title,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: Spacing.xs),
+                    Text(
+                      'Sync Music, Downloads, and SD card folders from this device, or connect Google Drive.',
+                      style:
+                          context.t.bodySmall.copyWith(color: c.textSecondary),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: Spacing.lg),
+                    FilledButton.icon(
+                      key: const Key('library_empty_sync_button'),
+                      onPressed: _syncing ? null : _runSync,
+                      icon: _syncing
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.sync, size: 18),
+                      label: const Text('Sync Device Music'),
+                    ),
+                    const SizedBox(height: Spacing.xs),
+                    TextButton(
+                      key: const Key('library_empty_sources_button'),
+                      onPressed: () =>
+                          GoRouter.maybeOf(context)?.go(Routes.sources),
+                      child: const Text('Manage Sources'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

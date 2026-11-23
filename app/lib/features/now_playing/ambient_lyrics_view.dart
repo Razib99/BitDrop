@@ -136,18 +136,20 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
   }
 
   void _adjustOffset(int deltaMs) {
-    final current = ref.read(lyricsOffsetProvider(widget.track.id));
-    final next = (current + deltaMs).clamp(-5000, 5000);
-    ref.read(lyricsOffsetProvider(widget.track.id).notifier).state = next;
+    ref.read(lyricsOffsetProvider(widget.track.id).notifier).adjust(deltaMs);
   }
 
   void _resetOffset() {
-    ref.read(lyricsOffsetProvider(widget.track.id).notifier).state = 0;
+    ref.read(lyricsOffsetProvider(widget.track.id).notifier).reset();
   }
 
   void _refreshLyrics() {
-    ref.read(lyricsForceRefreshProvider(widget.track.id).notifier).state++;
-    ref.invalidate(lyricsProvider(widget.track));
+    requestForcedLyricsRefresh(ref, widget.track);
+  }
+
+  void _toggleAlignment() {
+    final current = ref.read(lyricsAlignLeftProvider);
+    ref.read(lyricsAlignLeftProvider.notifier).state = !current;
   }
 
   void _cycleFontScale() {
@@ -184,6 +186,7 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
     final position = ref.watch(positionProvider).valueOrNull?.positionMs ?? 0;
     final offsetMs = ref.watch(lyricsOffsetProvider(widget.track.id));
     final fontScale = ref.watch(lyricsFontScaleProvider);
+    final alignLeft = ref.watch(lyricsAlignLeftProvider);
     final effectivePosition = position + offsetMs;
     final isPlaying = ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
     final glowColor = _glowColor();
@@ -290,10 +293,12 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
           offsetLabel: _formatOffset(offsetMs),
           offsetActive: offsetMs != 0,
           fontScale: fontScale,
+          alignLeft: alignLeft,
           accentColor: glowColor,
           onDecreaseOffset: () => _adjustOffset(-250),
           onResetOffset: _resetOffset,
           onIncreaseOffset: () => _adjustOffset(250),
+          onToggleAlign: _toggleAlignment,
           onCycleFontScale: _cycleFontScale,
           onCopy: () => unawaited(_copyLyrics(lyrics)),
           onRefresh: _refreshLyrics,
@@ -313,7 +318,7 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
                     ),
                     child: Text(
                       lyrics.plainLyrics,
-                      textAlign: TextAlign.center,
+                      textAlign: alignLeft ? TextAlign.left : TextAlign.center,
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 18 * fontScale,
@@ -346,7 +351,20 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
 
         final showPreIntro = lyrics.lines.isNotEmpty &&
             effectivePosition < lyrics.lines.first.timestampMs &&
-            lyrics.lines.first.timestampMs >= 2500;
+            lyrics.lines.first.timestampMs >= 5000;
+
+        bool showInterludeAfter(int index) {
+          if (index != _activeLineIndex || index + 1 >= lyrics.lines.length) {
+            return false;
+          }
+          final cur = lyrics.lines[index];
+          final next = lyrics.lines[index + 1];
+          if (cur.text.trim().isEmpty || next.text.trim().isEmpty) return false;
+          final gapMs = next.timestampMs - cur.timestampMs;
+          return gapMs > 5000 &&
+              effectivePosition >= cur.timestampMs + 3500 &&
+              next.timestampMs - effectivePosition >= 800;
+        }
 
         return Column(
           children: [
@@ -391,7 +409,7 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
                                   ),
                                 for (int index = 0;
                                     index < lyrics.lines.length;
-                                    index++)
+                                    index++) ...[
                                   _LyricLineTile(
                                     key: _keyFor(index),
                                     line: lyrics.lines[index],
@@ -403,6 +421,7 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
                                     manualBrowse: _manualBrowse,
                                     isPlaying: isPlaying,
                                     fontScale: fontScale,
+                                    alignLeft: alignLeft,
                                     glowColor: glowColor,
                                     onTap: () {
                                       final maxMs = widget.track.durationMs > 0
@@ -419,6 +438,23 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
                                       }
                                     },
                                   ),
+                                  if (showInterludeAfter(index))
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: Spacing.sm),
+                                      child: Align(
+                                        alignment: alignLeft
+                                            ? Alignment.centerLeft
+                                            : Alignment.center,
+                                        child: _InstrumentalBreather(
+                                          key: const Key(
+                                              'lyrics_interlude_breather'),
+                                          animate: isPlaying,
+                                          color: glowColor,
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               ],
                             ),
                           ),
@@ -474,10 +510,12 @@ class _LyricsHeaderBar extends StatelessWidget {
     required this.offsetLabel,
     required this.offsetActive,
     required this.fontScale,
+    required this.alignLeft,
     required this.accentColor,
     required this.onDecreaseOffset,
     required this.onResetOffset,
     required this.onIncreaseOffset,
+    required this.onToggleAlign,
     required this.onCycleFontScale,
     required this.onCopy,
     required this.onRefresh,
@@ -488,10 +526,12 @@ class _LyricsHeaderBar extends StatelessWidget {
   final String offsetLabel;
   final bool offsetActive;
   final double fontScale;
+  final bool alignLeft;
   final Color accentColor;
   final VoidCallback onDecreaseOffset;
   final VoidCallback onResetOffset;
   final VoidCallback onIncreaseOffset;
+  final VoidCallback onToggleAlign;
   final VoidCallback onCycleFontScale;
   final VoidCallback onCopy;
   final VoidCallback onRefresh;
@@ -606,6 +646,22 @@ class _LyricsHeaderBar extends StatelessWidget {
                       ),
                       const SizedBox(width: 4),
                     ],
+                    IconButton(
+                      key: const Key('lyrics_align_button'),
+                      tooltip: alignLeft ? 'Center align' : 'Left align',
+                      onPressed: onToggleAlign,
+                      icon: Icon(
+                        alignLeft
+                            ? Icons.format_align_left_rounded
+                            : Icons.format_align_center_rounded,
+                        size: 15,
+                        color: alignLeft ? accentColor : Colors.white70,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.all(5),
+                      constraints:
+                          const BoxConstraints(minWidth: 26, minHeight: 26),
+                    ),
                     InkWell(
                       key: const Key('lyrics_font_scale_button'),
                       onTap: onCycleFontScale,
@@ -740,6 +796,7 @@ class _LyricLineTile extends StatelessWidget {
     required this.manualBrowse,
     required this.isPlaying,
     required this.fontScale,
+    required this.alignLeft,
     required this.glowColor,
     required this.onTap,
   });
@@ -751,6 +808,7 @@ class _LyricLineTile extends StatelessWidget {
   final bool manualBrowse;
   final bool isPlaying;
   final double fontScale;
+  final bool alignLeft;
   final Color glowColor;
   final VoidCallback onTap;
 
@@ -784,7 +842,7 @@ class _LyricLineTile extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
               )
             : null,
-        alignment: Alignment.center,
+        alignment: alignLeft ? Alignment.centerLeft : Alignment.center,
         child: isBreak
             ? _InstrumentalBreather(
                 key: const Key('lyrics_break_breather'),
@@ -794,7 +852,7 @@ class _LyricLineTile extends StatelessWidget {
             : AnimatedDefaultTextStyle(
                 duration: const Duration(milliseconds: 260),
                 curve: Curves.easeOutCubic,
-                textAlign: TextAlign.center,
+                textAlign: alignLeft ? TextAlign.left : TextAlign.center,
                 style: TextStyle(
                   color: Colors.white.withOpacity(textOpacity),
                   fontSize: (isActive ? 22 : 18) * fontScale,

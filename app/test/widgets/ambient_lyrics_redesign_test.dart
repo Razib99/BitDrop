@@ -411,5 +411,98 @@ void main() {
       expect(find.text('Compact panel line'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets(
+        'forced refresh is one-shot and does not stay sticky on later invalidations',
+        (tester) async {
+      final core = _RecordingCore();
+      final container = ProviderContainer(
+        overrides: [
+          coreProvider.overrideWithValue(core),
+          positionProvider.overrideWith(
+            (ref) => Stream.value(
+                const PositionInfo(positionMs: 0, durationMs: 1000)),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: AppTheme.dark(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const Scaffold(
+              body: SizedBox(height: 420, child: AmbientLyricsView(track: track)),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(core.forceRefreshCalls, [false]);
+
+      await tester.tap(find.byKey(const Key('lyrics_refresh_button')));
+      await tester.pumpAndSettle();
+      expect(core.forceRefreshCalls, [false, true]);
+
+      // Subsequent normal invalidation should NOT force-clear the DB cache again.
+      container.invalidate(lyricsProvider(track));
+      await tester.pumpAndSettle();
+      expect(core.forceRefreshCalls, [false, true, false]);
+    });
+
+    testWidgets(
+        'shows mid-song >5s instrumental gap breather and toggles left/center alignment',
+        (tester) async {
+      final core = _RecordingCore();
+      const lyrics = TrackLyrics(
+        synced: true,
+        source: 'lrclib',
+        lines: [
+          LyricLine(timestampMs: 0, text: 'Verse one ends here'),
+          LyricLine(timestampMs: 12000, text: 'Verse two enters after solo'),
+        ],
+        plainLyrics: '',
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          coreProvider.overrideWithValue(core),
+          lyricsProvider(track).overrideWith((ref) => lyrics),
+          positionProvider.overrideWith(
+            (ref) => Stream.value(
+                const PositionInfo(positionMs: 6000, durationMs: 60000)),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: AppTheme.dark(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const Scaffold(
+              body: SizedBox(height: 420, child: AmbientLyricsView(track: track)),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('lyrics_interlude_breather')),
+        findsOneWidget,
+      );
+
+      expect(container.read(lyricsAlignLeftProvider), isFalse);
+      await tester.tap(find.byKey(const Key('lyrics_align_button')));
+      await tester.pump();
+      expect(container.read(lyricsAlignLeftProvider), isTrue);
+    });
   });
 }

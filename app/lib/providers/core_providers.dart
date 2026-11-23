@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -14,6 +16,7 @@ import '../core_live/audio_handler.dart';
 import '../core_live/cloud_library.dart';
 import '../features/storage/google_drive_service.dart';
 import '../services/local_storage_bridge.dart';
+import '../src/rust/api/cloud_library.dart' as rust_cache;
 
 late final BitDropAudioHandler globalAudioHandler;
 
@@ -303,23 +306,77 @@ final trackSortProvider = StateProvider<TrackSort>((ref) => TrackSort.title);
 /// Multi-select state for library long-press.
 final selectionProvider = StateProvider<Set<String>>((ref) => const {});
 
+final _pendingForcedLyricsIdsProvider =
+    Provider<Set<String>>((ref) => <String>{});
+
+/// Requests a one-shot forced lyrics re-search that clears cached/negative DB
+/// rows for [track] on the next `lyricsProvider(track)` evaluation only.
+void requestForcedLyricsRefresh(WidgetRef ref, Track track) {
+  ref.read(_pendingForcedLyricsIdsProvider).add(track.id);
+  ref.invalidate(lyricsProvider(track));
+}
+
 /// Time-synced or plain lyrics for the given track.
 final lyricsProvider =
     FutureProvider.family<TrackLyrics?, Track>((ref, track) {
-  final forceSeq = ref.watch(lyricsForceRefreshProvider(track.id));
-  return ref.watch(coreProvider).lyrics(track, forceRefresh: forceSeq > 0);
+  final forceRefresh =
+      ref.read(_pendingForcedLyricsIdsProvider).remove(track.id);
+  return ref.watch(coreProvider).lyrics(track, forceRefresh: forceRefresh);
 });
-
-/// Bumped when the user requests a forced lyrics re-search bypassing DB cache.
-final lyricsForceRefreshProvider =
-    StateProvider.family<int, String>((ref, trackId) => 0);
 
 /// Preferred font scale multiplier for lyrics readability (0.85, 1.0, 1.2).
 final lyricsFontScaleProvider = StateProvider<double>((ref) => 1.0);
 
-/// Per-track lyrics synchronization offset in milliseconds (-5000..5000).
+/// Preferred text alignment for lyrics (false = centered, true = left-aligned).
+final lyricsAlignLeftProvider = StateProvider<bool>((ref) => false);
+
+/// Persisted per-track lyrics timing offset in milliseconds (`-5000..5000`).
+class LyricsOffsetNotifier extends StateNotifier<int> {
+  LyricsOffsetNotifier(this.trackId) : super(0) {
+    unawaited(_restore());
+  }
+
+  final String trackId;
+
+  String get _kvKey => 'lyrics_offset_$trackId';
+
+  Future<void> _restore() async {
+    try {
+      final raw = await rust_cache.cloudDbGetKv(key: _kvKey);
+      if (raw == null || raw.isEmpty || !mounted) return;
+      final parsed = int.tryParse(raw.trim());
+      if (parsed != null && state == 0) {
+        state = parsed.clamp(-5000, 5000);
+      }
+    } catch (_) {
+      // Headless unit tests without initialized Rust FFI remain in-memory.
+    }
+  }
+
+  void adjust(int deltaMs) {
+    final next = (state + deltaMs).clamp(-5000, 5000);
+    state = next;
+    unawaited(_persist(next));
+  }
+
+  void reset() {
+    state = 0;
+    unawaited(_persist(0));
+  }
+
+  Future<void> _persist(int value) async {
+    try {
+      await rust_cache.cloudDbSetKv(key: _kvKey, value: '$value');
+    } catch (_) {}
+  }
+}
+
+/// Per-track lyrics synchronization offset in milliseconds (-5000..5000),
+/// persisted in the local SQLite KV store across restarts.
 final lyricsOffsetProvider =
-    StateProvider.family<int, String>((ref, trackId) => 0);
+    StateNotifierProvider.family<LyricsOffsetNotifier, int, String>(
+  (ref, trackId) => LyricsOffsetNotifier(trackId),
+);
 
 /// Live Audiophile Listening Recap metrics.
 final listeningRecapProvider = FutureProvider<ListeningRecap?>((ref) {
