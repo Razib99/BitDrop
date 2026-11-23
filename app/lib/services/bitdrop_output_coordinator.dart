@@ -19,6 +19,11 @@ class BitDropOutputCoordinator {
   StreamSubscription<OutputDevice?>? _outputProbeSub;
   (String deviceId, int sampleRate, int bitDepth, bool bitPerfect)?
       _lastMixerConfigKey;
+  (String deviceId, int sampleRate, int bitDepth, bool bitPerfect)?
+      _inFlightMixerKey;
+  (String deviceId, int sampleRate, int bitDepth, bool bitPerfect)?
+      _lastFailedMixerKey;
+  (String deviceId, int sampleRate, int bitDepth)? _lastRejectedBitPerfectKey;
   Future<void> _mixerUpdateChain = Future<void>.value();
 
   VoidCallback? onEarphoneDisconnected;
@@ -34,6 +39,7 @@ class BitDropOutputCoordinator {
   bool Function()? isDirectUsbDriverEnabled;
   bool Function()? isPreferBitPerfectEnabled;
   EqState? Function()? eqStateProvider;
+  rust.EngineOutputState Function()? engineOutputStateProvider;
 
   static const _unknownPath = SignalPath(
     tier: OutputTier.unknown,
@@ -59,6 +65,7 @@ class BitDropOutputCoordinator {
     this.isDirectUsbDriverEnabled,
     this.isPreferBitPerfectEnabled,
     this.eqStateProvider,
+    this.engineOutputStateProvider,
   }) : _outputProbe = outputProbe ?? OutputDeviceProbe();
 
   Stream<OutputDevice?> get outputDevice => _outputProbe.stream;
@@ -140,6 +147,13 @@ class BitDropOutputCoordinator {
     if (device == null || device.type != DeviceType.usb) return false;
     if (isDirectUsbDriverEnabled?.call() == true) return true;
     if (isPreferBitPerfectEnabled?.call() == true) {
+      if (_lastRejectedBitPerfectKey != null &&
+          _lastRejectedBitPerfectKey!.$1 == device.id &&
+          (trackSampleRate == null ||
+              trackSampleRate <= 0 ||
+              _lastRejectedBitPerfectKey!.$2 == trackSampleRate)) {
+        return true;
+      }
       return !supportsOsBitPerfectForRate(device, trackSampleRate);
     }
     return false;
@@ -260,7 +274,7 @@ class BitDropOutputCoordinator {
     if (_signalPath.isClosed) return;
     final rust.EngineOutputState out;
     try {
-      out = rust.engineOutputState();
+      out = (engineOutputStateProvider ?? rust.engineOutputState)();
     } catch (_) {
       if (!_signalPath.isClosed) _signalPath.add(_unknownPath);
       return;
@@ -295,8 +309,19 @@ class BitDropOutputCoordinator {
     final effectiveStreamRate = source.codec == Codec.dsf && !isDirectUsb
         ? 176400
         : source.sampleRate;
+    final effectiveBitDepth = source.bitDepth > 0 ? source.bitDepth : 16;
+    if (isDirectUsb ||
+        device == null ||
+        (_lastRejectedBitPerfectKey != null &&
+            _lastRejectedBitPerfectKey!.$1 != device.id)) {
+      _lastRejectedBitPerfectKey = null;
+      _lastFailedMixerKey = null;
+    }
+    final bitPerfectRejected = _lastRejectedBitPerfectKey ==
+        (device?.id, effectiveStreamRate, effectiveBitDepth);
     final supportsSourceRateBitPerfect = device != null &&
         device.supportsBitPerfect &&
+        !bitPerfectRejected &&
         (device.bitPerfectRates.isEmpty ||
             device.bitPerfectRates.contains(effectiveStreamRate));
     final isExclusiveBitPerfect = isDirectUsb ||
@@ -360,6 +385,10 @@ class BitDropOutputCoordinator {
       );
     } else {
       _lastMixerConfigKey = null;
+      _inFlightMixerKey = null;
+      if (device?.type != DeviceType.usb || isDirectUsb) {
+        _lastRejectedBitPerfectKey = null;
+      }
     }
 
     final eqState = eqStateProvider?.call();
@@ -421,14 +450,18 @@ class BitDropOutputCoordinator {
     }
   }
 
-  /// Synchronizes Android 14+ / iOS preferred mixer attributes BEFORE Rust opens
-  /// a new track's output stream so exclusive/bit-perfect engages on frame 0.
+  /// Synchronizes Direct USB auto-attach and Android 14+ / iOS preferred mixer
+  /// attributes BEFORE Rust opens a new track's output stream so bit-perfect
+  /// engages on frame 0 without racing stream creation.
   Future<void> prepareForTrackFormat(int sampleRate, int bitDepth) {
     final op = _mixerUpdateChain.then((_) async {
-      if (sampleRate <= 0 || !_supported) return;
+      if (!_supported) return;
       final device = _outputProbe.current;
       if (device == null || device.type != DeviceType.usb) {
         _lastMixerConfigKey = null;
+        _inFlightMixerKey = null;
+        _lastFailedMixerKey = null;
+        _lastRejectedBitPerfectKey = null;
         return;
       }
 
@@ -436,26 +469,73 @@ class BitDropOutputCoordinator {
       try {
         streamBackend = rust.engineGetStreamBackend();
       } catch (_) {}
-      if (streamBackend == 'DirectUsb') return;
+      if (streamBackend == 'DirectUsb') {
+        _lastFailedMixerKey = null;
+        _lastRejectedBitPerfectKey = null;
+        return;
+      }
 
       final bits = bitDepth > 0 ? bitDepth : 16;
       final dsp = _isDspCurrentlyActive();
-      final supportsRate = supportsOsBitPerfectForRate(device, sampleRate);
-      if (!supportsRate && isPreferBitPerfectEnabled?.call() == true) {
-        unawaited(
-          evaluateUsbAutoAttach(device: device, trackSampleRate: sampleRate),
+      final rejectedAlready = sampleRate > 0 &&
+          _lastRejectedBitPerfectKey == (device.id, sampleRate, bits);
+      final supportsRate = !rejectedAlready &&
+          (sampleRate > 0
+              ? supportsOsBitPerfectForRate(device, sampleRate)
+              : device.supportsBitPerfect);
+
+      // Await USB auto-attach inside the pre-open barrier so DirectUsb is
+      // active before frame 0 opens (non-blocking if permission isn't granted).
+      if ((!supportsRate || isDirectUsbDriverEnabled?.call() == true) &&
+          (isPreferBitPerfectEnabled?.call() == true ||
+              isDirectUsbDriverEnabled?.call() == true)) {
+        await evaluateUsbAutoAttach(
+          device: device,
+          trackSampleRate: sampleRate > 0 ? sampleRate : null,
         );
+        try {
+          streamBackend = rust.engineGetStreamBackend();
+        } catch (_) {}
+        if (streamBackend == 'DirectUsb') {
+          _lastFailedMixerKey = null;
+          _lastRejectedBitPerfectKey = null;
+          return;
+        }
       }
+
+      if (sampleRate <= 0) return;
+
       final bitPerfect = !dsp && supportsRate;
       final key = (device.id, sampleRate, bits, bitPerfect);
-      if (key == _lastMixerConfigKey) return;
-      _lastMixerConfigKey = key;
+      if (key == _lastMixerConfigKey || key == _lastFailedMixerKey) return;
 
-      await _outputProbe.setPreferredMixerAttributes(
-        sampleRate: sampleRate,
-        bitDepth: bits,
-        bitPerfect: bitPerfect,
-      );
+      _inFlightMixerKey = key;
+      try {
+        final ok = await _outputProbe.setPreferredMixerAttributes(
+          sampleRate: sampleRate,
+          bitDepth: bits,
+          bitPerfect: bitPerfect,
+        );
+        if (ok) {
+          _lastMixerConfigKey = key;
+          _lastFailedMixerKey = null;
+          _lastRejectedBitPerfectKey = null;
+        } else {
+          _lastMixerConfigKey = null;
+          _lastFailedMixerKey = key;
+          if (bitPerfect) {
+            _lastRejectedBitPerfectKey = (device.id, sampleRate, bits);
+            if (isPreferBitPerfectEnabled?.call() == true) {
+              await evaluateUsbAutoAttach(
+                device: device,
+                trackSampleRate: sampleRate,
+              );
+            }
+          }
+        }
+      } finally {
+        if (_inFlightMixerKey == key) _inFlightMixerKey = null;
+      }
     }).catchError((Object e) {
       debugPrint('[output] prepareForTrackFormat failed: $e');
     });
@@ -472,23 +552,46 @@ class BitDropOutputCoordinator {
   }) {
     final bits = bitDepth > 0 ? bitDepth : 16;
     final key = (device.id, sampleRate, bits, bitPerfect);
-    if (key == _lastMixerConfigKey) return;
+    if (key == _lastMixerConfigKey ||
+        key == _inFlightMixerKey ||
+        key == _lastFailedMixerKey) {
+      return;
+    }
+    if (bitPerfect &&
+        _lastRejectedBitPerfectKey == (device.id, sampleRate, bits)) {
+      return;
+    }
     final previousKey = _lastMixerConfigKey;
-    _lastMixerConfigKey = key;
+    _inFlightMixerKey = key;
 
     _mixerUpdateChain = _mixerUpdateChain.then((_) async {
-      final ok = await _outputProbe.setPreferredMixerAttributes(
-        sampleRate: sampleRate,
-        bitDepth: bits,
-        bitPerfect: bitPerfect,
-      );
-      if (ok &&
-          (currentOutputRate != sampleRate ||
-              (previousKey != null && previousKey.$4 != bitPerfect))) {
-        try {
-          rust.engineReopenOutputStream();
-        } catch (_) {}
-        recomputeSignalPath();
+      try {
+        final ok = await _outputProbe.setPreferredMixerAttributes(
+          sampleRate: sampleRate,
+          bitDepth: bits,
+          bitPerfect: bitPerfect,
+        );
+        if (ok) {
+          _lastMixerConfigKey = key;
+          _lastFailedMixerKey = null;
+          _lastRejectedBitPerfectKey = null;
+          if (currentOutputRate != sampleRate ||
+              (previousKey != null && previousKey.$4 != bitPerfect)) {
+            try {
+              rust.engineReopenOutputStream();
+            } catch (_) {}
+            recomputeSignalPath();
+          }
+        } else {
+          _lastMixerConfigKey = null;
+          _lastFailedMixerKey = key;
+          if (bitPerfect) {
+            _lastRejectedBitPerfectKey = (device.id, sampleRate, bits);
+            recomputeSignalPath();
+          }
+        }
+      } finally {
+        if (_inFlightMixerKey == key) _inFlightMixerKey = null;
       }
     }).catchError((Object e) {
       debugPrint('[output] sync USB mixer failed: $e');
@@ -618,7 +721,10 @@ class BitDropOutputCoordinator {
             : '$apiText system mixer (AudioFlinger) mixes audio at $outRate, so your $srcRate file is resampled before reaching $devName. Enable Direct USB access to unlock bit-perfect output.';
       }
       if (engineSincResampled) {
-        return '$devName is locked to $apiText $outRate hardware mixer clock, so $srcRate audio is converted in-engine via BitDrop\'s 64-bit 256-tap Sinc resampler to avoid Android mixer distortion.';
+        final jackNote = device?.type == DeviceType.wiredAnalog
+            ? ' (3.5mm / wired analog jack)'
+            : '';
+        return '$devName$jackNote is locked to $apiText $outRate hardware mixer clock, so $srcRate audio is converted in-engine via BitDrop\'s 64-bit 256-tap Sinc resampler to avoid Android mixer distortion.';
       }
       return '$apiText system mixer (AudioFlinger) mixes audio at '
           '$outRate, so your $srcRate file is resampled before it reaches $devName. '

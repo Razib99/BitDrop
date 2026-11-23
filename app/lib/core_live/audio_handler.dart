@@ -512,7 +512,7 @@ class BitDropAudioHandler extends BaseAudioHandler
     final isCloud = item.extras?['source'] == 'cloud';
     final sr = item.extras?['sampleRate'] as int? ?? 0;
     final bits = item.extras?['bitDepth'] as int? ?? 0;
-    if (sr > 0 && onPrepareOutputFormat != null) {
+    if (onPrepareOutputFormat != null) {
       try {
         await onPrepareOutputFormat!(sr, bits);
       } catch (e) {

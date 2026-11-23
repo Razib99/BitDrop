@@ -500,7 +500,7 @@ class BitDropSettingsRepository {
     final created = DeviceProfile(
       deviceId: device.id,
       deviceName: device.name,
-      replayGain: _settings.value.replayGain,
+      replayGain: ReplayGainMode.off,
       autoApply: true,
     );
     final updated = [..._deviceProfiles.value, created];

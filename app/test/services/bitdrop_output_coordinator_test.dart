@@ -2,6 +2,8 @@ import 'package:bitdrop/core_api/enums.dart';
 import 'package:bitdrop/core_api/models.dart';
 import 'package:bitdrop/core_live/output_device.dart';
 import 'package:bitdrop/services/bitdrop_output_coordinator.dart';
+import 'package:bitdrop/src/rust/api/audio_engine.dart' as rust;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -254,6 +256,7 @@ void main() {
       );
       expect(wiredMsg, contains('44.1 kHz'));
       expect(wiredMsg, contains('48 kHz'));
+      expect(wiredMsg, contains('3.5mm / wired analog jack'));
       expect(wiredMsg, contains('256-tap Sinc'));
 
       const bt = OutputDevice(
@@ -275,6 +278,148 @@ void main() {
       );
       expect(btMsg, contains('Bluetooth'));
       expect(btMsg, contains('256-tap Sinc'));
+    });
+
+    test(
+        'prepareForTrackFormat records rejected mixer attributes, avoids false bit-perfect, and falls back to USB prompt',
+        () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      const channel = MethodChannel('com.bitdrop/audio_device');
+      int mixerCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'setPreferredMixerAttributes') {
+          mixerCalls++;
+          return false; // Simulate Android rejecting bit-perfect request
+        }
+        if (call.method == 'listUsbAudioDevices') {
+          return [
+            {
+              'deviceId': 42,
+              'vendorId': 0x1234,
+              'productId': 0x5678,
+              'productName': 'Android 14 USB DAC',
+              'manufacturerName': 'Generic',
+              'hasPermission': false,
+            }
+          ];
+        }
+        return null;
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+      });
+
+      final prompted = <UsbAudioDevice>[];
+      var hasTrack = false;
+      final rejectedCoord = BitDropOutputCoordinator(
+        outputProbe: probe,
+        isPreferBitPerfectEnabled: () => true,
+        isDirectUsbDriverEnabled: () => false,
+        onUsbPermissionNeeded: prompted.add,
+        engineOutputStateProvider: () => rust.EngineOutputState(
+          sourceCodec: 'FLAC',
+          sourceSampleRate: 96000,
+          sourceBits: 24,
+          sourceChannels: 2,
+          outputSampleRate: 96000,
+          dspActive: false,
+          hasTrack: hasTrack,
+          hardwareSampleRate: 96000,
+          hardwareFormat: 'PCM_FLOAT',
+        ),
+      );
+      rejectedCoord.start();
+      addTearDown(rejectedCoord.dispose);
+
+      const api34Usb = OutputDevice(
+        id: 'usb-api34',
+        name: 'Android 14 USB DAC',
+        type: DeviceType.usb,
+        supportedRates: [44100, 48000, 96000],
+        bitDepths: [16, 24],
+        hardwareVolume: HardwareVolume.yes,
+        maxTier: OutputTier.bitPerfect,
+        supportsBitPerfect: true,
+        bitPerfectRates: [44100, 48000, 96000],
+        apiLevel: 34,
+      );
+      probe.emitForTesting(api34Usb);
+      await pumpEventQueue();
+
+      await rejectedCoord.prepareForTrackFormat(96000, 24);
+      expect(mixerCalls, equals(1));
+      expect(prompted, hasLength(1));
+
+      // Even if telemetry reports native 96kHz, rejected bit-perfect must NOT claim OutputTier.bitPerfect.
+      hasTrack = true;
+      rejectedCoord.recomputeSignalPath();
+      expect(rejectedCoord.currentSignalPath.tier, equals(OutputTier.nativeRate));
+    });
+
+    test(
+        'prepareForTrackFormat with unknown sampleRate (0) still awaits Direct USB auto-attach check',
+        () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      const channel = MethodChannel('com.bitdrop/audio_device');
+      bool listCompleted = false;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'listUsbAudioDevices') {
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+          listCompleted = true;
+          return [
+            {
+              'deviceId': 99,
+              'vendorId': 0x1111,
+              'productId': 0x2222,
+              'productName': 'Untagged Track USB IEM',
+              'manufacturerName': 'Generic',
+              'hasPermission': false,
+            }
+          ];
+        }
+        return null;
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+      });
+
+      final prompted = <UsbAudioDevice>[];
+      final coord = BitDropOutputCoordinator(
+        outputProbe: probe,
+        isPreferBitPerfectEnabled: () => true,
+        isDirectUsbDriverEnabled: () => false,
+        onUsbPermissionNeeded: prompted.add,
+      );
+      coord.start();
+      addTearDown(coord.dispose);
+
+      const preApi34Usb = OutputDevice(
+        id: 'usb-pre34',
+        name: 'Untagged Track USB IEM',
+        type: DeviceType.usb,
+        supportedRates: [44100, 48000],
+        bitDepths: [16, 24],
+        hardwareVolume: HardwareVolume.unknown,
+        maxTier: OutputTier.nativeRate,
+        supportsBitPerfect: false,
+      );
+      probe.emitForTesting(preApi34Usb);
+      await Future<void>.delayed(const Duration(milliseconds: 45));
+      prompted.clear();
+      listCompleted = false;
+
+      // prepareForTrackFormat must await USB check before returning!
+      await coord.prepareForTrackFormat(0, 0);
+      expect(listCompleted, isTrue);
+      expect(prompted, hasLength(1));
     });
   });
 }
