@@ -95,7 +95,29 @@ class LiveBitDropCore implements BitDropCore {
   Timer? _diagnosticsTimer;
   final List<double> _throughputHistory = [];
   final List<double> _bufferHistory = [];
+  double _softwareVolumeDb = 0.0;
   bool _disposed = false;
+
+  /// Effective digital attenuation sent to Rust (`<= 0.0 dB`).
+  /// When Hearing Safety Attenuation is enabled, guarantees output never exceeds
+  /// `safetyAttenuationDb` even if the in-app volume slider is raised toward 0 dB.
+  double effectiveSoftwareVolumeDb([AppSettings? settingsOverride]) {
+    final s = settingsOverride ?? _settings.value;
+    final sliderDb = _softwareVolumeDb.clamp(-80.0, 0.0);
+    if (s.safetyAttenuationEnabled) {
+      final safetyDb = s.safetyAttenuationDb.clamp(-80.0, 0.0);
+      return sliderDb < safetyDb ? sliderDb : safetyDb;
+    }
+    return sliderDb;
+  }
+
+  void _syncSoftwareVolumeToEngine([AppSettings? settingsOverride]) {
+    final db = effectiveSoftwareVolumeDb(settingsOverride);
+    try {
+      rust.engineSetSoftwareVolumeDb(db: db);
+    } catch (_) {}
+    _outputCoord.recomputeSignalPath();
+  }
 
   LiveBitDropCore(
     this._audioHandler, {
@@ -153,16 +175,14 @@ class LiveBitDropCore implements BitDropCore {
           cloudProvider: () => _cloud,
           isDirectUsbDriverEnabled: () => _settings.value.directUsbDriver,
           isPreferBitPerfectEnabled: () => _settings.value.preferBitPerfect,
+          softwareVolumeDbProvider: () => effectiveSoftwareVolumeDb(),
+          isSafetyAttenuationEnabled: () =>
+              _settings.value.safetyAttenuationEnabled,
           eqStateProvider: () => _eq.value,
           onEarphoneDisconnected: _pauseIfPlaying,
           onBecomingNoisy: _pauseIfPlaying,
-          onInterruptionBegan: _pauseIfPlaying,
-          onInterruptionEnded: (shouldResume) {
-            if (shouldResume && !_audioHandler.playbackState.value.playing) {
-              debugPrint('[core] audio interruption ended: resuming playback');
-              unawaited(_audioHandler.play());
-            }
-          },
+          onInterruptionBegan: _audioHandler.handleExternalInterruptionBegan,
+          onInterruptionEnded: _audioHandler.handleExternalInterruptionEnded,
           onUsbPermissionNeeded: _showUsbPermissionBanner,
           onUsbPermissionResolved: _clearUsbPermissionBanner,
         );
@@ -369,7 +389,7 @@ class LiveBitDropCore implements BitDropCore {
   }
 
   void _pauseIfPlaying() {
-    if (_audioHandler.playbackState.value.playing) {
+    if (_audioHandler.isPlayingOrLoading) {
       debugPrint('[core] pausing playback on route change/interruption');
       unawaited(_audioHandler.pause());
     }
@@ -758,6 +778,8 @@ class LiveBitDropCore implements BitDropCore {
     if (!_disposed) {
       _audioHandler.headsetMultiClickEnabled =
           _settings.value.headsetMultiClickControls;
+      _audioHandler.setGaplessEnabled(_settings.value.gapless);
+      _syncSoftwareVolumeToEngine(_settings.value);
       _settingsRepo.syncFromLiveState(
         settings: _settings.value,
         eq: _eq.value,
@@ -1945,6 +1967,11 @@ class LiveBitDropCore implements BitDropCore {
         _outputCoord.recomputeSignalPath();
       } else if (cmd.key == 'headsetMultiClickControls' && cmd.value is bool) {
         _audioHandler.headsetMultiClickEnabled = cmd.value as bool;
+      } else if (cmd.key == 'gapless' && cmd.value is bool) {
+        _audioHandler.setGaplessEnabled(cmd.value as bool);
+      } else if (cmd.key == 'safetyAttenuationEnabled' ||
+          cmd.key == 'safetyAttenuationDb') {
+        _syncSoftwareVolumeToEngine(updated);
       } else if (cmd.key == 'autoSyncLocalMusic' && cmd.value == true) {
         if (_cloud != null) {
           unawaited(
@@ -1962,6 +1989,7 @@ class LiveBitDropCore implements BitDropCore {
       );
       _settings.add(updated);
       _settingsRepo.syncFromLiveState(settings: updated);
+      _syncSoftwareVolumeToEngine(updated);
       unawaited(_saveSettings());
     } else if (cmd is SetEqBands) {
       final updated = _eq.value
@@ -2104,7 +2132,8 @@ class LiveBitDropCore implements BitDropCore {
         unawaited(_saveSettings());
       }
     } else if (cmd is SetVolumeDb) {
-      // Set volume mode
+      _softwareVolumeDb = cmd.db.isFinite ? cmd.db.clamp(-80.0, 0.0) : 0.0;
+      _syncSoftwareVolumeToEngine();
     }
   }
 

@@ -76,9 +76,15 @@ class BitDropAudioHandler extends BaseAudioHandler
   StreamSubscription<rust.EngineEvent>? _eventsSubscription;
   AudioSession? _audioSession;
   StreamSubscription<void>? _becomingNoisySub;
+  StreamSubscription<AudioInterruptionEvent>? _interruptionSub;
   int _playGeneration = 0;
   int _stageGeneration = 0;
   bool _stopped = false;
+  bool _wantPlaying = false;
+  bool _wasPlayingBeforeInterruption = false;
+  bool _atQueueEnd = false;
+  bool _needsOpenOnPlay = false;
+  bool _gaplessEnabled = true;
   String? _playbackError;
   int _currentIndex = -1;
   RepeatMode _repeatMode = RepeatMode.off;
@@ -88,6 +94,18 @@ class BitDropAudioHandler extends BaseAudioHandler
   RepeatMode get repeatMode => _repeatMode;
   bool get shuffleMode => _shuffleMode;
   int get currentIndex => _currentIndex;
+  bool get isPlayingOrLoading => _wantPlaying || playbackState.value.playing;
+  bool get gaplessEnabled => _gaplessEnabled;
+
+  void setGaplessEnabled(bool enabled) {
+    if (_gaplessEnabled == enabled) return;
+    _gaplessEnabled = enabled;
+    if (!enabled) {
+      _clearStagedTrack();
+    } else if (_wantPlaying && !_stopped) {
+      unawaited(_stageNextTrack());
+    }
+  }
 
   /// Where the Rust engine writes cached byte-range chunks. Until this is set
   /// the handler can still play local files; only cloud playback needs it.
@@ -134,8 +152,41 @@ class BitDropAudioHandler extends BaseAudioHandler
     _becomingNoisySub = session.becomingNoisyEventStream.listen((_) {
       debugPrint(
           '[BitDropAudioHandler] Earphones disconnected (becoming noisy) -> pause');
-      pause();
+      unawaited(pause());
     });
+    _interruptionSub?.cancel();
+    _interruptionSub = session.interruptionEventStream.listen((event) {
+      if (event.begin) {
+        debugPrint(
+            '[BitDropAudioHandler] Audio focus interruption began (${event.type})');
+        handleExternalInterruptionBegan();
+      } else {
+        final shouldResume = event.type == AudioInterruptionType.pause ||
+            event.type == AudioInterruptionType.duck;
+        debugPrint(
+            '[BitDropAudioHandler] Audio focus interruption ended (${event.type}, shouldResume=$shouldResume)');
+        handleExternalInterruptionEnded(shouldResume);
+      }
+    });
+  }
+
+  /// Handles platform audio focus / phone-call interruption start.
+  /// Records whether playback was active so interruption-end never spontaneously
+  /// resumes music the user had manually paused.
+  void handleExternalInterruptionBegan() {
+    if (isPlayingOrLoading) {
+      _wasPlayingBeforeInterruption = true;
+      unawaited(pause());
+    }
+  }
+
+  /// Handles platform audio focus / phone-call interruption end.
+  void handleExternalInterruptionEnded(bool shouldResume) {
+    final resume = shouldResume && _wasPlayingBeforeInterruption;
+    _wasPlayingBeforeInterruption = false;
+    if (resume && !playbackState.value.playing) {
+      unawaited(play());
+    }
   }
 
   void _initEngineEventStream() {
@@ -197,11 +248,33 @@ class BitDropAudioHandler extends BaseAudioHandler
         ));
       case rust.EngineEvent_TrackStarted(:final fileId):
         final items = queue.value;
-        final idx = items.indexWhere((i) {
+        bool matchesItem(MediaItem i) {
           final itemFileId = i.extras?['fileId'] as String? ?? i.id;
           final itemPath = i.extras?['path'] as String?;
           return itemFileId == fileId || itemPath == fileId || i.id == fileId;
-        });
+        }
+
+        // If the current queue entry already matches (e.g. direct open or duplicate
+        // track IDs in the queue), keep `_currentIndex` intact instead of jumping
+        // back to an earlier duplicate.
+        if (_currentIndex >= 0 &&
+            _currentIndex < items.length &&
+            matchesItem(items[_currentIndex])) {
+          break;
+        }
+
+        // Prefer the expected gapless successor before scanning from index 0.
+        int idx = -1;
+        final expectedNext = _currentIndex + 1 < items.length
+            ? _currentIndex + 1
+            : (_repeatMode == RepeatMode.all && items.isNotEmpty ? 0 : -1);
+        if (expectedNext >= 0 &&
+            expectedNext < items.length &&
+            matchesItem(items[expectedNext])) {
+          idx = expectedNext;
+        } else {
+          idx = items.indexWhere(matchesItem);
+        }
         if (idx >= 0 && idx != _currentIndex) {
           _currentIndex = idx;
           mediaItem.add(items[idx]);
@@ -284,6 +357,7 @@ class BitDropAudioHandler extends BaseAudioHandler
 
   Future<void> _stageNextTrack() async {
     _clearStagedTrack();
+    if (!_gaplessEnabled) return;
     final generation = _stageGeneration;
     final items = queue.value;
     if (_stopped ||
@@ -296,9 +370,8 @@ class BitDropAudioHandler extends BaseAudioHandler
     final nextIndex = _currentIndex + 1 < items.length
         ? _currentIndex + 1
         : (_repeatMode == RepeatMode.all ? 0 : null);
-    if (nextIndex == null) return;
+    if (nextIndex == null || nextIndex == _currentIndex) return;
     final nextItem = items[nextIndex];
-    if (nextItem.id == items[_currentIndex].id) return;
     try {
       if (nextItem.extras?['source'] == 'cloud') {
         final extras = nextItem.extras!;
@@ -483,7 +556,10 @@ class BitDropAudioHandler extends BaseAudioHandler
 
     if (shuffle && items.length > 1) {
       final chosen = items[safeStart];
-      final others = items.where((i) => i.id != chosen.id).toList()..shuffle();
+      final others = <MediaItem>[
+        for (var i = 0; i < items.length; i++)
+          if (i != safeStart) items[i],
+      ]..shuffle();
       final shuffledList = [chosen, ...others];
       queue.add(shuffledList);
       _currentIndex = 0;
@@ -503,11 +579,26 @@ class BitDropAudioHandler extends BaseAudioHandler
     if (_currentIndex < 0 || _currentIndex >= items.length) return;
 
     _stopped = false;
+    _atQueueEnd = false;
     _playbackError = null;
+    _wantPlaying = true;
+    _needsOpenOnPlay = true;
     final generation = ++_playGeneration;
     _clearStagedTrack();
     final item = items[_currentIndex];
     mediaItem.add(item);
+
+    try {
+      final active = await _audioSession?.setActive(true);
+      if (active == false) {
+        if (generation == _playGeneration) {
+          _wantPlaying = false;
+          _syncState();
+        }
+        return;
+      }
+    } catch (_) {}
+    if (!_wantPlaying || generation != _playGeneration) return;
 
     final isCloud = item.extras?['source'] == 'cloud';
     final sr = item.extras?['sampleRate'] as int? ?? 0;
@@ -518,20 +609,23 @@ class BitDropAudioHandler extends BaseAudioHandler
       } catch (e) {
         debugPrint('[play] prepare output format failed: $e');
       }
-      if (generation != _playGeneration) return;
+      if (!_wantPlaying || generation != _playGeneration) return;
     }
     debugPrint('[play] opening ${item.id} '
         'source=${item.extras?['source'] ?? 'local'}');
 
     if (isCloud) {
       await _playCloud(item, generation);
-      if (generation == _playGeneration) unawaited(_stageNextTrack());
+      if (_wantPlaying && generation == _playGeneration) {
+        unawaited(_stageNextTrack());
+      }
       return;
     }
 
     // For a local track the id (or extras['path']) is the physical path on disk.
     final localPath = item.extras?['path'] as String? ?? item.id;
     try {
+      _needsOpenOnPlay = false;
       _engine.play(localPath);
       unawaited(_stageNextTrack());
     } catch (e) {
@@ -555,7 +649,7 @@ class BitDropAudioHandler extends BaseAudioHandler
     }
 
     final token = await provider();
-    if (generation != _playGeneration) return;
+    if (!_wantPlaying || generation != _playGeneration) return;
     if (token == null) {
       // Expired or revoked grant. Google's testing mode drops it roughly
       // weekly, so this is an expected state, not a crash.
@@ -567,6 +661,7 @@ class BitDropAudioHandler extends BaseAudioHandler
     debugPrint('[play] cloud ${extras['fileId']} '
         'size=${extras['sizeBytes']} ext=${extras['ext']}');
 
+    _needsOpenOnPlay = false;
     _engine.playCloud(
       fileId: extras['fileId'] as String,
       url: extras['url'] as String,
@@ -606,6 +701,8 @@ class BitDropAudioHandler extends BaseAudioHandler
       _currentIndex = 0;
       await _playCurrentIndex();
     } else if (auto) {
+      _atQueueEnd = true;
+      _needsOpenOnPlay = true;
       await pause();
       await seek(Duration.zero);
     }
@@ -729,10 +826,19 @@ class BitDropAudioHandler extends BaseAudioHandler
 
   @override
   Future<void> play() async {
+    _wasPlayingBeforeInterruption = false;
+    _wantPlaying = true;
     try {
-      unawaited(_audioSession?.setActive(true));
+      final active = await _audioSession?.setActive(true);
+      if (active == false) {
+        _wantPlaying = false;
+        _syncState();
+        return;
+      }
     } catch (_) {}
-    if (_stopped || _playbackError != null) {
+    if (!_wantPlaying) return;
+
+    if (_stopped || _playbackError != null || _atQueueEnd || _needsOpenOnPlay) {
       await _playCurrentIndex();
       _syncState();
       return;
@@ -745,6 +851,10 @@ class BitDropAudioHandler extends BaseAudioHandler
 
   @override
   Future<void> pause() async {
+    _wantPlaying = false;
+    if (_needsOpenOnPlay) {
+      _playGeneration++;
+    }
     try {
       _engine.pause();
     } catch (_) {}
@@ -781,6 +891,10 @@ class BitDropAudioHandler extends BaseAudioHandler
   @override
   Future<void> stop() async {
     _stopped = true;
+    _wantPlaying = false;
+    _wasPlayingBeforeInterruption = false;
+    _atQueueEnd = false;
+    _needsOpenOnPlay = true;
     _playGeneration++;
     _clearStagedTrack();
     try {
@@ -795,6 +909,8 @@ class BitDropAudioHandler extends BaseAudioHandler
     await stop();
     await _becomingNoisySub?.cancel();
     _becomingNoisySub = null;
+    await _interruptionSub?.cancel();
+    _interruptionSub = null;
     await _eventsSubscription?.cancel();
     _eventsSubscription = null;
   }
@@ -816,11 +932,11 @@ class BitDropAudioHandler extends BaseAudioHandler
   }
 
   Future<void> _togglePlayPause() async {
-    bool playing = false;
+    bool enginePlaying = false;
     try {
-      playing = _engine.isPlaying;
+      enginePlaying = _engine.isPlaying;
     } catch (_) {}
-    if (playing) {
+    if (enginePlaying || _wantPlaying || playbackState.value.playing) {
       await pause();
     } else {
       await play();

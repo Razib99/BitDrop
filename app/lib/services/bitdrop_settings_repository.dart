@@ -369,6 +369,12 @@ class BitDropSettingsRepository {
       safetyAttenuationDb: cmd.db ?? _settings.value.safetyAttenuationDb,
     );
     _settings.add(updated);
+    try {
+      final db = updated.safetyAttenuationEnabled
+          ? updated.safetyAttenuationDb.clamp(-80.0, 0.0)
+          : 0.0;
+      rust.engineSetSoftwareVolumeDb(db: db);
+    } catch (_) {}
     await saveSettings();
     onSettingsChanged?.call(updated);
   }

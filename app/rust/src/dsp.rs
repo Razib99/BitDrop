@@ -98,6 +98,7 @@ pub struct DspConfigSnapshot {
     pub is_parametric: bool,
     pub graphic_gains: [f32; 10],
     pub headroom_mode: u8,
+    pub software_volume_db: f64,
     pub dop_active: bool,
     pub version: u64,
 }
@@ -119,6 +120,7 @@ impl Default for DspConfigSnapshot {
             is_parametric: false,
             graphic_gains: [0.0; 10],
             headroom_mode: HEADROOM_SMART,
+            software_volume_db: 0.0,
             dop_active: false,
             version: 0,
         }
@@ -137,56 +139,72 @@ pub enum BoundaryKind {
     TrackChanged,
 }
 
+const BOUNDARY_ID_REGISTRY_CAP: usize = 128;
+
+static NEXT_BOUNDARY_TOKEN: AtomicU64 = AtomicU64::new(1);
+
+lazy_static::lazy_static! {
+    /// Control/decode-side table mapping compact `BoundaryMarker` tokens to full,
+    /// untruncated UTF-8 file IDs / local paths. Never accessed by the real-time audio callback.
+    static ref BOUNDARY_ID_REGISTRY: parking_lot::Mutex<std::collections::VecDeque<(u64, String)>> =
+        parking_lot::Mutex::new(std::collections::VecDeque::with_capacity(BOUNDARY_ID_REGISTRY_CAP));
+}
+
+fn register_boundary_file_id(file_id: &str) -> u64 {
+    let token = NEXT_BOUNDARY_TOKEN.fetch_add(1, Ordering::Relaxed);
+    let mut reg = BOUNDARY_ID_REGISTRY.lock();
+    if reg.len() >= BOUNDARY_ID_REGISTRY_CAP {
+        reg.pop_front();
+    }
+    reg.push_back((token, file_id.to_string()));
+    token
+}
+
+fn resolve_boundary_file_id(token: u64) -> String {
+    let reg = BOUNDARY_ID_REGISTRY.lock();
+    reg.iter()
+        .rev()
+        .find(|(t, _)| *t == token)
+        .map(|(_, id)| id.clone())
+        .unwrap_or_default()
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct BoundaryMarker {
     pub trigger_at_frame: u64,
     pub kind: BoundaryKind,
-    pub file_id: [u8; 64],
-    pub file_id_len: usize,
+    pub track_token: u64,
 }
 
 impl BoundaryMarker {
     pub fn track_ended(trigger_at_frame: u64, file_id_str: &str) -> Self {
-        let mut id = [0u8; 64];
-        let bytes = file_id_str.as_bytes();
-        let len = bytes.len().min(64);
-        id[..len].copy_from_slice(&bytes[..len]);
         Self {
             trigger_at_frame,
             kind: BoundaryKind::TrackEnded,
-            file_id: id,
-            file_id_len: len,
+            track_token: register_boundary_file_id(file_id_str),
         }
     }
 
     pub fn track_started(trigger_at_frame: u64, file_id_str: &str) -> Self {
-        let mut id = [0u8; 64];
-        let bytes = file_id_str.as_bytes();
-        let len = bytes.len().min(64);
-        id[..len].copy_from_slice(&bytes[..len]);
         Self {
             trigger_at_frame,
             kind: BoundaryKind::TrackStarted,
-            file_id: id,
-            file_id_len: len,
+            track_token: register_boundary_file_id(file_id_str),
         }
     }
 
     pub fn track_changed(trigger_at_frame: u64, file_id_str: &str) -> Self {
-        let mut id = [0u8; 64];
-        let bytes = file_id_str.as_bytes();
-        let len = bytes.len().min(64);
-        id[..len].copy_from_slice(&bytes[..len]);
         Self {
             trigger_at_frame,
             kind: BoundaryKind::TrackChanged,
-            file_id: id,
-            file_id_len: len,
+            track_token: register_boundary_file_id(file_id_str),
         }
     }
 
-    pub fn file_id_str(&self) -> &str {
-        std::str::from_utf8(&self.file_id[..self.file_id_len]).unwrap_or("")
+    /// Resolves the full, untruncated UTF-8 file ID associated with this marker.
+    /// Must only be called on control/test threads, never on the audio callback thread.
+    pub fn file_id_string(&self) -> String {
+        resolve_boundary_file_id(self.track_token)
     }
 }
 
@@ -1102,6 +1120,21 @@ impl DspPipelineV2 {
 
     pub fn set_crossfeed_preset(&mut self, preset: u8) {
         self.crossfeed.set_preset(preset, self.sample_rate);
+    }
+
+    /// Sets digital attenuation in decibels (`-80.0..=0.0 dB`).
+    /// `0.0 dB` restores exact unity (`1.0`) for bit-perfect bypass.
+    pub fn set_software_volume_db(&mut self, db: f64) {
+        let clamped = if db.is_finite() {
+            db.clamp(-80.0, 0.0)
+        } else {
+            0.0
+        };
+        self.software_volume = if clamped.abs() < 1e-6 {
+            1.0
+        } else {
+            10.0_f64.powf(clamped / 20.0)
+        };
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f64) {

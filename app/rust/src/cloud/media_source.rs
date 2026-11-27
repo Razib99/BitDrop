@@ -311,6 +311,8 @@ lazy_static::lazy_static! {
         .expect("Failed to build HTTP client");
     /// Currently active sparse track cache for instantaneous cancellation on seek/skip/stop.
     static ref ACTIVE_CACHE: Mutex<Weak<SparseTrackCache>> = Mutex::new(Weak::new());
+    /// Currently staged (next-track prebuffer) sparse track cache for cancellation on skip/clear.
+    static ref STAGED_CACHE: Mutex<Weak<SparseTrackCache>> = Mutex::new(Weak::new());
     static ref OPEN_CACHES: Mutex<HashMap<PathBuf, Weak<SparseTrackCache>>> = Mutex::new(HashMap::new());
     static ref FETCH_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::new(4);
 }
@@ -319,8 +321,18 @@ pub fn set_active_cache(cache: Option<&Arc<SparseTrackCache>>) {
     *ACTIVE_CACHE.lock() = cache.map(Arc::downgrade).unwrap_or_default();
 }
 
+pub fn set_staged_cache(cache: Option<&Arc<SparseTrackCache>>) {
+    *STAGED_CACHE.lock() = cache.map(Arc::downgrade).unwrap_or_default();
+}
+
 pub fn abort_active_fetches() {
     if let Some(cache) = ACTIVE_CACHE.lock().upgrade() {
+        cache.cancel_fetches();
+    }
+}
+
+pub fn abort_staged_fetches() {
+    if let Some(cache) = STAGED_CACHE.lock().upgrade() {
         cache.cancel_fetches();
     }
 }
@@ -1129,6 +1141,18 @@ impl CloudMediaSource {
         if self.cache.active_generation.load(Ordering::Acquire) != self.generation {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "Read cancelled"));
         }
+        // Under MeteredCellular, prebuffer fetches are capped at chunk 0's header probe budget.
+        // Fail fast if container probing requires bytes beyond that cap (e.g. >512 KB artwork
+        // or a trailing MP4/ALAC moov atom) instead of spinning forever on Condvar::wait_for.
+        if get_network_transport_mode() == NetworkTransportMode::MeteredCellular
+            && self.cache.is_prebuffer.load(Ordering::Relaxed)
+            && (chunk_idx > 0 || needed_end > CELLULAR_HEADER_PROBE_BYTES as u32)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Metered cellular prebuffer probe cap reached",
+            ));
+        }
         CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
 
         // Trigger fetch of current chunk and fill rolling runway
@@ -1856,6 +1880,40 @@ mod tests {
         cache.chunk_states[0].store(final_state as u8, Ordering::Release);
 
         // Reset transport mode for other parallel tests
+        set_network_transport_mode(NetworkTransportMode::UnmeteredWifi);
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_cellular_prebuffer_probe_cap_fails_fast_instead_of_spinning() {
+        let temp_dir = std::env::temp_dir().join("bitdrop_cellular_prebuffer_cap_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        set_network_transport_mode(NetworkTransportMode::MeteredCellular);
+
+        let total_size = 6 * 1024 * 1024; // 6 MB (3 chunks)
+        let source = CloudMediaSource::new_prebuffer(
+            "cell_prebuf_cap".to_string(),
+            "http://127.0.0.1:9/never".to_string(),
+            None,
+            total_size,
+            temp_dir.clone(),
+        )
+        .unwrap();
+
+        // Reading beyond 512 KB in chunk 0 or in chunk > 0 during cellular prebuffer
+        // must immediately return WouldBlock instead of blocking indefinitely.
+        let err_chunk0 = source
+            .ensure_bytes_available(0, (CELLULAR_HEADER_PROBE_BYTES + 4096) as u32)
+            .expect_err("Should fail fast beyond 512 KB cellular probe cap");
+        assert_eq!(err_chunk0.kind(), io::ErrorKind::WouldBlock);
+
+        let err_chunk2 = source.ensure_bytes_available(2, 4096).expect_err(
+            "Should fail fast on trailing chunk (e.g. MP4 moov) during cellular prebuffer",
+        );
+        assert_eq!(err_chunk2.kind(), io::ErrorKind::WouldBlock);
+
         set_network_transport_mode(NetworkTransportMode::UnmeteredWifi);
         let _ = fs::remove_dir_all(&temp_dir);
     }

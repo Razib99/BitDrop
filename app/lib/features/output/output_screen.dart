@@ -191,11 +191,15 @@ class _VolumePanel extends ConsumerStatefulWidget {
 }
 
 class _VolumePanelState extends ConsumerState<_VolumePanel> {
-  double _db = -14;
+  double? _dbOverride;
 
   @override
   Widget build(BuildContext context) {
     final c = context.c;
+    final settings = ref.watch(settingsValueProvider);
+    final defaultDb =
+        settings.safetyAttenuationEnabled ? settings.safetyAttenuationDb : 0.0;
+    final db = (_dbOverride ?? defaultDb).clamp(-60.0, 0.0);
     final mode = widget.signal?.volume ?? VolumeMode.system;
     final dacOwned = mode == VolumeMode.dacHardware;
 
@@ -222,7 +226,7 @@ class _VolumePanelState extends ConsumerState<_VolumePanel> {
                   style: context.t.titleSmall,
                 ),
               ),
-              if (!dacOwned) Text(Fmt.db(_db), style: context.t.monoReadout),
+              if (!dacOwned) Text(Fmt.db(db), style: context.t.monoReadout),
             ],
           ),
           const SizedBox(height: Spacing.xxs),
@@ -236,16 +240,16 @@ class _VolumePanelState extends ConsumerState<_VolumePanel> {
             Semantics(
               slider: true,
               label: 'Volume',
-              value: Fmt.db(_db),
+              value: Fmt.db(db),
               excludeSemantics: true,
               child: Slider(
-                value: _db.clamp(-60, 0),
+                value: db,
                 min: -60,
                 max: 0,
                 divisions: 60,
-                label: Fmt.db(_db),
+                label: Fmt.db(db),
                 onChanged: (v) {
-                  setState(() => _db = v);
+                  setState(() => _dbOverride = v);
                   sendCommand(ref, SetVolumeDb(v));
                 },
               ),

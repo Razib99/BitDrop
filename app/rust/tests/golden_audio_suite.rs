@@ -665,7 +665,7 @@ fn gate_4_offline_render_last_frame_exact() {
         .expect("Gate 4: Triggered event must be present");
     assert_eq!(triggered.kind, BoundaryKind::TrackEnded);
     assert_eq!(triggered.trigger_at_frame, total_source_frames as u64);
-    assert_eq!(triggered.file_id_str(), "golden_track");
+    assert_eq!(triggered.file_id_string(), "golden_track");
 
     for i in 0..total_source_frames {
         assert_eq!(
@@ -856,15 +856,15 @@ fn gate_5_gapless_boundary_continuity() {
         "Gate 5: Exactly 3 boundary markers must be triggered"
     );
     assert_eq!(triggered_events[0].kind, BoundaryKind::TrackStarted);
-    assert_eq!(triggered_events[0].file_id_str(), "album_track_1");
+    assert_eq!(triggered_events[0].file_id_string(), "album_track_1");
     assert_eq!(triggered_events[0].trigger_at_frame, 0);
 
     assert_eq!(triggered_events[1].kind, BoundaryKind::TrackChanged);
-    assert_eq!(triggered_events[1].file_id_str(), "album_track_2");
+    assert_eq!(triggered_events[1].file_id_string(), "album_track_2");
     assert_eq!(triggered_events[1].trigger_at_frame, boundary_frame as u64);
 
     assert_eq!(triggered_events[2].kind, BoundaryKind::TrackEnded);
-    assert_eq!(triggered_events[2].file_id_str(), "album_track_2");
+    assert_eq!(triggered_events[2].file_id_string(), "album_track_2");
     assert_eq!(triggered_events[2].trigger_at_frame, total_frames as u64);
 
     // Verify sample continuity across boundary (frame boundary - 20 .. boundary + 20)

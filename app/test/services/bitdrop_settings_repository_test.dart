@@ -77,13 +77,22 @@ void main() {
       expect(lastNotifiedSettings?.conserveCellularData, isTrue);
     });
 
-    test('handleSetSafetyAttenuation updates safety settings', () async {
+    test('handleSetSafetyAttenuation updates safety settings and engine DSP state',
+        () async {
+      await repo.handleSetBypass(const SetBypass(true));
       await repo.handleSetSafetyAttenuation(
         const SetSafetyAttenuation(enabled: true, db: -15.0),
       );
       expect(repo.currentSettings.safetyAttenuationEnabled, isTrue);
       expect(repo.currentSettings.safetyAttenuationDb, equals(-15.0));
       expect(lastNotifiedSettings?.safetyAttenuationDb, equals(-15.0));
+      expect(rust_audio.engineOutputState().dspActive, isTrue);
+
+      await repo.handleSetSafetyAttenuation(
+        const SetSafetyAttenuation(enabled: false),
+      );
+      expect(repo.currentSettings.safetyAttenuationEnabled, isFalse);
+      expect(rust_audio.engineOutputState().dspActive, isFalse);
     });
 
     test('handleSetEqBands updates EQ state to parametric mode', () async {

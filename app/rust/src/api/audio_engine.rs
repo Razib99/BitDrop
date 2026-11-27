@@ -33,6 +33,10 @@ pub const BOUNDARY_QUEUE_CAPACITY: usize = 32;
 
 /// Lock-free real-time flags accessed by audio callbacks without mutex contention.
 pub static CALLBACK_IS_PLAYING: AtomicBool = AtomicBool::new(false);
+/// Desired playback state across async track opens. Prevents an in-flight track
+/// load from resuming onto speakers if `engine_pause()` or `engine_stop()` arrived
+/// (e.g. earphone disconnect) before the loader finished probing.
+static WANT_PLAYING: AtomicBool = AtomicBool::new(false);
 pub static CALLBACK_GATE_OUTPUT: AtomicBool = AtomicBool::new(false);
 pub static CALLBACK_FLUSH_REQUESTED: AtomicBool = AtomicBool::new(false);
 pub static CALLBACK_FADE_TARGET: AtomicU32 = AtomicU32::new(0x3f800000); // 1.0f32
@@ -117,6 +121,9 @@ lazy_static::lazy_static! {
     /// Opening a source is slow and belongs off the decode thread; see the
     /// loader thread in `init_engine`.
     static ref LOAD_SENDER: Mutex<Option<crossbeam_channel::Sender<LoadRequest>>> = Mutex::new(None);
+    /// Dedicated staging channel for gapless next-track prebuffering so slow or
+    /// metered cellular probes can never block foreground `Play`/`PlayCloud` opens.
+    static ref STAGE_SENDER: Mutex<Option<crossbeam_channel::Sender<LoadRequest>>> = Mutex::new(None);
     static ref EVENT_SINK: Mutex<Option<crate::frb_generated::StreamSink<EngineEvent>>> = Mutex::new(None);
 }
 
@@ -228,6 +235,7 @@ pub struct PlayerState {
     pub replay_gain_db: f32,
     pub track_peak: f32,
     pub crossfeed_preset: u8,
+    pub software_volume_db: f32,
     pub eq_updated: bool,
 
     /// Where the output gain is heading, 0.0 or 1.0.
@@ -292,6 +300,7 @@ impl Default for PlayerState {
             replay_gain_db: 0.0,
             track_peak: 1.0,
             crossfeed_preset: CROSSFEED_OFF,
+            software_volume_db: 0.0,
             eq_updated: false,
             fade_target: 0.0,
             fade_step: 0.0,
@@ -351,6 +360,11 @@ pub(crate) fn build_dsp_config_snapshot(state: &PlayerState) -> DspConfigSnapsho
         preamp_db: state.eq_preamp as f64,
         auto_gain: state.auto_gain as f64,
         headroom_mode: state.headroom_mode,
+        software_volume_db: if state.software_volume_db.is_finite() {
+            (state.software_volume_db as f64).clamp(-80.0, 0.0)
+        } else {
+            0.0
+        },
         balance: state.balance as f64,
         mono: state.mono,
         replay_gain_db: if state.replay_gain_db.is_finite() {
@@ -614,6 +628,8 @@ fn initialize_engine() {
 
     let (load_tx, load_rx) = crossbeam_channel::unbounded::<LoadRequest>();
     *LOAD_SENDER.lock().unwrap() = Some(load_tx);
+    let (stage_tx, stage_rx) = crossbeam_channel::unbounded::<LoadRequest>();
+    *STAGE_SENDER.lock().unwrap() = Some(stage_tx);
     let (loaded_tx, loaded_rx) = crossbeam_channel::bounded::<(u64, String, Box<OpenedTrack>)>(2);
 
     let (audio_tx, audio_rx) = rtrb::RingBuffer::<f32>::new(RING_BUFFER_CAPACITY);
@@ -655,7 +671,7 @@ fn initialize_engine() {
                 if let Ok(chunk) = triggered_rx.read_chunk(1) {
                     let marker = chunk.as_slices().0[0];
                     chunk.commit_all();
-                    let file_id = marker.file_id_str().to_string();
+                    let file_id = marker.file_id_string();
                     if let Ok(guard) = EVENT_SINK.lock() {
                         if let Some(ref sink) = *guard {
                             match marker.kind {
@@ -729,6 +745,99 @@ fn initialize_engine() {
                         });
                     }
                 }
+            }
+        }
+    });
+
+    // Dedicated staging worker for gapless next-track prebuffering. Kept separate
+    // from `load_rx` so a slow or cellular-deferred next-track probe can never
+    // block foreground `Play` / `PlayCloud` opens.
+    let next_loaded_tx_stage = next_loaded_tx.clone();
+    thread::spawn(move || {
+        while let Ok(request) = stage_rx.recv() {
+            if !request.is_current() {
+                continue;
+            }
+            let generation = request.generation;
+            let Some(stage) = request.stage else {
+                continue;
+            };
+
+            // On MeteredCellular, defer opening the next cloud track until the
+            // active track is within 15 seconds of EOF (aborting immediately if
+            // a newer track or clear request arrives).
+            if matches!(request.command, DecoderCmd::SetNextCloud { .. }) {
+                while crate::cloud::media_source::get_network_transport_mode()
+                    == NetworkTransportMode::MeteredCellular
+                    && !crate::cloud::media_source::is_current_track_within_eof(15_000)
+                {
+                    if !request.is_current() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(200));
+                }
+                if !request.is_current() {
+                    continue;
+                }
+            }
+
+            let opened = match request.command {
+                DecoderCmd::SetNextTrack(path) => {
+                    let ext = std::path::Path::new(&path)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    match File::open(&path) {
+                        Ok(file) => open_media_source(Box::new(file), &ext).map(|t| (path, t)),
+                        Err(e) => {
+                            eprintln!("[bitdrop] could not stage {}: {}", path, e);
+                            None
+                        }
+                    }
+                }
+                DecoderCmd::SetNextCloud {
+                    file_id,
+                    url,
+                    auth_token,
+                    total_size,
+                    cache_dir,
+                    ext,
+                } => match CloudMediaSource::new_prebuffer(
+                    file_id.clone(),
+                    url,
+                    auth_token,
+                    total_size,
+                    PathBuf::from(cache_dir),
+                ) {
+                    Ok(source) => {
+                        let cache = std::sync::Arc::clone(source.cache());
+                        crate::cloud::media_source::set_staged_cache(Some(&cache));
+                        let res = open_media_source(Box::new(source), &ext).map(|mut t| {
+                            t.cache = Some(cache);
+                            (file_id, t)
+                        });
+                        if res.is_none() {
+                            crate::cloud::media_source::set_staged_cache(None);
+                        }
+                        res
+                    }
+                    Err(e) => {
+                        eprintln!("[bitdrop] could not stage cloud track {}: {}", file_id, e);
+                        None
+                    }
+                },
+                _ => None,
+            };
+
+            if generation == LOAD_GENERATION.load(Ordering::Acquire)
+                && stage == STAGE_GENERATION.load(Ordering::Acquire)
+            {
+                if let Some((id, track)) = opened {
+                    let _ = next_loaded_tx_stage.send((generation, stage, id, Box::new(track)));
+                }
+            } else {
+                crate::cloud::media_source::set_staged_cache(None);
             }
         }
     });
@@ -1055,11 +1164,12 @@ fn initialize_engine() {
                     seek_target_frame = None;
 
                     let mut state = PLAYER_STATE.lock().unwrap();
+                    let should_play = WANT_PLAYING.load(Ordering::Acquire);
                     state.flush_requested = true;
                     CALLBACK_FLUSH_REQUESTED.store(true, Ordering::Release);
                     TRACK_ENDED_FLAG.store(false, Ordering::Release);
-                    state.is_playing = true;
-                    CALLBACK_IS_PLAYING.store(true, Ordering::Release);
+                    state.is_playing = should_play;
+                    CALLBACK_IS_PLAYING.store(should_play, Ordering::Release);
                     state.loading = false;
                     state.position_ms = 0;
                     state.decoded_ms = 0;
@@ -1929,6 +2039,11 @@ fn start_stream_watchdog() {
 
             #[cfg(target_os = "android")]
             if STREAM_LOST.load(Ordering::SeqCst) {
+                // Brief yield when playing so Android's ACTION_AUDIO_BECOMING_NOISY
+                // broadcast can call `engine_pause()` before reopening onto speakers.
+                if CALLBACK_IS_PLAYING.load(Ordering::Acquire) {
+                    thread::sleep(Duration::from_millis(120));
+                }
                 eprintln!(
                     "[bitdrop] reopening output stream after loss (rate={:?})",
                     current_sr
@@ -1973,6 +2088,7 @@ fn start_stream_watchdog() {
 /// network round trip — into audible silence.
 fn request_load(cmd: DecoderCmd) {
     let generation = LOAD_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    WANT_PLAYING.store(true, Ordering::Release);
     engine_clear_next();
     PLAYER_STATE.lock().unwrap().loading = true;
     if let Some(sender) = LOAD_SENDER.lock().unwrap().as_ref() {
@@ -1987,7 +2103,8 @@ fn request_load(cmd: DecoderCmd) {
 fn stage_load(command: DecoderCmd) {
     let generation = LOAD_GENERATION.load(Ordering::Acquire);
     let stage = STAGE_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
-    if let Some(sender) = LOAD_SENDER.lock().unwrap().as_ref() {
+    crate::cloud::media_source::abort_staged_fetches();
+    if let Some(sender) = STAGE_SENDER.lock().unwrap().as_ref() {
         let _ = sender.send(LoadRequest {
             generation,
             stage: Some(stage),
@@ -1999,6 +2116,8 @@ fn stage_load(command: DecoderCmd) {
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_clear_next() {
     STAGE_GENERATION.fetch_add(1, Ordering::AcqRel);
+    crate::cloud::media_source::abort_staged_fetches();
+    crate::cloud::media_source::set_staged_cache(None);
 }
 
 #[flutter_rust_bridge::frb(sync)]
@@ -2066,6 +2185,7 @@ pub fn engine_events_stream(
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_pause() {
+    WANT_PLAYING.store(false, Ordering::Release);
     {
         let mut state = PLAYER_STATE.lock().unwrap();
         state.is_playing = false;
@@ -2078,6 +2198,7 @@ pub fn engine_pause() {
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_resume() {
+    WANT_PLAYING.store(true, Ordering::Release);
     {
         let mut state = PLAYER_STATE.lock().unwrap();
         state.is_playing = true;
@@ -2119,6 +2240,7 @@ pub fn engine_seek(position_ms: u32) {
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_stop() {
     LOAD_GENERATION.fetch_add(1, Ordering::AcqRel);
+    WANT_PLAYING.store(false, Ordering::Release);
     engine_clear_next();
     {
         let mut state = PLAYER_STATE.lock().unwrap();
@@ -2222,7 +2344,8 @@ pub fn engine_output_state() -> EngineOutputState {
     let stage_altering = state.replay_gain_db.abs() > 0.01
         || state.crossfeed_preset != CROSSFEED_OFF
         || state.balance.abs() > 0.01
-        || state.mono;
+        || state.mono
+        || state.software_volume_db.abs() > 0.01;
     let dsp_active =
         !crate::dsp::DOP_BYPASS_LOCKOUT.load(Ordering::Acquire) && (eq_altering || stage_altering);
 
@@ -2526,6 +2649,20 @@ pub fn engine_set_crossfeed(preset: u8) {
         preset
     } else {
         CROSSFEED_OFF
+    };
+    state.eq_updated = true;
+    publish_dsp_config(&state);
+}
+
+/// Configures digital software attenuation in dB (`-80.0..=0.0 dB`, where `0.0` is bit-exact unity).
+/// Used for Hearing Safety Attenuation on fixed-output DACs and in-app digital volume.
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_set_software_volume_db(db: f32) {
+    let mut state = PLAYER_STATE.lock().unwrap();
+    state.software_volume_db = if db.is_finite() {
+        db.clamp(-80.0, 0.0)
+    } else {
+        0.0
     };
     state.eq_updated = true;
     publish_dsp_config(&state);
@@ -3208,15 +3345,15 @@ mod tests {
             "All 3 boundary markers must be triggered"
         );
         assert_eq!(triggered_events[0].kind, BoundaryKind::TrackStarted);
-        assert_eq!(triggered_events[0].file_id_str(), "track_1");
+        assert_eq!(triggered_events[0].file_id_string(), "track_1");
         assert_eq!(triggered_events[0].trigger_at_frame, 0);
 
         assert_eq!(triggered_events[1].kind, BoundaryKind::TrackChanged);
-        assert_eq!(triggered_events[1].file_id_str(), "track_2");
+        assert_eq!(triggered_events[1].file_id_string(), "track_2");
         assert_eq!(triggered_events[1].trigger_at_frame, boundary_frame as u64);
 
         assert_eq!(triggered_events[2].kind, BoundaryKind::TrackEnded);
-        assert_eq!(triggered_events[2].file_id_str(), "track_2");
+        assert_eq!(triggered_events[2].file_id_string(), "track_2");
         assert_eq!(triggered_events[2].trigger_at_frame, total_frames as u64);
 
         // Verify sample continuity across boundary (frame 47995 .. 48005)
@@ -3494,5 +3631,72 @@ mod tests {
             assert_eq!(snap3.crossfeed_preset, CROSSFEED_OFF);
         }
         assert!(!engine_output_state().dsp_active);
+    }
+
+    #[test]
+    fn test_boundary_marker_preserves_long_utf8_local_paths() {
+        let long_path = "/storage/emulated/0/Music/Pink Floyd/The Dark Side of the Moon (1973)/01 – Speak to Me · সূচনা.flac";
+        assert!(long_path.len() > 64);
+
+        let started = BoundaryMarker::track_started(0, long_path);
+        let changed = BoundaryMarker::track_changed(48_000, long_path);
+        let ended = BoundaryMarker::track_ended(96_000, long_path);
+
+        assert_eq!(started.file_id_string(), long_path);
+        assert_eq!(changed.file_id_string(), long_path);
+        assert_eq!(ended.file_id_string(), long_path);
+    }
+
+    #[test]
+    fn test_software_volume_db_attenuates_and_marks_dsp_active() {
+        let mut dsp = DspPipelineV2::new(48_000.0);
+        assert!(dsp.is_bit_exact_neutral());
+        let (l_unity, r_unity) = dsp.process_stereo(0.5, -0.5);
+        assert_eq!(l_unity, 0.5);
+        assert_eq!(r_unity, -0.5);
+
+        // -12 dB attenuation (~0.2512x linear) must attenuate samples and exit neutral bypass.
+        dsp.set_software_volume_db(-12.0);
+        assert!(!dsp.is_bit_exact_neutral());
+        let mut last_l = 0.0;
+        let mut last_r = 0.0;
+        // Pump past lookahead limiter latency (~72 samples at 48 kHz)
+        for _ in 0..256 {
+            let (l, r) = dsp.process_stereo(0.5, -0.5);
+            last_l = l;
+            last_r = r;
+        }
+        let expected = 0.5 * 10.0_f64.powf(-12.0 / 20.0);
+        assert!(
+            (last_l - expected).abs() < 0.01,
+            "expected ~{expected}, got {last_l}"
+        );
+        assert!(
+            (last_r + expected).abs() < 0.01,
+            "expected ~{}, got {last_r}",
+            -expected
+        );
+
+        // Positive values clamp to 0.0 dB (attenuation-only safety invariant).
+        dsp.set_software_volume_db(6.0);
+        assert!(dsp.is_bit_exact_neutral());
+
+        // Engine-level FFI setter updates snapshot + engine_output_state().dsp_active.
+        let prev_eq_enabled = PLAYER_STATE.lock().unwrap().eq_enabled;
+        engine_set_eq_enabled(false);
+        engine_set_replay_gain(0.0, 1.0);
+        engine_set_crossfeed(CROSSFEED_OFF);
+        engine_set_software_volume_db(-12.0);
+        assert!(engine_output_state().dsp_active);
+        {
+            let state = PLAYER_STATE.lock().unwrap();
+            let snap = build_dsp_config_snapshot(&state);
+            assert!((snap.software_volume_db - (-12.0)).abs() < 1e-5);
+        }
+
+        // Reset back to 0.0 dB restores neutral state.
+        engine_set_software_volume_db(0.0);
+        assert!(!engine_output_state().dsp_active);
+        engine_set_eq_enabled(prev_eq_enabled);
     }
 }

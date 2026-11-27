@@ -38,6 +38,8 @@ class BitDropOutputCoordinator {
   CloudLibrary? Function()? cloudProvider;
   bool Function()? isDirectUsbDriverEnabled;
   bool Function()? isPreferBitPerfectEnabled;
+  double Function()? softwareVolumeDbProvider;
+  bool Function()? isSafetyAttenuationEnabled;
   EqState? Function()? eqStateProvider;
   rust.EngineOutputState Function()? engineOutputStateProvider;
 
@@ -64,6 +66,8 @@ class BitDropOutputCoordinator {
     this.cloudProvider,
     this.isDirectUsbDriverEnabled,
     this.isPreferBitPerfectEnabled,
+    this.softwareVolumeDbProvider,
+    this.isSafetyAttenuationEnabled,
     this.eqStateProvider,
     this.engineOutputStateProvider,
   }) : _outputProbe = outputProbe ?? OutputDeviceProbe();
@@ -305,7 +309,9 @@ class BitDropOutputCoordinator {
     } catch (_) {}
     final isDirectUsb = streamBackend == 'DirectUsb';
 
-    final dsp = out.dspActive;
+    final swVolDb = softwareVolumeDbProvider?.call() ?? 0.0;
+    final swAttenuating = swVolDb < -0.01;
+    final dsp = out.dspActive || swAttenuating;
     final effectiveStreamRate = source.codec == Codec.dsf && !isDirectUsb
         ? 176400
         : source.sampleRate;
@@ -366,7 +372,7 @@ class BitDropOutputCoordinator {
 
     final OutputTier tier;
     if (isDirectUsb) {
-      tier = OutputTier.bitPerfect;
+      tier = dsp ? OutputTier.nativeRate : OutputTier.bitPerfect;
     } else if (isRateShifted) {
       tier = OutputTier.resampled;
     } else if (isExclusiveBitPerfect) {
@@ -392,9 +398,19 @@ class BitDropOutputCoordinator {
     }
 
     final eqState = eqStateProvider?.call();
-    final dspChain = eqState != null
-        ? BitDropSettingsRepository.describeDspChain(eqState, engineDspActive: dsp)
-        : (dsp ? const ['Equaliser'] : const <String>[]);
+    final dspChain = <String>[
+      if (eqState != null)
+        ...BitDropSettingsRepository.describeDspChain(
+          eqState,
+          engineDspActive: out.dspActive && !swAttenuating,
+        )
+      else if (out.dspActive && !swAttenuating)
+        'Equaliser',
+      if (swAttenuating)
+        isSafetyAttenuationEnabled?.call() == true
+            ? 'Safety attenuation (${swVolDb.toStringAsFixed(1)} dB)'
+            : 'Digital volume (${swVolDb.toStringAsFixed(1)} dB)',
+    ];
 
     final cloud = cloudProvider?.call();
     final currentTrackId = track?.id ?? '';
@@ -435,6 +451,9 @@ class BitDropOutputCoordinator {
   }
 
   bool _isDspCurrentlyActive() {
+    if ((softwareVolumeDbProvider?.call() ?? 0.0) < -0.01) {
+      return true;
+    }
     try {
       return rust.engineOutputState().dspActive;
     } catch (_) {
