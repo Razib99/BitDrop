@@ -40,10 +40,12 @@ class IosAudioHostBroker: NSObject {
   private func setupAudioSession() {
     do {
       let session = AVAudioSession.sharedInstance()
+      // Configure category passively on launch; defer setActive(true) until
+      // playback actually starts so opening BitDrop to browse does not interrupt
+      // audio playing in other apps.
       try session.setCategory(.playback, mode: .default)
-      try session.setActive(true)
     } catch {
-      print("[bitdrop-ios] Failed to activate audio session: \(error)")
+      print("[bitdrop-ios] Failed to configure audio session category: \(error)")
     }
   }
 
@@ -184,13 +186,14 @@ class IosAudioHostBroker: NSObject {
       try session.setPreferredSampleRate(rate)
       try session.setActive(true)
       let activeRate = session.sampleRate
-      print("[bitdrop-ios] setPreferredSampleRate success: requested=\(rate), active=\(activeRate)")
+      let matched = abs(activeRate - rate) < 1.0
+      print("[bitdrop-ios] setPreferredSampleRate: requested=\(rate), active=\(activeRate), matched=\(matched)")
       if abs(activeRate - previousRate) > 0.5 {
         DispatchQueue.main.async { [weak self] in
           self?.channel.invokeMethod("onDeviceChanged", arguments: nil)
         }
       }
-      result(true)
+      result(matched)
     } catch {
       print("[bitdrop-ios] setPreferredSampleRate failed: \(error)")
       result(false)
@@ -271,7 +274,7 @@ class IosAudioHostBroker: NSObject {
       explanation = "Apple AirPlay lossless network audio transport"
 
     case .HDMI:
-      typeStr = "usb"
+      typeStr = "hdmi"
       maxTier = "nativeRate"
       supportsBitPerfect = false
       explanation = "HDMI digital multichannel audio"

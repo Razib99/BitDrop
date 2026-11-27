@@ -1,8 +1,8 @@
 #[cfg(target_os = "android")]
 use oboe::{
     AudioApi, AudioOutputCallback, AudioOutputStreamSafe, AudioStream, AudioStreamAsync,
-    AudioStreamBase, AudioStreamBuilder, DataCallbackResult, Output, PerformanceMode, SharingMode,
-    Stereo,
+    AudioStreamBase, AudioStreamBuilder, ContentType, DataCallbackResult, Output, PerformanceMode,
+    SharingMode, Stereo, Usage,
 };
 use std::fs::File;
 use std::path::PathBuf;
@@ -1753,6 +1753,8 @@ fn open_output_stream(sample_rate: Option<u32>) {
     let mut builder = AudioStreamBuilder::default()
         .set_performance_mode(PerformanceMode::LowLatency)
         .set_sharing_mode(SharingMode::Exclusive)
+        .set_usage(Usage::Media)
+        .set_content_type(ContentType::Music)
         .set_audio_api(AudioApi::AAudio)
         .set_output()
         .set_stereo()
@@ -1764,7 +1766,7 @@ fn open_output_stream(sample_rate: Option<u32>) {
         }
     }
 
-    let opened = builder
+    let exclusive_attempt = builder
         .set_callback(make_callback(
             init_sr,
             consumer,
@@ -1773,7 +1775,31 @@ fn open_output_stream(sample_rate: Option<u32>) {
         ))
         .open_stream();
 
-    let (opened, is_exclusive) = match opened {
+    // If MMAP LowLatency Exclusive succeeded but silently clamped the sample rate
+    // (e.g. FastMixer forced 48 kHz while Android 14+ Bit-Perfect Mixer is configured
+    // for 96 kHz on PerformanceMode::None + SharingMode::Shared), drop it and fall
+    // through to the Shared USAGE_MEDIA builder at the exact requested rate.
+    let exclusive_stream = match exclusive_attempt {
+        Ok(stream) => {
+            let granted = stream.get_sample_rate() as u32;
+            if let Some(wanted) = sample_rate.filter(|&r| r > 0) {
+                if granted != wanted {
+                    eprintln!(
+                        "[bitdrop] exclusive stream clamped rate {wanted} -> {granted}; retrying USAGE_MEDIA shared stream at {wanted} Hz"
+                    );
+                    drop(stream);
+                    Err(oboe::Error::ErrorUnavailable)
+                } else {
+                    Ok(stream)
+                }
+            } else {
+                Ok(stream)
+            }
+        }
+        Err(e) => Err(e),
+    };
+
+    let (opened, is_exclusive) = match exclusive_stream {
         Ok(stream) => {
             eprintln!(
                 "[bitdrop] opened exclusive stream: rate={}",
@@ -1783,10 +1809,10 @@ fn open_output_stream(sample_rate: Option<u32>) {
         }
         Err(e) => {
             eprintln!(
-                "[bitdrop] exclusive stream at {:?} unavailable ({e:?}); falling back to shared",
+                "[bitdrop] exclusive stream at {:?} unavailable ({e:?}); falling back to USAGE_MEDIA shared",
                 sample_rate
             );
-            // Re-acquire consumers returned by the failed exclusive callback's Drop.
+            // Re-acquire consumers returned by the failed/dropped exclusive callback's Drop.
             let (consumer, boundary_consumer, triggered_producer) =
                 match acquire_audio_consumers(10) {
                     Some(handles) => handles,
@@ -1797,18 +1823,20 @@ fn open_output_stream(sample_rate: Option<u32>) {
                         return;
                     }
                 };
-            let shared_sr = {
+            let shared_sr = sample_rate.filter(|&r| r > 0).or_else(|| {
                 let state = PLAYER_STATE.lock().unwrap();
                 if state.hardware_sample_rate > 0 {
                     Some(state.hardware_sample_rate)
                 } else {
                     None
                 }
-            };
+            });
             let shared_init_sr = shared_sr.filter(|&r| r > 0).unwrap_or(48000) as f64;
             let mut shared_builder = AudioStreamBuilder::default()
                 .set_performance_mode(PerformanceMode::None)
                 .set_sharing_mode(SharingMode::Shared)
+                .set_usage(Usage::Media)
+                .set_content_type(ContentType::Music)
                 .set_output()
                 .set_stereo()
                 .set_f32();
@@ -2334,10 +2362,11 @@ pub fn engine_cached_ranges() -> Vec<CachedRangeMs> {
 #[flutter_rust_bridge::frb(sync)]
 pub fn engine_output_state() -> EngineOutputState {
     let state = PLAYER_STATE.lock().unwrap();
-    let has_custom_specs = state
-        .eq_specs
-        .as_ref()
-        .map_or(false, |specs| specs.iter().any(|s| s.gain_db.abs() > 0.01));
+    let has_custom_specs = state.eq_specs.as_ref().is_some_and(|specs| {
+        specs
+            .iter()
+            .any(|s| s.gain_db.abs() > 0.01 || s.kind == EQ_LOW_PASS || s.kind == EQ_HIGH_PASS)
+    });
     let has_graphic_gains = state.eq_gains.iter().any(|g| g.abs() > 0.01);
     let eq_altering =
         state.eq_enabled && (has_custom_specs || has_graphic_gains || state.eq_preamp.abs() > 0.01);
@@ -2363,11 +2392,9 @@ pub fn engine_output_state() -> EngineOutputState {
 }
 
 fn effective_pcm_stream_rate(state: &PlayerState) -> Option<u32> {
-    let is_dsd = state.source_codec.eq_ignore_ascii_case("DSF")
-        || state.source_codec.eq_ignore_ascii_case("DSD");
-    if is_dsd
-        && crate::usb_dac::get_active_stream_backend() != crate::usb_dac::StreamBackend::DirectUsb
-    {
+    let codec_upper = state.source_codec.to_ascii_uppercase();
+    let is_dsd = codec_upper == "DSF" || codec_upper.starts_with("DSD");
+    if is_dsd {
         return Some(crate::dsd::decimator::DSD_PCM_TARGET_RATE);
     }
     if state.source_sample_rate > 0 {
@@ -3698,5 +3725,66 @@ mod tests {
         engine_set_software_volume_db(0.0);
         assert!(!engine_output_state().dsp_active);
         engine_set_eq_enabled(prev_eq_enabled);
+    }
+
+    #[test]
+    fn test_flat_eq_stays_neutral_and_lpf_marks_dsp_active() {
+        let mut dsp = DspPipelineV2::new(48_000.0);
+        dsp.eq_enabled = true;
+        // Flat un-bypassed EQ with 0 dB gains must remain bit-exact neutral (no limiter coloring).
+        assert!(dsp.is_bit_exact_neutral());
+        let (l, r) = dsp.process_stereo(0.99, -0.99);
+        assert_eq!(l, 0.99);
+        assert_eq!(r, -0.99);
+
+        // Installing a 0 dB high-pass filter alters samples -> must exit neutral bypass.
+        let hpf = [EqBandSpec {
+            kind: EQ_HIGH_PASS,
+            freq: 80.0,
+            gain_db: 0.0,
+            q: 0.707,
+        }];
+        dsp.install_parameters(&hpf, 0.0, 0.0, 1.0, 0.0, false);
+        assert!(!dsp.is_bit_exact_neutral());
+
+        // Engine output state must also report dsp_active = true for 0 dB HPF/LPF filters.
+        let prev_eq = PLAYER_STATE.lock().unwrap().eq_enabled;
+        engine_set_eq_enabled(true);
+        engine_set_eq(vec![
+            -999.0,
+            1.0,
+            EQ_HIGH_PASS as f32,
+            80.0,
+            0.0,
+            0.707,
+            0.0,
+            0.0,
+            0.0,
+        ]);
+        assert!(engine_output_state().dsp_active);
+
+        // Restore global state
+        engine_set_eq(vec![0.0; 13]);
+        engine_set_eq_enabled(prev_eq);
+    }
+
+    #[test]
+    fn test_effective_pcm_stream_rate_handles_dsd64_and_dsd128() {
+        let mut state = PlayerState {
+            source_codec: "DSD64".to_string(),
+            source_sample_rate: 2_822_400,
+            ..Default::default()
+        };
+        assert_eq!(
+            effective_pcm_stream_rate(&state),
+            Some(crate::dsd::decimator::DSD_PCM_TARGET_RATE)
+        );
+
+        state.source_codec = "DSD128".to_string();
+        state.source_sample_rate = 5_644_800;
+        assert_eq!(
+            effective_pcm_stream_rate(&state),
+            Some(crate::dsd::decimator::DSD_PCM_TARGET_RATE)
+        );
     }
 }

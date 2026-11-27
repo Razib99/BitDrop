@@ -421,5 +421,238 @@ void main() {
       expect(listCompleted, isTrue);
       expect(prompted, hasLength(1));
     });
+
+    test('DirectUsb reports nativeRate when DSP is active and bitPerfect only when DSP-free', () async {
+      const usbDac = OutputDevice(
+        id: 'usb-direct-1',
+        name: 'Direct USB DAC',
+        type: DeviceType.usb,
+        supportedRates: [44100, 48000, 96000],
+        bitDepths: [16, 24],
+        hardwareVolume: HardwareVolume.yes,
+        maxTier: OutputTier.bitPerfect,
+        supportsBitPerfect: false,
+      );
+      probe.emitForTesting(usbDac);
+      await pumpEventQueue();
+
+      var dspActive = true;
+      final coord = BitDropOutputCoordinator(
+        outputProbe: probe,
+        streamBackendProvider: () => 'DirectUsb',
+        engineOutputStateProvider: () => rust.EngineOutputState(
+          sourceCodec: 'FLAC',
+          sourceSampleRate: 96000,
+          sourceBits: 24,
+          sourceChannels: 2,
+          outputSampleRate: 96000,
+          dspActive: dspActive,
+          hasTrack: true,
+          hardwareSampleRate: 96000,
+          hardwareFormat: 'S24_3LE',
+        ),
+      );
+      coord.start();
+      addTearDown(coord.dispose);
+
+      coord.recomputeSignalPath();
+      expect(coord.currentSignalPath.tier, equals(OutputTier.nativeRate));
+      expect(coord.currentSignalPath.dspActive, isTrue);
+      expect(coord.currentSignalPath.actual.bitDepth, equals(24));
+
+      dspActive = false;
+      coord.recomputeSignalPath();
+      expect(coord.currentSignalPath.tier, equals(OutputTier.bitPerfect));
+      expect(coord.currentSignalPath.dspActive, isFalse);
+    });
+
+    test('DirectUsb reports resampled when hardware clamps 96 kHz source to 48 kHz', () async {
+      const usbDac = OutputDevice(
+        id: 'usb-48k-cap',
+        name: '48kHz USB Dongle',
+        type: DeviceType.usb,
+        supportedRates: [44100, 48000],
+        bitDepths: [16, 24],
+        hardwareVolume: HardwareVolume.unknown,
+        maxTier: OutputTier.bitPerfect,
+      );
+      probe.emitForTesting(usbDac);
+      await pumpEventQueue();
+
+      final coord = BitDropOutputCoordinator(
+        outputProbe: probe,
+        streamBackendProvider: () => 'DirectUsb',
+        engineOutputStateProvider: () => const rust.EngineOutputState(
+          sourceCodec: 'FLAC',
+          sourceSampleRate: 96000,
+          sourceBits: 24,
+          sourceChannels: 2,
+          outputSampleRate: 48000,
+          dspActive: false,
+          hasTrack: true,
+          hardwareSampleRate: 48000,
+          hardwareFormat: 'S24_3LE',
+        ),
+      );
+      coord.start();
+      addTearDown(coord.dispose);
+
+      coord.recomputeSignalPath();
+      expect(coord.currentSignalPath.tier, equals(OutputTier.resampled));
+      expect(coord.currentSignalPath.actual.sampleRate, equals(48000));
+      expect(coord.currentSignalPath.explanation, contains('Direct USB'));
+      expect(coord.currentSignalPath.explanation, contains('256-tap Sinc'));
+    });
+
+    test('DSD64 reports Codec.dsf, nativeRate, and truthful 176.4 kHz polyphase FIR decimation', () async {
+      const usbDac = OutputDevice(
+        id: 'usb-dsd-dac',
+        name: 'Hi-Res USB DAC',
+        type: DeviceType.usb,
+        supportedRates: [44100, 48000, 176400, 192000],
+        bitDepths: [16, 24, 32],
+        hardwareVolume: HardwareVolume.yes,
+        maxTier: OutputTier.bitPerfect,
+      );
+      probe.emitForTesting(usbDac);
+      await pumpEventQueue();
+
+      final coord = BitDropOutputCoordinator(
+        outputProbe: probe,
+        streamBackendProvider: () => 'DirectUsb',
+        engineOutputStateProvider: () => const rust.EngineOutputState(
+          sourceCodec: 'DSD64',
+          sourceSampleRate: 2822400,
+          sourceBits: 1,
+          sourceChannels: 2,
+          outputSampleRate: 176400,
+          dspActive: false,
+          hasTrack: true,
+          hardwareSampleRate: 176400,
+          hardwareFormat: 'S24_3LE',
+        ),
+      );
+      coord.start();
+      addTearDown(coord.dispose);
+
+      coord.recomputeSignalPath();
+      final sp = coord.currentSignalPath;
+      expect(sp.source.codec, equals(Codec.dsf));
+      expect(sp.tier, equals(OutputTier.nativeRate));
+      expect(sp.actual.sampleRate, equals(176400));
+      expect(sp.decoderLabel, contains('176.4 kHz / 24-bit Polyphase FIR Decimation'));
+      expect(sp.decoderLabel, isNot(contains('DoP')));
+    });
+
+    test('Standard/iOS bit-perfect device reporting 48 kHz hwRate on 96 kHz track reports resampled', () async {
+      const iosUsbDac = OutputDevice(
+        id: 'iOS-usb-Mojo2',
+        name: 'Chord Mojo 2',
+        type: DeviceType.usb,
+        supportedRates: [44100, 48000, 96000],
+        bitDepths: [16, 24],
+        hardwareVolume: HardwareVolume.yes,
+        maxTier: OutputTier.bitPerfect,
+        supportsBitPerfect: true,
+        bitPerfectRates: [44100, 48000, 96000],
+        systemSampleRate: 48000,
+      );
+      probe.emitForTesting(iosUsbDac);
+      await pumpEventQueue();
+
+      final coord = BitDropOutputCoordinator(
+        outputProbe: probe,
+        streamBackendProvider: () => 'Standard',
+        engineOutputStateProvider: () => const rust.EngineOutputState(
+          sourceCodec: 'FLAC',
+          sourceSampleRate: 96000,
+          sourceBits: 24,
+          sourceChannels: 2,
+          outputSampleRate: 96000,
+          dspActive: false,
+          hasTrack: true,
+          hardwareSampleRate: 0, // Falls back to device.systemSampleRate (48000)
+          hardwareFormat: '',
+        ),
+      );
+      coord.start();
+      addTearDown(coord.dispose);
+
+      coord.recomputeSignalPath();
+      expect(coord.currentSignalPath.tier, equals(OutputTier.resampled));
+      expect(coord.currentSignalPath.actual.sampleRate, equals(48000));
+    });
+
+    test('OutputDeviceProbe emits on same-device rate change and filters non-active USB detach', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+      const channel = MethodChannel('com.bitdrop/audio_device');
+      var currentRate = 48000;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'currentOutput') {
+          return {
+            'available': true,
+            'type': 'usb',
+            'name': 'Chord Mojo 2',
+            'sampleRates': [44100, 48000, 96000],
+            'encodings': [2, 22],
+            'supportsBitPerfect': true,
+            'bitPerfectRates': [44100, 48000, 96000],
+            'maxTier': 'bitPerfect',
+            'systemSampleRate': currentRate,
+          };
+        }
+        return null;
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+      });
+
+      final localProbe = OutputDeviceProbe(autoPoll: false);
+      addTearDown(localProbe.dispose);
+
+      final emissions = <OutputDevice?>[];
+      final sub = localProbe.stream.listen(emissions.add);
+      addTearDown(sub.cancel);
+
+      Future<void> triggerNativeCall(String method, [Object? args]) async {
+        await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .handlePlatformMessage(
+          channel.name,
+          const StandardMethodCodec().encodeMethodCall(MethodCall(method, args)),
+          (_) {},
+        );
+        await pumpEventQueue();
+      }
+
+      // First poll at 48 kHz
+      await triggerNativeCall('onDeviceChanged');
+      expect(localProbe.current?.systemSampleRate, equals(48000));
+      final countAfterFirst = emissions.length;
+
+      // Identical poll does NOT emit duplicate churn
+      await triggerNativeCall('onDeviceChanged');
+      expect(emissions.length, equals(countAfterFirst));
+
+      // Same device name/id switches to 96 kHz -> MUST emit update
+      currentRate = 96000;
+      await triggerNativeCall('onDeviceChanged');
+      expect(localProbe.current?.systemSampleRate, equals(96000));
+      expect(emissions.length, equals(countAfterFirst + 1));
+
+      // Detaching an unrelated USB device must NOT detach the active Direct USB DAC
+      final detachedIds = <int>[];
+      localProbe.onUsbDeviceDetached = detachedIds.add;
+      localProbe.setActiveDirectUsbDeviceIdForTesting(42);
+
+      await triggerNativeCall('onUsbDeviceDetached', 99);
+      expect(detachedIds, isEmpty);
+
+      await triggerNativeCall('onUsbDeviceDetached', 42);
+      expect(detachedIds, equals([42]));
+    });
   });
 }

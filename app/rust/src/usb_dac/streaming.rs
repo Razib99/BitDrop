@@ -87,8 +87,8 @@ impl PcmFormat {
         match self {
             Self::S16Le => {
                 for (i, &sample) in input_f32.iter().enumerate() {
-                    let clamped = sample.clamp(-1.0, 1.0);
-                    let val = (clamped * 32767.0).round() as i16;
+                    let clamped = sample.clamp(-1.0, 1.0) as f64;
+                    let val = (clamped * 32768.0).round().clamp(-32768.0, 32767.0) as i16;
                     let bytes = val.to_le_bytes();
                     output[i * 2] = bytes[0];
                     output[i * 2 + 1] = bytes[1];
@@ -96,8 +96,8 @@ impl PcmFormat {
             }
             Self::S24_3Le => {
                 for (i, &sample) in input_f32.iter().enumerate() {
-                    let clamped = sample.clamp(-1.0, 1.0);
-                    let val = (clamped * 8388607.0).round() as i32;
+                    let clamped = sample.clamp(-1.0, 1.0) as f64;
+                    let val = (clamped * 8388608.0).round().clamp(-8388608.0, 8388607.0) as i32;
                     let bytes = val.to_le_bytes();
                     output[i * 3] = bytes[0];
                     output[i * 3 + 1] = bytes[1];
@@ -106,8 +106,9 @@ impl PcmFormat {
             }
             Self::S24_4Le => {
                 for (i, &sample) in input_f32.iter().enumerate() {
-                    let clamped = sample.clamp(-1.0, 1.0);
-                    let val = ((clamped * 8388607.0).round() as i32) << 8;
+                    let clamped = sample.clamp(-1.0, 1.0) as f64;
+                    let val =
+                        ((clamped * 8388608.0).round().clamp(-8388608.0, 8388607.0) as i32) << 8;
                     let bytes = val.to_le_bytes();
                     output[i * 4..i * 4 + 4].copy_from_slice(&bytes);
                 }
@@ -115,7 +116,9 @@ impl PcmFormat {
             Self::S32Le => {
                 for (i, &sample) in input_f32.iter().enumerate() {
                     let clamped = sample.clamp(-1.0, 1.0) as f64;
-                    let val = (clamped * 2147483647.0).round() as i32;
+                    let val = (clamped * 2147483648.0)
+                        .round()
+                        .clamp(-2147483648.0, 2147483647.0) as i32;
                     let bytes = val.to_le_bytes();
                     output[i * 4..i * 4 + 4].copy_from_slice(&bytes);
                 }
@@ -785,10 +788,25 @@ mod tests {
         assert_eq!(i16::from_le_bytes([out[0], out[1]]), 0);
         // 1.0 -> 32767
         assert_eq!(i16::from_le_bytes([out[2], out[3]]), 32767);
-        // -1.0 -> -32767
-        assert_eq!(i16::from_le_bytes([out[4], out[5]]), -32767);
-        // 0.5 -> 16384 (or 16383.5 rounded)
+        // -1.0 -> -32768 (symmetric 2^(N-1) scaling matches Symphonia inverse)
+        assert_eq!(i16::from_le_bytes([out[4], out[5]]), -32768);
+        // 0.5 -> 16384
         assert_eq!(i16::from_le_bytes([out[6], out[7]]), 16384);
+
+        // Exhaustive 16-bit PCM round-trip check: every i16 sample normalized by 32768.0
+        // must pack back with 0-LSB deviation.
+        let mut s16_in = [0.0f32; 256];
+        let mut s16_out = [0u8; 512];
+        for base in (-32768i32..=32767i32).step_by(256) {
+            for (j, slot) in s16_in.iter_mut().enumerate() {
+                *slot = ((base + j as i32) as f32) / 32768.0;
+            }
+            PcmFormat::S16Le.format_interleaved_f32(&s16_in, &mut s16_out);
+            for (j, &[lo, hi]) in s16_out.as_chunks::<2>().0.iter().enumerate() {
+                let got = i16::from_le_bytes([lo, hi]);
+                assert_eq!(got, (base + j as i32) as i16);
+            }
+        }
     }
 
     #[test]
@@ -803,8 +821,8 @@ mod tests {
         assert_eq!(out[1], 0xFF);
         assert_eq!(out[2], 0x7F);
 
-        // Negative 24-bit: -8388607 in 2's complement
-        let neg = (-8388607i32).to_le_bytes();
+        // Negative full-scale 24-bit: -8388608 (0x800000) in 2's complement
+        let neg = (-8388608i32).to_le_bytes();
         assert_eq!(out[3], neg[0]);
         assert_eq!(out[4], neg[1]);
         assert_eq!(out[5], neg[2]);
@@ -837,7 +855,7 @@ mod tests {
         );
         assert_eq!(
             i32::from_le_bytes(out[4..8].try_into().unwrap()),
-            -2147483647
+            -2147483648
         );
     }
 

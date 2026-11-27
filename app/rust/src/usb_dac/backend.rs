@@ -163,8 +163,9 @@ pub fn attach_direct_usb_device<S: AudioSampleSource + 'static>(
     // 0. Ensure any prior Direct USB session is detached cleanly first.
     let _ = detach_direct_usb_device();
 
-    // 1. Wrap raw descriptor borrowed from Kotlin
-    let handle = Arc::new(UsbDeviceHandle::from_raw_fd_borrowed(fd));
+    // 1. Duplicate raw descriptor from Kotlin so Rust owns an independent OS FD
+    //    across hot-disconnects and URB drain, avoiding POSIX FD reuse races.
+    let handle = Arc::new(UsbDeviceHandle::from_raw_fd_duplicated(fd)?);
 
     // 2. Fetch and parse configuration descriptor
     let desc_bytes = handle.get_active_config_descriptor()?;

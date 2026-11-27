@@ -42,6 +42,7 @@ class BitDropOutputCoordinator {
   bool Function()? isSafetyAttenuationEnabled;
   EqState? Function()? eqStateProvider;
   rust.EngineOutputState Function()? engineOutputStateProvider;
+  String Function()? streamBackendProvider;
 
   static const _unknownPath = SignalPath(
     tier: OutputTier.unknown,
@@ -70,6 +71,7 @@ class BitDropOutputCoordinator {
     this.isSafetyAttenuationEnabled,
     this.eqStateProvider,
     this.engineOutputStateProvider,
+    this.streamBackendProvider,
   }) : _outputProbe = outputProbe ?? OutputDeviceProbe();
 
   Stream<OutputDevice?> get outputDevice => _outputProbe.stream;
@@ -305,14 +307,14 @@ class BitDropOutputCoordinator {
 
     String streamBackend = 'Standard';
     try {
-      streamBackend = rust.engineGetStreamBackend();
+      streamBackend = (streamBackendProvider ?? rust.engineGetStreamBackend)();
     } catch (_) {}
     final isDirectUsb = streamBackend == 'DirectUsb';
 
     final swVolDb = softwareVolumeDbProvider?.call() ?? 0.0;
     final swAttenuating = swVolDb < -0.01;
     final dsp = out.dspActive || swAttenuating;
-    final effectiveStreamRate = source.codec == Codec.dsf && !isDirectUsb
+    final effectiveStreamRate = source.codec == Codec.dsf
         ? 176400
         : source.sampleRate;
     final effectiveBitDepth = source.bitDepth > 0 ? source.bitDepth : 16;
@@ -338,22 +340,20 @@ class BitDropOutputCoordinator {
         ? out.hardwareSampleRate
         : (device?.systemSampleRate ?? 0);
 
-    final resampled = !isDirectUsb &&
-        ((!isExclusiveBitPerfect &&
-                hwRate != 0 &&
-                hwRate != source.sampleRate) ||
-            (out.outputSampleRate != 0 &&
-                out.outputSampleRate != source.sampleRate));
-
     final actualSampleRate = isDirectUsb
-        ? (out.hardwareSampleRate != 0
+        ? (out.hardwareSampleRate != 0 &&
+                out.hardwareSampleRate != effectiveStreamRate
             ? out.hardwareSampleRate
-            : source.sampleRate)
-        : (resampled && hwRate != 0
+            : (out.outputSampleRate != 0
+                ? out.outputSampleRate
+                : (out.hardwareSampleRate != 0
+                    ? out.hardwareSampleRate
+                    : effectiveStreamRate)))
+        : (hwRate != 0 && hwRate != effectiveStreamRate
             ? hwRate
-            : (out.outputSampleRate == 0
-                ? source.sampleRate
-                : out.outputSampleRate));
+            : (out.outputSampleRate != 0
+                ? out.outputSampleRate
+                : effectiveStreamRate));
     final actualBitDepth = isDirectUsb && out.hardwareFormat.isNotEmpty
         ? (out.hardwareFormat.contains('32')
             ? 32
@@ -367,14 +367,17 @@ class BitDropOutputCoordinator {
       bitrateKbps: actualBitrate,
     );
 
-    final bool isRateShifted =
-        !isDirectUsb && (actualSampleRate != source.sampleRate);
+    final bool isRateShifted = actualSampleRate != effectiveStreamRate;
 
     final OutputTier tier;
-    if (isDirectUsb) {
-      tier = dsp ? OutputTier.nativeRate : OutputTier.bitPerfect;
-    } else if (isRateShifted) {
+    if (isRateShifted) {
       tier = OutputTier.resampled;
+    } else if (source.codec == Codec.dsf) {
+      // DSD streams are currently decimated to 176.4 kHz PCM via 64-bit polyphase FIR
+      // rather than raw DoP v1.1 frames; report Native rate honestly.
+      tier = OutputTier.nativeRate;
+    } else if (isDirectUsb) {
+      tier = dsp ? OutputTier.nativeRate : OutputTier.bitPerfect;
     } else if (isExclusiveBitPerfect) {
       tier = OutputTier.bitPerfect;
     } else {
@@ -415,8 +418,7 @@ class BitDropOutputCoordinator {
     final cloud = cloudProvider?.call();
     final currentTrackId = track?.id ?? '';
 
-    final bool engineSincResampled = !isDirectUsb &&
-        source.codec != Codec.dsf &&
+    final bool engineSincResampled = source.codec != Codec.dsf &&
         out.outputSampleRate != 0 &&
         out.outputSampleRate != source.sampleRate &&
         actualSampleRate == out.outputSampleRate;
@@ -433,9 +435,7 @@ class BitDropOutputCoordinator {
       sourceLabel:
           cloud?.trackById(currentTrackId) != null ? 'Google Drive' : 'This device',
       decoderLabel: source.codec == Codec.dsf
-          ? (isDirectUsb
-              ? '${source.shortLabel} Bitstream -> DoP v1.1 Framing'
-              : '${source.shortLabel} -> 176.4 kHz / 24-bit Polyphase FIR Decimation')
+          ? '${source.shortLabel} -> 176.4 kHz / 24-bit Polyphase FIR Decimation'
           : '${source.codec.label} -> '
               '${source.bitDepth}-bit integer PCM',
       explanation: _explain(
@@ -622,17 +622,22 @@ class BitDropOutputCoordinator {
       (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS);
 
-  static Codec _codecFromName(String name) => switch (name.toUpperCase()) {
-        'FLAC' => Codec.flac,
-        'ALAC' => Codec.alac,
-        'PCM' || 'WAV' => Codec.wav,
-        'AIFF' => Codec.aiff,
-        'MP3' => Codec.mp3,
-        'AAC' => Codec.aac,
-        'VORBIS' || 'OPUS' => Codec.opus,
-        'DSF' || 'DSD' => Codec.dsf,
-        _ => Codec.flac,
-      };
+  static Codec _codecFromName(String name) {
+    final upper = name.toUpperCase();
+    if (upper == 'DSF' || upper.startsWith('DSD')) {
+      return Codec.dsf;
+    }
+    return switch (upper) {
+      'FLAC' => Codec.flac,
+      'ALAC' => Codec.alac,
+      'PCM' || 'WAV' => Codec.wav,
+      'AIFF' => Codec.aiff,
+      'MP3' => Codec.mp3,
+      'AAC' => Codec.aac,
+      'VORBIS' || 'OPUS' => Codec.opus,
+      _ => Codec.flac,
+    };
+  }
 
   static String _fmtKhz(int hz) {
     final khz = hz / 1000.0;
@@ -674,17 +679,13 @@ class BitDropOutputCoordinator {
     final outRate = _fmtKhz(actual.sampleRate);
 
     if (source.codec == Codec.dsf) {
-      if (tier == OutputTier.bitPerfect) {
-        if (isDirectUsb) {
-          return 'Bit-perfect direct DSD stream active via User-Space USB Audio (Tier D) with DoP v1.1 framing. '
-              'The audio engine transmits the pure 1-bit DSD bitstream directly to your ${device?.name ?? "USB DAC"} '
-              'without PCM decimation, DSP, or OS mixer interaction.';
-        }
-        return 'DSD 1-bit stream decimated to 176.4 kHz / 24-bit PCM using 64-bit polyphase sinc FIR filter. '
-            'Streaming bit-perfect PCM to ${device?.name ?? "USB DAC"} at 176.4 kHz with zero OS resampling.';
+      if (isDirectUsb) {
+        return 'DSD 1-bit stream decimated to 176.4 kHz / 24-bit PCM using 64-bit polyphase sinc FIR filter '
+            'and streamed via User-Space USB Audio (Tier D) to ${device?.name ?? "your USB DAC"} '
+            'at $outRate with zero OS mixer interaction.';
       }
       return 'DSD 1-bit stream decimated to 176.4 kHz / 24-bit PCM using 64-bit polyphase sinc FIR filter '
-          'and routed to ${device?.name ?? "your audio device"}.';
+          'and routed to ${device?.name ?? "your audio device"} at $outRate.';
     }
 
     if (tier == OutputTier.bitPerfect) {
@@ -734,6 +735,9 @@ class BitDropOutputCoordinator {
           ? "Android ${device!.apiLevel}'s"
           : 'the Android';
       final devName = device?.name ?? 'your audio device';
+      if (isDirectUsb) {
+        return '$devName negotiated $outRate over Direct USB (Tier D), so $srcRate audio is converted in-engine via BitDrop\'s 64-bit 256-tap Sinc resampler.';
+      }
       if (device?.type == DeviceType.usb) {
         return engineSincResampled
             ? '$apiText mixer for $devName runs at $outRate (converted from $srcRate via 64-bit 256-tap Sinc). Enable Direct USB access to stream $srcRate bit-perfect.'

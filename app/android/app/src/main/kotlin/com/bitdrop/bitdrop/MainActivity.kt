@@ -46,6 +46,7 @@ class MainActivity : AudioServiceActivity() {
     private var activeUsbConnection: UsbDeviceConnection? = null
     private var activeUsbDevice: UsbDevice? = null
     private var usbPermissionReceiver: BroadcastReceiver? = null
+    private var pendingUsbPermissionResult: MethodChannel.Result? = null
     private var usbAttachReceiver: BroadcastReceiver? = null
     private var usbDetachReceiver: BroadcastReceiver? = null
     private val ACTION_USB_PERMISSION = "com.bitdrop.bitdrop.USB_PERMISSION"
@@ -101,6 +102,9 @@ class MainActivity : AudioServiceActivity() {
 
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
+        // Clean up any prior registrations if configureFlutterEngine is re-entered.
+        unregisterAudioAndUsbReceivers()
+
         // Real-time audio device connection / disconnection monitoring
         val deviceCallback = object : AudioDeviceCallback() {
             override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
@@ -130,7 +134,7 @@ class MainActivity : AudioServiceActivity() {
         noisyReceiver = receiver
         val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(receiver, filter)
         }
@@ -156,12 +160,12 @@ class MainActivity : AudioServiceActivity() {
         usbAttachReceiver = attachReceiver
         val attachFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(attachReceiver, attachFilter, Context.RECEIVER_EXPORTED)
+            registerReceiver(attachReceiver, attachFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(attachReceiver, attachFilter)
         }
 
-        // Real-time USB device detachment monitoring
+        // Real-time USB device detachment monitoring (filtered to USB audio / active DAC)
         val detachReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (UsbManager.ACTION_USB_DEVICE_DETACHED == intent?.action) {
@@ -171,8 +175,10 @@ class MainActivity : AudioServiceActivity() {
                         @Suppress("DEPRECATION")
                         intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
                     }
-                    if (device != null && device.deviceId == activeUsbDevice?.deviceId) {
-                        closeUsbDevice()
+                    val isActive = device != null && device.deviceId == activeUsbDevice?.deviceId
+                    val isAudio = device != null && isUsbAudioDevice(device)
+                    if (!isActive && !isAudio) {
+                        return
                     }
                     runOnUiThread {
                         methodChannel?.invokeMethod("onUsbDeviceDetached", device?.deviceId)
@@ -184,14 +190,13 @@ class MainActivity : AudioServiceActivity() {
         usbDetachReceiver = detachReceiver
         val detachFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(detachReceiver, detachFilter, Context.RECEIVER_EXPORTED)
+            registerReceiver(detachReceiver, detachFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(detachReceiver, detachFilter)
         }
     }
 
-    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
-        super.cleanUpFlutterEngine(flutterEngine)
+    private fun unregisterAudioAndUsbReceivers() {
         val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         audioDeviceCallback?.let {
             am?.unregisterAudioDeviceCallback(it)
@@ -225,8 +230,19 @@ class MainActivity : AudioServiceActivity() {
             } catch (_: Exception) {}
         }
         usbPermissionReceiver = null
+        pendingUsbPermissionResult?.let { pending ->
+            try {
+                pending.success(false)
+            } catch (_: Exception) {}
+        }
+        pendingUsbPermissionResult = null
+    }
 
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        super.cleanUpFlutterEngine(flutterEngine)
+        unregisterAudioAndUsbReceivers()
         closeUsbDevice()
+        methodChannel?.setMethodCallHandler(null)
         methodChannel = null
         storageChannel?.setMethodCallHandler(null)
         storageChannel = null
@@ -235,45 +251,17 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        audioDeviceCallback?.let {
-            am?.unregisterAudioDeviceCallback(it)
+        // Keep active USB DAC connection alive across Activity recreation/backgrounding
+        // when the AudioService FlutterEngine stays running; close only when finishing.
+        if (isFinishing) {
+            unregisterAudioAndUsbReceivers()
+            closeUsbDevice()
+            methodChannel?.setMethodCallHandler(null)
+            methodChannel = null
+            storageChannel?.setMethodCallHandler(null)
+            storageChannel = null
+            pendingAudioPermissionResult = null
         }
-        audioDeviceCallback = null
-
-        noisyReceiver?.let {
-            try {
-                unregisterReceiver(it)
-            } catch (_: Exception) {}
-        }
-        noisyReceiver = null
-
-        usbAttachReceiver?.let {
-            try {
-                unregisterReceiver(it)
-            } catch (_: Exception) {}
-        }
-        usbAttachReceiver = null
-
-        usbDetachReceiver?.let {
-            try {
-                unregisterReceiver(it)
-            } catch (_: Exception) {}
-        }
-        usbDetachReceiver = null
-
-        usbPermissionReceiver?.let {
-            try {
-                unregisterReceiver(it)
-            } catch (_: Exception) {}
-        }
-        usbPermissionReceiver = null
-
-        closeUsbDevice()
-        methodChannel = null
-        storageChannel?.setMethodCallHandler(null)
-        storageChannel = null
-        pendingAudioPermissionResult = null
     }
 
     private fun isUsbOutputType(type: Int): Boolean =
@@ -545,15 +533,10 @@ class MainActivity : AudioServiceActivity() {
 
             val behaviorMatches = supported.filter { it.mixerBehavior == targetBehavior }
             val chosen = if (bitPerfect) {
-                // For bit-perfect, prefer exact sample rate; never force non-integer rate shift.
+                // Bit-perfect requires an exact sample rate match; never claim bit-perfect on
+                // an integer-multiple upsampled mixer attribute.
                 val exactRate = behaviorMatches.filter { it.format.sampleRate == sampleRate }
-                val candidates = exactRate.ifEmpty {
-                    behaviorMatches.filter {
-                        sampleRate > 0 && it.format.sampleRate > sampleRate &&
-                            it.format.sampleRate % sampleRate == 0
-                    }
-                }
-                candidates.maxByOrNull { scoreMixerCandidate(it, sampleRate, bitDepth) }
+                exactRate.maxByOrNull { scoreMixerCandidate(it, sampleRate, bitDepth) }
             } else {
                 behaviorMatches.maxByOrNull { scoreMixerCandidate(it, sampleRate, bitDepth) }
             }
@@ -563,6 +546,11 @@ class MainActivity : AudioServiceActivity() {
             }
             if (!bitPerfect && behaviorMatches.isEmpty()) {
                 return am.clearPreferredMixerAttributes(mediaAudioAttributes, device)
+            }
+            if (supported.isNotEmpty()) {
+                // HAL advertised its supported mixer attributes and none matched the requested
+                // exact bit-perfect format; reject honestly so BitDrop can fall back cleanly.
+                return false
             }
 
             // Fallback when getSupportedMixerAttributes returned empty on non-standard HALs.
@@ -664,6 +652,13 @@ class MainActivity : AudioServiceActivity() {
                 unregisterReceiver(it)
             } catch (_: Exception) {}
         }
+        usbPermissionReceiver = null
+        pendingUsbPermissionResult?.let { previous ->
+            try {
+                previous.success(false)
+            } catch (_: Exception) {}
+        }
+        pendingUsbPermissionResult = result
 
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -683,13 +678,18 @@ class MainActivity : AudioServiceActivity() {
                         @Suppress("DEPRECATION")
                         intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
                     }
+                    if (dev != null && dev.deviceId != deviceId) {
+                        return
+                    }
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                     try {
                         unregisterReceiver(this)
                     } catch (_: Exception) {}
                     usbPermissionReceiver = null
+                    val callback = pendingUsbPermissionResult
+                    pendingUsbPermissionResult = null
                     runOnUiThread {
-                        result.success(granted)
+                        callback?.success(granted)
                     }
                 }
             }

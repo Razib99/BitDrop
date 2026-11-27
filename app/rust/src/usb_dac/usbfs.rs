@@ -252,6 +252,23 @@ impl UsbDeviceHandle {
         Self { fd, owned: true }
     }
 
+    /// Duplicates a raw file descriptor (e.g. from Android's `UsbDeviceConnection`)
+    /// so Rust owns an independent OS descriptor lifetime across hot-disconnects
+    /// and Activity teardown without risking POSIX FD reuse races.
+    pub fn from_raw_fd_duplicated(fd: RawFd) -> Result<Self, UsbFsError> {
+        if fd < 0 {
+            return Err(UsbFsError::InvalidArgument);
+        }
+        let dup_fd = unsafe { libc::dup(fd) };
+        if dup_fd < 0 {
+            return Err(UsbFsError::from_errno("dup"));
+        }
+        Ok(Self {
+            fd: dup_fd,
+            owned: true,
+        })
+    }
+
     /// Returns the raw integer file descriptor.
     pub fn raw_fd(&self) -> RawFd {
         self.fd
@@ -651,6 +668,32 @@ mod tests {
         );
 
         // Clean up second pipe fd
+        unsafe {
+            libc::close(fds[1]);
+        }
+    }
+
+    #[test]
+    fn test_usb_device_handle_duplicated_survives_original_close() {
+        let mut fds = [0 as libc::c_int; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+
+        let dup_handle = UsbDeviceHandle::from_raw_fd_duplicated(fds[0]).expect("dup succeeds");
+        let dup_fd = dup_handle.raw_fd();
+        assert_ne!(dup_fd, fds[0]);
+
+        // Closing Kotlin's original fd must NOT invalidate Rust's duplicated fd.
+        unsafe {
+            libc::close(fds[0]);
+        }
+        assert!(
+            unsafe { libc::fcntl(dup_fd, libc::F_GETFD) } >= 0,
+            "Duplicated fd must remain valid after original fd closes"
+        );
+
+        // Dropping duplicated handle closes dup_fd cleanly.
+        drop(dup_handle);
+        assert_eq!(unsafe { libc::fcntl(dup_fd, libc::F_GETFD) }, -1);
         unsafe {
             libc::close(fds[1]);
         }

@@ -1086,13 +1086,14 @@ impl DspPipelineV2 {
         };
         let mut subsonic = StereoBiquadF64::default();
         subsonic.set_coeffs(EQ_HIGH_PASS, SUBSONIC_FREQ, fs, BUTTERWORTH_Q, 0.0);
+        let crossfade_len = (0.020 * fs).round() as usize;
 
         Self {
             sample_rate: fs,
             active_bank: FilterBankF64::default(),
             target_bank: FilterBankF64::default(),
-            crossfade_pos: 0,
-            crossfade_len: (0.020 * fs).round() as usize,
+            crossfade_pos: crossfade_len,
+            crossfade_len,
 
             subsonic_filter: subsonic,
             subsonic_engaged: false,
@@ -1139,8 +1140,12 @@ impl DspPipelineV2 {
 
     pub fn set_sample_rate(&mut self, sample_rate: f64) {
         if sample_rate > 0.0 && (self.sample_rate - sample_rate).abs() > 0.5 {
+            let was_crossfading = self.crossfade_pos < self.crossfade_len;
             self.sample_rate = sample_rate;
             self.crossfade_len = (0.020 * sample_rate).round() as usize;
+            if !was_crossfading {
+                self.crossfade_pos = self.crossfade_len;
+            }
             self.subsonic_blend_step = 1.0 / (0.020 * sample_rate).max(1.0);
             self.subsonic_filter.set_coeffs(
                 EQ_HIGH_PASS,
@@ -1181,10 +1186,28 @@ impl DspPipelineV2 {
         }
     }
 
+    /// True when the EQ filter bank has unity gain across all bands and no LP/HP filters.
+    #[inline(always)]
+    fn is_eq_unity(&self) -> bool {
+        if self.crossfade_pos < self.crossfade_len {
+            return false;
+        }
+        if (self.active_bank.preamp_linear - 1.0).abs() >= 1e-6 {
+            return false;
+        }
+        for i in 0..self.active_bank.active {
+            let s = self.active_bank.specs[i];
+            if s.gain_db.abs() > 0.01 || s.kind == EQ_LOW_PASS || s.kind == EQ_HIGH_PASS {
+                return false;
+            }
+        }
+        true
+    }
+
     /// True when all settings are neutral and output can bypass all DSP bit-for-bit.
     #[inline(always)]
     pub fn is_bit_exact_neutral(&self) -> bool {
-        if self.eq_enabled {
+        if self.eq_enabled && !self.is_eq_unity() {
             return false;
         }
         self.replay_gain_db.abs() < 1e-6

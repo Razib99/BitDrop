@@ -72,6 +72,7 @@ class OutputDeviceProbe {
   Timer? _timer;
   final _controller = BehaviorSubject<OutputDevice?>.seeded(null);
   OutputDevice? _last;
+  int? _activeDirectUsbDeviceId;
 
   /// Invoked when Android sends AudioManager.ACTION_AUDIO_BECOMING_NOISY
   /// or iOS sends AVAudioSessionRouteChange with oldDeviceUnavailable.
@@ -114,8 +115,12 @@ class OutputDeviceProbe {
         case 'onUsbDeviceDetached':
           final devId = call.arguments as int?;
           if (devId != null) {
-            onUsbDeviceDetached?.call(devId);
-            unawaited(detachDirectUsbDac());
+            final matchesActive = _activeDirectUsbDeviceId == null ||
+                _activeDirectUsbDeviceId == devId;
+            if (matchesActive) {
+              onUsbDeviceDetached?.call(devId);
+              unawaited(detachDirectUsbDac());
+            }
           }
           break;
       }
@@ -133,11 +138,25 @@ class OutputDeviceProbe {
     }
   }
 
+  static bool _sameDeviceSnapshot(OutputDevice? a, OutputDevice? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null) return false;
+    return a.id == b.id &&
+        a.name == b.name &&
+        a.type == b.type &&
+        a.systemSampleRate == b.systemSampleRate &&
+        a.supportsBitPerfect == b.supportsBitPerfect &&
+        a.maxTier == b.maxTier &&
+        listEquals(a.supportedRates, b.supportedRates) &&
+        listEquals(a.bitPerfectRates, b.bitPerfectRates);
+  }
+
   Future<void> _poll() async {
     final device = await read();
-    // Only emit on a real change, so the signal path does not churn twice a
-    // second for nothing.
-    if (device?.id != _last?.id || device?.name != _last?.name) {
+    // Emit whenever device identity OR negotiated hardware capabilities/rate
+    // change (e.g. iOS AVAudioSession switching from 48 kHz to 96 kHz on the
+    // same USB DAC), while avoiding redundant churn on identical polls.
+    if (!_sameDeviceSnapshot(device, _last)) {
       _last = device;
       if (!_controller.isClosed) _controller.add(device);
     }
@@ -164,6 +183,11 @@ class OutputDeviceProbe {
     onInterruptionEnded?.call(shouldResume);
   }
 
+  @visibleForTesting
+  void setActiveDirectUsbDeviceIdForTesting(int? deviceId) {
+    _activeDirectUsbDeviceId = deviceId;
+  }
+
   Future<OutputDevice?> read() async {
     if (!_supported) return null;
     try {
@@ -172,7 +196,8 @@ class OutputDeviceProbe {
       );
       if (raw == null || raw['available'] != true) return null;
 
-      final type = switch (raw['type'] as String? ?? 'unknown') {
+      final rawType = raw['type'] as String? ?? 'unknown';
+      final type = switch (rawType) {
         'usb' => DeviceType.usb,
         'wired' => DeviceType.wiredAnalog,
         'bluetooth' => DeviceType.bluetooth,
@@ -218,10 +243,12 @@ class OutputDeviceProbe {
             ? HardwareVolume.yes
             : HardwareVolume.unknown,
         maxTier: maxTier,
-        connectionLabel: switch (type) {
-          DeviceType.usb => 'USB-C',
-          DeviceType.bluetooth => 'Bluetooth',
-          DeviceType.wiredAnalog => '3.5 mm',
+        connectionLabel: switch (rawType) {
+          'usb' => 'USB-C',
+          'bluetooth' => 'Bluetooth',
+          'wired' => '3.5 mm',
+          'airplay' => 'AirPlay',
+          'hdmi' => 'HDMI',
           _ => null,
         },
         apiLevel: apiLevel,
@@ -385,9 +412,11 @@ class OutputDeviceProbe {
         sampleRate: sampleRate,
         bitDepth: bitDepth,
       );
+      _activeDirectUsbDeviceId = deviceId;
       return diag;
     } catch (e) {
       debugPrint('[output] engineAttachUsbDac failed: $e');
+      _activeDirectUsbDeviceId = null;
       await closeUsbDevice();
       return null;
     }
@@ -395,6 +424,7 @@ class OutputDeviceProbe {
 
   /// Detaches the direct user-space USB DAC session and cleanly closes the device.
   Future<void> detachDirectUsbDac() async {
+    _activeDirectUsbDeviceId = null;
     try {
       rust.engineDetachUsbDac();
     } catch (e) {
