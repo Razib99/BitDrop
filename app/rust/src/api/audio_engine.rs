@@ -2872,6 +2872,11 @@ pub fn engine_get_stream_backend() -> String {
 mod tests {
     use super::*;
 
+    /// Serializes tests that read or mutate process-global engine state
+    /// (`PLAYER_STATE`, `AUDIO_CONSUMER`, `BOUNDARY_CONSUMER`, `TRIGGERED_PRODUCER`,
+    /// `DSP_TRIPLE_BUFFER`) so parallel `cargo test` execution cannot race.
+    static TEST_ENGINE_GLOBAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_flush_to_zero_hardware_execution() {
         enable_hardware_flush_to_zero();
@@ -3426,6 +3431,9 @@ mod tests {
 
     #[test]
     fn test_engine_diagnostics_aggregation() {
+        let _guard = TEST_ENGINE_GLOBAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         {
             let mut state = PLAYER_STATE.lock().unwrap();
             state.buffered_ms = 4500;
@@ -3449,6 +3457,9 @@ mod tests {
 
     #[test]
     fn test_engine_usb_dac_integration() {
+        let _guard = TEST_ENGINE_GLOBAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         assert_eq!(engine_get_stream_backend(), "Standard");
 
         let diag = engine_get_usb_dac_diagnostics();
@@ -3551,6 +3562,9 @@ mod tests {
 
     #[test]
     fn test_dynamic_cpal_stream_reconfiguration() {
+        let _guard = TEST_ENGINE_GLOBAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Test engine_set_hardware_sample_rate updates state correctly
         engine_set_hardware_sample_rate(96000);
         let state = engine_output_state();
@@ -3567,6 +3581,9 @@ mod tests {
 
     #[test]
     fn test_output_renderer_drop_consumer_restoration() {
+        let _guard = TEST_ENGINE_GLOBAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let (_audio_tx, audio_rx) = rtrb::RingBuffer::<f32>::new(1024);
         let (_boundary_tx, boundary_rx) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
         let (triggered_tx, _triggered_rx) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
@@ -3599,18 +3616,36 @@ mod tests {
     #[test]
     #[cfg(not(target_os = "android"))]
     fn test_cpal_output_stream_safe_invocation() {
+        let _guard = TEST_ENGINE_GLOBAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (_audio_tx, audio_rx) = rtrb::RingBuffer::<f32>::new(1024);
+        let (_boundary_tx, boundary_rx) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+        let (triggered_tx, _triggered_rx) = rtrb::RingBuffer::<BoundaryMarker>::new(32);
+        if AUDIO_CONSUMER.lock().unwrap().is_none() {
+            return_audio_consumers(Some(audio_rx), Some(boundary_rx), Some(triggered_tx));
+        }
+
         // Ensure open_cpal_output_stream can be invoked safely with rates without panicking
         open_cpal_output_stream(Some(48000));
+        let has_host_device = cpal::default_host().default_output_device().is_some();
         let state = engine_output_state();
-        assert!(
-            state.hardware_sample_rate > 0
-                || state.output_sample_rate > 0
-                || !state.hardware_format.is_empty()
-        );
+        if has_host_device {
+            assert!(
+                state.hardware_sample_rate > 0
+                    || state.output_sample_rate > 0
+                    || !state.hardware_format.is_empty()
+            );
+        }
+        // Release the test CPAL stream cleanly so consumers return to globals.
+        *CPAL_STREAM.lock().unwrap() = CpalStreamWrapper(None);
     }
 
     #[test]
     fn test_engine_set_replay_gain_and_crossfeed_publish_and_preserve() {
+        let _guard = TEST_ENGINE_GLOBAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         engine_set_eq_enabled(false);
         engine_set_replay_gain(-4.5, 0.85);
         engine_set_crossfeed(CROSSFEED_JAN_MEIER);
@@ -3676,6 +3711,9 @@ mod tests {
 
     #[test]
     fn test_software_volume_db_attenuates_and_marks_dsp_active() {
+        let _guard = TEST_ENGINE_GLOBAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut dsp = DspPipelineV2::new(48_000.0);
         assert!(dsp.is_bit_exact_neutral());
         let (l_unity, r_unity) = dsp.process_stereo(0.5, -0.5);
@@ -3729,6 +3767,9 @@ mod tests {
 
     #[test]
     fn test_flat_eq_stays_neutral_and_lpf_marks_dsp_active() {
+        let _guard = TEST_ENGINE_GLOBAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut dsp = DspPipelineV2::new(48_000.0);
         dsp.eq_enabled = true;
         // Flat un-bypassed EQ with 0 dB gains must remain bit-exact neutral (no limiter coloring).
