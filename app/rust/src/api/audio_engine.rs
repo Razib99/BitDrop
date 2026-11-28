@@ -3628,14 +3628,20 @@ mod tests {
 
         // Ensure open_cpal_output_stream can be invoked safely with rates without panicking
         open_cpal_output_stream(Some(48000));
-        let has_host_device = cpal::default_host().default_output_device().is_some();
+        let has_openable_device = cpal::default_host()
+            .default_output_device()
+            .and_then(|d| d.default_output_config().ok())
+            .is_some();
         let state = engine_output_state();
-        if has_host_device {
+        if has_openable_device {
             assert!(
                 state.hardware_sample_rate > 0
                     || state.output_sample_rate > 0
                     || !state.hardware_format.is_empty()
             );
+        } else {
+            // Even when CI has no ALSA config (`DeviceNotAvailable`), consumers must be returned.
+            assert!(AUDIO_CONSUMER.lock().unwrap().is_some());
         }
         // Release the test CPAL stream cleanly so consumers return to globals.
         *CPAL_STREAM.lock().unwrap() = CpalStreamWrapper(None);
