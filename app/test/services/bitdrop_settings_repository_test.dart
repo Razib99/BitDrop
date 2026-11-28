@@ -162,10 +162,10 @@ void main() {
       expect(repo.currentEq.bypass, isFalse);
     });
 
-    test('handleSetPreamp updates preamp gain and clipping calculation', () async {
+    test('handleSetPreamp updates preamp gain without fabricating clipped samples', () async {
       await repo.handleSetPreamp(const SetPreamp(3.0));
       expect(repo.currentEq.preampDb, equals(3.0));
-      expect(repo.currentEq.clippedSamples, greaterThan(0));
+      expect(repo.currentEq.clippedSamples, equals(0));
 
       await repo.handleSetPreamp(const SetPreamp(-2.0));
       expect(repo.currentEq.preampDb, equals(-2.0));

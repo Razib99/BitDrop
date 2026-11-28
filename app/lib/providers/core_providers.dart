@@ -338,15 +338,16 @@ class LyricsOffsetNotifier extends StateNotifier<int> {
   }
 
   final String trackId;
+  bool _userModified = false;
 
   String get _kvKey => 'lyrics_offset_$trackId';
 
   Future<void> _restore() async {
     try {
       final raw = await rust_cache.cloudDbGetKv(key: _kvKey);
-      if (raw == null || raw.isEmpty || !mounted) return;
+      if (raw == null || raw.isEmpty || !mounted || _userModified) return;
       final parsed = int.tryParse(raw.trim());
-      if (parsed != null && state == 0) {
+      if (parsed != null && !_userModified) {
         state = parsed.clamp(-5000, 5000);
       }
     } catch (_) {
@@ -355,12 +356,14 @@ class LyricsOffsetNotifier extends StateNotifier<int> {
   }
 
   void adjust(int deltaMs) {
+    _userModified = true;
     final next = (state + deltaMs).clamp(-5000, 5000);
     state = next;
     unawaited(_persist(next));
   }
 
   void reset() {
+    _userModified = true;
     state = 0;
     unawaited(_persist(0));
   }

@@ -416,9 +416,7 @@ class BitDropSettingsRepository {
   }
 
   Future<void> handleSetPreamp(SetPreamp cmd) async {
-    final clipped = cmd.db > 0 ? (cmd.db * 420).round() : 0;
-    final updated =
-        _eq.value.copyWith(preampDb: cmd.db, clippedSamples: clipped);
+    final updated = _eq.value.copyWith(preampDb: cmd.db, clippedSamples: 0);
     _eq.add(updated);
     pushEqToEngine(updated);
     await saveEqState();

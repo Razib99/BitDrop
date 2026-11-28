@@ -1195,8 +1195,7 @@ impl DspPipelineV2 {
         if (self.active_bank.preamp_linear - 1.0).abs() >= 1e-6 {
             return false;
         }
-        for i in 0..self.active_bank.active {
-            let s = self.active_bank.specs[i];
+        for s in self.active_bank.specs.iter().take(self.active_bank.active) {
             if s.gain_db.abs() > 0.01 || s.kind == EQ_LOW_PASS || s.kind == EQ_HIGH_PASS {
                 return false;
             }

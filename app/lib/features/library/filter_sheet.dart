@@ -224,8 +224,10 @@ class _FilterControls extends ConsumerWidget {
                   Codec.alac,
                   Codec.wav,
                   Codec.aiff,
+                  Codec.dsf,
                   Codec.mp3,
                   Codec.aac,
+                  Codec.ogg,
                 ])
                   BitChip(
                     label: codec.label,
@@ -323,8 +325,8 @@ class _FilterControls extends ConsumerWidget {
                 notifier.state = filters.copyWith(showUnsupported: v),
             title: const Text('Show unsupported files'),
             subtitle: const Text(
-              'APE, WavPack, DSF and Opus appear greyed out. BitDrop cannot '
-              'play them yet, but they are still in your Drive.',
+              'APE, WavPack, DFF and Opus appear greyed out. BitDrop cannot '
+              'play them yet, but they remain visible in your library.',
             ),
           ),
           const SizedBox(height: Spacing.md),

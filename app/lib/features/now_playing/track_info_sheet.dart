@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core_api/enums.dart';
 import '../../core_api/models.dart';
+import '../../providers/core_providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../util/format.dart';
@@ -130,18 +132,31 @@ class _InfoRow extends StatelessWidget {
       );
 }
 
-Future<void> showLyricsSheet(BuildContext context, Track track) =>
+Future<void> showLyricsSheet(BuildContext context, Track initialTrack) =>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => BottomSheetScaffold(
-        title: 'Lyrics',
-        subtitle: '${track.title} · ${track.artist}',
-        child: SizedBox(
-          height: 480,
-          child: AmbientLyricsView(track: track),
-        ),
+      builder: (_) => _ReactiveLyricsSheet(initialTrack: initialTrack),
+    );
+
+class _ReactiveLyricsSheet extends ConsumerWidget {
+  const _ReactiveLyricsSheet({required this.initialTrack});
+
+  final Track initialTrack;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final track =
+        ref.watch(nowPlayingProvider).valueOrNull?.track ?? initialTrack;
+    return BottomSheetScaffold(
+      title: 'Lyrics',
+      subtitle: '${track.title} · ${track.artist}',
+      child: SizedBox(
+        height: 480,
+        child: AmbientLyricsView(track: track),
       ),
     );
+  }
+}
 

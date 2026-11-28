@@ -180,14 +180,59 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
     );
   }
 
+  static ({int activeIndex, bool showPreIntro, bool showInterlude})
+      _selectLyricsCursor(TrackLyrics? lyrics, int effectivePosition) {
+    if (lyrics == null || !lyrics.synced || lyrics.lines.isEmpty) {
+      return (activeIndex: -1, showPreIntro: false, showInterlude: false);
+    }
+
+    int activeIndex = -1;
+    for (int i = 0; i < lyrics.lines.length; i++) {
+      if (lyrics.lines[i].timestampMs <= effectivePosition) {
+        activeIndex = i;
+      } else {
+        break;
+      }
+    }
+
+    final showPreIntro = effectivePosition < lyrics.lines.first.timestampMs &&
+        lyrics.lines.first.timestampMs >= 5000;
+
+    bool showInterlude = false;
+    if (activeIndex >= 0 && activeIndex + 1 < lyrics.lines.length) {
+      final cur = lyrics.lines[activeIndex];
+      final next = lyrics.lines[activeIndex + 1];
+      if (cur.text.trim().isNotEmpty && next.text.trim().isNotEmpty) {
+        final gapMs = next.timestampMs - cur.timestampMs;
+        showInterlude = gapMs > 5000 &&
+            effectivePosition >= cur.timestampMs + 3500 &&
+            next.timestampMs - effectivePosition >= 800;
+      }
+    }
+
+    return (
+      activeIndex: activeIndex,
+      showPreIntro: showPreIntro,
+      showInterlude: showInterlude,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final lyricsAsync = ref.watch(lyricsProvider(widget.track));
-    final position = ref.watch(positionProvider).valueOrNull?.positionMs ?? 0;
     final offsetMs = ref.watch(lyricsOffsetProvider(widget.track.id));
+    final loadedLyrics = lyricsAsync.valueOrNull;
+    // Select only the discrete cursor (active line + breather flags) so
+    // AmbientLyricsView rebuilds only on line/interlude transitions rather
+    // than 16-30 Hz position ticks.
+    final cursor = ref.watch(
+      positionProvider.select((async) {
+        final pos = async.valueOrNull?.positionMs ?? 0;
+        return _selectLyricsCursor(loadedLyrics, pos + offsetMs);
+      }),
+    );
     final fontScale = ref.watch(lyricsFontScaleProvider);
     final alignLeft = ref.watch(lyricsAlignLeftProvider);
-    final effectivePosition = position + offsetMs;
     final isPlaying = ref.watch(playbackProvider).valueOrNull?.isPlaying ?? false;
     final glowColor = _glowColor();
 
@@ -333,14 +378,7 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
           );
         }
 
-        int newActiveIndex = -1;
-        for (int i = 0; i < lyrics.lines.length; i++) {
-          if (lyrics.lines[i].timestampMs <= effectivePosition) {
-            newActiveIndex = i;
-          } else {
-            break;
-          }
-        }
+        final newActiveIndex = cursor.activeIndex;
 
         if (newActiveIndex != _activeLineIndex) {
           _activeLineIndex = newActiveIndex;
@@ -349,22 +387,10 @@ class _AmbientLyricsViewState extends ConsumerState<AmbientLyricsView> {
           });
         }
 
-        final showPreIntro = lyrics.lines.isNotEmpty &&
-            effectivePosition < lyrics.lines.first.timestampMs &&
-            lyrics.lines.first.timestampMs >= 5000;
+        final showPreIntro = cursor.showPreIntro;
 
-        bool showInterludeAfter(int index) {
-          if (index != _activeLineIndex || index + 1 >= lyrics.lines.length) {
-            return false;
-          }
-          final cur = lyrics.lines[index];
-          final next = lyrics.lines[index + 1];
-          if (cur.text.trim().isEmpty || next.text.trim().isEmpty) return false;
-          final gapMs = next.timestampMs - cur.timestampMs;
-          return gapMs > 5000 &&
-              effectivePosition >= cur.timestampMs + 3500 &&
-              next.timestampMs - effectivePosition >= 800;
-        }
+        bool showInterludeAfter(int index) =>
+            cursor.showInterlude && index == _activeLineIndex;
 
         return Column(
           children: [

@@ -2056,9 +2056,8 @@ class LiveBitDropCore implements BitDropCore {
       _settingsRepo.syncFromLiveState(eq: updated);
       unawaited(_saveEqState());
     } else if (cmd is SetPreamp) {
-      final clipped = cmd.db > 0 ? (cmd.db * 420).round() : 0;
       final updated =
-          _eq.value.copyWith(preampDb: cmd.db, clippedSamples: clipped);
+          _eq.value.copyWith(preampDb: cmd.db, clippedSamples: 0);
       _eq.add(updated);
       _settingsRepo.syncFromLiveState(eq: updated);
       unawaited(_saveEqState());
@@ -2332,9 +2331,7 @@ class LiveBitDropCore implements BitDropCore {
     if (_bufferHistory.length > 40) _bufferHistory.removeAt(0);
 
     return DiagnosticsSnapshot(
-      tier: signal.tier == OutputTier.unknown
-          ? OutputTier.bitPerfect
-          : signal.tier,
+      tier: signal.tier,
       requested: source,
       actual: signal.actual.sampleRate > 0 ? signal.actual : source,
       deviceName: device,
