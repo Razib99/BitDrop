@@ -1788,7 +1788,7 @@ fn open_output_stream(sample_rate: Option<u32>) {
                         "[bitdrop] exclusive stream clamped rate {wanted} -> {granted}; retrying USAGE_MEDIA shared stream at {wanted} Hz"
                     );
                     drop(stream);
-                    Err(oboe::Error::ErrorUnavailable)
+                    Err(oboe::Error::Unavailable)
                 } else {
                     Ok(stream)
                 }
