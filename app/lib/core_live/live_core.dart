@@ -921,7 +921,8 @@ class LiveBitDropCore implements BitDropCore {
       dir.createSync(recursive: true);
     }
 
-    final isCloud = _cloud?.trackById(trackId) != null;
+    final isCloud = !CloudLibrary.isLocalTrackId(trackId) &&
+        _cloud?.trackById(trackId) != null;
     if (!isCloud) {
       return;
     }
@@ -962,16 +963,50 @@ class LiveBitDropCore implements BitDropCore {
     }
   }
 
+  static int _compareAlbums(Album a, Album b, AlbumSort sort, bool descending) {
+    final cmp = switch (sort) {
+      AlbumSort.title => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+      AlbumSort.artist =>
+        a.artist.toLowerCase().compareTo(b.artist.toLowerCase()),
+      AlbumSort.year => (a.year ?? 0).compareTo(b.year ?? 0),
+      AlbumSort.recentlyAdded => (a.addedAt ?? DateTime(1970))
+          .compareTo(b.addedAt ?? DateTime(1970)),
+      AlbumSort.sampleRate => a.format.sampleRate.compareTo(b.format.sampleRate),
+      AlbumSort.bitDepth => a.format.bitDepth.compareTo(b.format.bitDepth),
+      AlbumSort.size => a.sizeBytes.compareTo(b.sizeBytes),
+      AlbumSort.duration => a.durationMs.compareTo(b.durationMs),
+    };
+    final tieBreak = cmp != 0
+        ? cmp
+        : a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    return descending ? -tieBreak : tieBreak;
+  }
+
+  static int _compareTracks(Track a, Track b, TrackSort sort, bool descending) {
+    final cmp = switch (sort) {
+      TrackSort.title => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+      TrackSort.artist =>
+        a.artist.toLowerCase().compareTo(b.artist.toLowerCase()),
+      TrackSort.album =>
+        a.albumTitle.toLowerCase().compareTo(b.albumTitle.toLowerCase()),
+      TrackSort.duration => a.durationMs.compareTo(b.durationMs),
+      TrackSort.sampleRate => a.format.sampleRate.compareTo(b.format.sampleRate),
+    };
+    final tieBreak = cmp != 0
+        ? cmp
+        : a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    return descending ? -tieBreak : tieBreak;
+  }
+
   @override
   Future<Paged<Album>> albums(AlbumQuery q) async {
     final favAlbum = _favoritesAlbum();
-    final items = <Album>[
-      if (q.artistId == null &&
-          q.filters.matchesAlbum(
-            favAlbum,
-            showUnsupportedSetting: _settings.value.showUnsupportedFiles,
-          ))
-        favAlbum,
+    final includeFav = q.artistId == null &&
+        q.filters.matchesAlbum(
+          favAlbum,
+          showUnsupportedSetting: _settings.value.showUnsupportedFiles,
+        );
+    final libraryAlbums = <Album>[
       ..._cloudAlbums.map(_enrichAlbum).where((a) =>
           (q.artistId == null || a.artistId == q.artistId) &&
           q.filters.matchesAlbum(
@@ -985,6 +1020,11 @@ class LiveBitDropCore implements BitDropCore {
               a,
               showUnsupportedSetting: _settings.value.showUnsupportedFiles,
             )),
+    ]..sort((a, b) => _compareAlbums(a, b, q.sort, q.descending));
+
+    final items = <Album>[
+      if (includeFav) favAlbum,
+      ...libraryAlbums,
     ];
     return Paged(items: items, total: items.length);
   }
@@ -1008,7 +1048,8 @@ class LiveBitDropCore implements BitDropCore {
                   t,
                   showUnsupportedSetting: _settings.value.showUnsupportedFiles,
                 ))
-            .toList();
+            .toList()
+          ..sort((a, b) => _compareTracks(a, b, q.sort, q.descending));
         return Paged(items: list, total: list.length);
       }
       final cloud = _cloudTracks
@@ -1042,7 +1083,8 @@ class LiveBitDropCore implements BitDropCore {
               showUnsupportedSetting: _settings.value.showUnsupportedFiles,
               resolvedArtistId: albumArtistById[t.albumId],
             ))
-        .toList();
+        .toList()
+      ..sort((a, b) => _compareTracks(a, b, q.sort, q.descending));
     return Paged(items: items, total: items.length);
   }
 

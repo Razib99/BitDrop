@@ -21,7 +21,7 @@ enum Availability {
 
 /// Container/codec. Everything from [ape] down is not decodable by the engine
 /// and must be shown greyed out rather than hidden (audit §2.8).
-enum Codec { flac, alac, wav, aiff, mp3, aac, ape, wavpack, dsf, opus }
+enum Codec { flac, alac, wav, aiff, mp3, aac, ogg, ape, wavpack, dsf, dff, opus }
 
 enum DeviceType { usb, bluetooth, phoneSpeaker, wiredAnalog, unknown }
 
@@ -92,17 +92,19 @@ extension CodecInfo on Codec {
         Codec.aiff => 'AIFF',
         Codec.mp3 => 'MP3',
         Codec.aac => 'AAC',
+        Codec.ogg => 'OGG',
         Codec.ape => 'APE',
         Codec.wavpack => 'WavPack',
         Codec.dsf => 'DSF',
+        Codec.dff => 'DFF',
         Codec.opus => 'Opus',
       };
 
   /// True when the engine can decode this container.
   bool get isSupported => switch (this) {
         Codec.flac || Codec.alac || Codec.wav || Codec.aiff => true,
-        Codec.mp3 || Codec.aac || Codec.dsf => true,
-        Codec.ape || Codec.wavpack || Codec.opus => false,
+        Codec.mp3 || Codec.aac || Codec.ogg || Codec.dsf => true,
+        Codec.ape || Codec.wavpack || Codec.dff || Codec.opus => false,
       };
 
   /// True when the format preserves every sample.
@@ -111,7 +113,8 @@ extension CodecInfo on Codec {
         Codec.alac ||
         Codec.wav ||
         Codec.aiff ||
-        Codec.dsf =>
+        Codec.dsf ||
+        Codec.dff =>
           true,
         _ => false,
       };

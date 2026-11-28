@@ -37,7 +37,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.0.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 871852751;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -677754447;
 
 // Section: executor
 
@@ -2018,6 +2018,38 @@ fn wire__crate__api__cloud_library__cloud_library_clear_impl(
         },
     )
 }
+fn wire__crate__api__cloud_library__cloud_library_clear_drive_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud_library_clear_drive",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::cloud_library::cloud_library_clear_drive()?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__cloud_library__cloud_library_clear_lyrics_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2541,6 +2573,41 @@ fn wire__crate__api__cloud_library__cloud_library_record_playback_impl(
                         api_listened_ms,
                         api_sample_rate,
                         api_bit_depth,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__cloud_library__cloud_library_remove_local_folder_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud_library_remove_local_folder",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_root_label = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::cloud_library::cloud_library_remove_local_folder(
+                        api_root_label,
                     )?;
                     Ok(output_ok)
                 })())
@@ -3283,6 +3350,7 @@ impl SseDecode for crate::api::cloud_library::CloudTrack {
         let mut var_replayGainAlbumGain = <Option<f64>>::sse_decode(deserializer);
         let mut var_replayGainTrackPeak = <Option<f64>>::sse_decode(deserializer);
         let mut var_replayGainAlbumPeak = <Option<f64>>::sse_decode(deserializer);
+        let mut var_codec = <String>::sse_decode(deserializer);
         return crate::api::cloud_library::CloudTrack {
             file_id: var_fileId,
             name: var_name,
@@ -3306,6 +3374,7 @@ impl SseDecode for crate::api::cloud_library::CloudTrack {
             replay_gain_album_gain: var_replayGainAlbumGain,
             replay_gain_track_peak: var_replayGainTrackPeak,
             replay_gain_album_peak: var_replayGainAlbumPeak,
+            codec: var_codec,
         };
     }
 }
@@ -3352,6 +3421,7 @@ impl SseDecode for crate::cloud::db::CloudTrackRow {
         let mut var_replayGainAlbumGain = <Option<f64>>::sse_decode(deserializer);
         let mut var_replayGainTrackPeak = <Option<f64>>::sse_decode(deserializer);
         let mut var_replayGainAlbumPeak = <Option<f64>>::sse_decode(deserializer);
+        let mut var_codec = <String>::sse_decode(deserializer);
         return crate::cloud::db::CloudTrackRow {
             file_id: var_fileId,
             name: var_name,
@@ -3375,6 +3445,7 @@ impl SseDecode for crate::cloud::db::CloudTrackRow {
             replay_gain_album_gain: var_replayGainAlbumGain,
             replay_gain_track_peak: var_replayGainTrackPeak,
             replay_gain_album_peak: var_replayGainAlbumPeak,
+            codec: var_codec,
         };
     }
 }
@@ -4267,139 +4338,151 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        60 => wire__crate__api__cloud_library__cloud_library_clear_lyrics_impl(
+        60 => wire__crate__api__cloud_library__cloud_library_clear_drive_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        61 => wire__crate__api__cloud_library__cloud_library_counts_impl(
+        61 => wire__crate__api__cloud_library__cloud_library_clear_lyrics_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        62 => wire__crate__api__cloud_library__cloud_library_get_folder_impl(
+        62 => wire__crate__api__cloud_library__cloud_library_counts_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        63 => wire__crate__api__cloud_library__cloud_library_get_genres_impl(
+        63 => wire__crate__api__cloud_library__cloud_library_get_folder_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        64 => wire__crate__api__cloud_library__cloud_library_get_listening_recap_impl(
+        64 => wire__crate__api__cloud_library__cloud_library_get_genres_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        65 => wire__crate__api__cloud_library__cloud_library_get_lyrics_impl(
+        65 => wire__crate__api__cloud_library__cloud_library_get_listening_recap_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        66 => wire__crate__api__cloud_library__cloud_library_get_tracks_by_genre_impl(
+        66 => wire__crate__api__cloud_library__cloud_library_get_lyrics_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        67 => wire__crate__api__cloud_library__cloud_library_get_tracks_in_folder_impl(
+        67 => wire__crate__api__cloud_library__cloud_library_get_tracks_by_genre_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        68 => wire__crate__api__cloud_library__cloud_library_open_impl(
+        68 => wire__crate__api__cloud_library__cloud_library_get_tracks_in_folder_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        69 => wire__crate__api__cloud_library__cloud_library_pending_impl(
+        69 => wire__crate__api__cloud_library__cloud_library_open_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        70 => wire__crate__api__cloud_library__cloud_library_prune_local_tracks_impl(
+        70 => wire__crate__api__cloud_library__cloud_library_pending_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        71 => wire__crate__api__cloud_library__cloud_library_prune_missing_impl(
+        71 => wire__crate__api__cloud_library__cloud_library_prune_local_tracks_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        72 => wire__crate__api__cloud_library__cloud_library_read_tags_impl(
+        72 => wire__crate__api__cloud_library__cloud_library_prune_missing_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        73 => wire__crate__api__cloud_library__cloud_library_rebuild_albums_impl(
+        73 => wire__crate__api__cloud_library__cloud_library_read_tags_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        74 => wire__crate__api__cloud_library__cloud_library_record_playback_impl(
+        74 => wire__crate__api__cloud_library__cloud_library_rebuild_albums_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        75 => wire__crate__api__cloud_library__cloud_library_save_lyrics_impl(
+        75 => wire__crate__api__cloud_library__cloud_library_record_playback_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        76 => wire__crate__api__cloud_library__cloud_library_scan_local_folder_impl(
+        76 => wire__crate__api__cloud_library__cloud_library_remove_local_folder_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        77 => wire__crate__api__cloud_library__cloud_library_scan_tags_batch_impl(
+        77 => wire__crate__api__cloud_library__cloud_library_save_lyrics_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        78 => wire__crate__api__cloud_library__cloud_library_search_impl(
+        78 => wire__crate__api__cloud_library__cloud_library_scan_local_folder_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        79 => wire__crate__api__cloud_library__cloud_library_sync_missing_artwork_impl(
+        79 => wire__crate__api__cloud_library__cloud_library_scan_tags_batch_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        80 => wire__crate__api__cloud_library__cloud_library_tracks_impl(
+        80 => wire__crate__api__cloud_library__cloud_library_search_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        81 => wire__crate__api__cloud_library__get_total_cache_bytes_impl(
+        81 => wire__crate__api__cloud_library__cloud_library_sync_missing_artwork_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        85 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        82 => wire__crate__api__cloud_library__cloud_library_tracks_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        83 => wire__crate__api__cloud_library__get_total_cache_bytes_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        87 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4506,12 +4589,12 @@ fn pde_ffi_dispatcher_sync_impl(
             rust_vec_len,
             data_len,
         ),
-        82 => wire__crate__api__simple__decode_flac_full_impl(ptr, rust_vec_len, data_len),
-        83 => wire__crate__api__simple__get_cover_art_impl(ptr, rust_vec_len, data_len),
-        84 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-        86 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
-        87 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
-        88 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
+        84 => wire__crate__api__simple__decode_flac_full_impl(ptr, rust_vec_len, data_len),
+        85 => wire__crate__api__simple__get_cover_art_impl(ptr, rust_vec_len, data_len),
+        86 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        88 => wire__crate__api__simple__init_audio_playback_impl(ptr, rust_vec_len, data_len),
+        89 => wire__crate__api__simple__scan_directory_impl(ptr, rust_vec_len, data_len),
+        90 => wire__crate__api__simple__scan_local_file_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4827,6 +4910,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::cloud_library::CloudTrack {
             self.replay_gain_album_gain.into_into_dart().into_dart(),
             self.replay_gain_track_peak.into_into_dart().into_dart(),
             self.replay_gain_album_peak.into_into_dart().into_dart(),
+            self.codec.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -4891,6 +4975,7 @@ impl flutter_rust_bridge::IntoDart for crate::cloud::db::CloudTrackRow {
             self.replay_gain_album_gain.into_into_dart().into_dart(),
             self.replay_gain_track_peak.into_into_dart().into_dart(),
             self.replay_gain_album_peak.into_into_dart().into_dart(),
+            self.codec.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5514,6 +5599,7 @@ impl SseEncode for crate::api::cloud_library::CloudTrack {
         <Option<f64>>::sse_encode(self.replay_gain_album_gain, serializer);
         <Option<f64>>::sse_encode(self.replay_gain_track_peak, serializer);
         <Option<f64>>::sse_encode(self.replay_gain_album_peak, serializer);
+        <String>::sse_encode(self.codec, serializer);
     }
 }
 
@@ -5552,6 +5638,7 @@ impl SseEncode for crate::cloud::db::CloudTrackRow {
         <Option<f64>>::sse_encode(self.replay_gain_album_gain, serializer);
         <Option<f64>>::sse_encode(self.replay_gain_track_peak, serializer);
         <Option<f64>>::sse_encode(self.replay_gain_album_peak, serializer);
+        <String>::sse_encode(self.codec, serializer);
     }
 }
 

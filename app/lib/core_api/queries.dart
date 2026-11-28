@@ -94,6 +94,16 @@ class LibraryFilters {
       (!showUnsupported ? 1 : 0) +
       (genre != null ? 1 : 0);
 
+  static bool _matchesGenre(String? rawGenre, String target) {
+    if (rawGenre == null || rawGenre.isEmpty) return false;
+    final want = target.trim().toLowerCase();
+    if (want.isEmpty) return true;
+    for (final part in rawGenre.split(RegExp(r'[;|]'))) {
+      if (part.trim().toLowerCase() == want) return true;
+    }
+    return false;
+  }
+
   /// True when [album] passes every active criterion in this filter set.
   bool matchesAlbum(Album album, {bool showUnsupportedSetting = true}) {
     if (!showUnsupported && !album.format.codec.isSupported) return false;
@@ -104,7 +114,7 @@ class LibraryFilters {
     if (!quality.matches(album.format)) return false;
     if (genre != null &&
         genre!.isNotEmpty &&
-        album.genre?.toLowerCase() != genre!.toLowerCase()) {
+        !_matchesGenre(album.genre, genre!)) {
       return false;
     }
     if (!availability.matches(album.availability)) return false;
@@ -128,7 +138,7 @@ class LibraryFilters {
     if (!quality.matches(track.format)) return false;
     if (genre != null &&
         genre!.isNotEmpty &&
-        track.genre?.toLowerCase() != genre!.toLowerCase()) {
+        !_matchesGenre(track.genre, genre!)) {
       return false;
     }
     if (!availability.matches(track.availability)) return false;

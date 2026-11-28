@@ -47,6 +47,8 @@ pub struct LocalTrackInfo {
     pub replay_gain_album_gain: Option<f64>,
     pub replay_gain_track_peak: Option<f64>,
     pub replay_gain_album_peak: Option<f64>,
+    pub codec: String,
+    pub mtime_secs: i64,
 }
 
 /// Result of an incremental local directory scan.
@@ -165,16 +167,248 @@ fn parse_track_and_title(s: &str) -> (Option<u32>, String) {
     (None, s.to_string())
 }
 
+/// Maps a Symphonia `CodecType` (with file extension tie-breaker for raw PCM
+/// containers) to a canonical codec label stored in SQLite.
+///
+/// This distinguishes AAC vs ALAC inside `.m4a`/`.mp4` containers instead of
+/// guessing from the filename extension.
+pub fn codec_label_from_symphonia(codec: symphonia::core::codecs::CodecType, ext: &str) -> String {
+    use symphonia::core::codecs::*;
+    match codec {
+        CODEC_TYPE_FLAC => "FLAC".to_string(),
+        CODEC_TYPE_ALAC => "ALAC".to_string(),
+        CODEC_TYPE_AAC => "AAC".to_string(),
+        CODEC_TYPE_MP1 | CODEC_TYPE_MP2 | CODEC_TYPE_MP3 => "MP3".to_string(),
+        CODEC_TYPE_VORBIS => "OGG".to_string(),
+        CODEC_TYPE_OPUS => "OPUS".to_string(),
+        c if c == CODEC_TYPE_PCM_S16LE
+            || c == CODEC_TYPE_PCM_S16BE
+            || c == CODEC_TYPE_PCM_S24LE
+            || c == CODEC_TYPE_PCM_S24BE
+            || c == CODEC_TYPE_PCM_S32LE
+            || c == CODEC_TYPE_PCM_S32BE
+            || c == CODEC_TYPE_PCM_F32LE
+            || c == CODEC_TYPE_PCM_F32BE
+            || c == CODEC_TYPE_PCM_F64LE
+            || c == CODEC_TYPE_PCM_F64BE
+            || c == CODEC_TYPE_PCM_U8
+            || c == CODEC_TYPE_PCM_S8 =>
+        {
+            if ext.eq_ignore_ascii_case("aif") || ext.eq_ignore_ascii_case("aiff") {
+                "AIFF".to_string()
+            } else {
+                "WAV".to_string()
+            }
+        }
+        _ => match ext.to_lowercase().as_str() {
+            "flac" => "FLAC".to_string(),
+            "alac" => "ALAC".to_string(),
+            "wav" | "wave" => "WAV".to_string(),
+            "aif" | "aiff" => "AIFF".to_string(),
+            "mp3" => "MP3".to_string(),
+            "aac" | "m4a" | "mp4" => "AAC".to_string(),
+            "ogg" => "OGG".to_string(),
+            "opus" => "OPUS".to_string(),
+            "dsf" => "DSF".to_string(),
+            "dff" => "DFF".to_string(),
+            other => other.to_uppercase(),
+        },
+    }
+}
+
+#[derive(Default)]
+struct DsfId3Tags {
+    title: String,
+    artist: String,
+    album: String,
+    album_artist: String,
+    genre: String,
+    year: Option<u32>,
+    track_number: Option<u32>,
+    disc_number: Option<u32>,
+    artwork_path: Option<String>,
+}
+
+fn decode_id3_text(data: &[u8]) -> String {
+    if data.is_empty() {
+        return String::new();
+    }
+    let encoding = data[0];
+    let payload = &data[1..];
+    match encoding {
+        0 => payload
+            .iter()
+            .take_while(|&&b| b != 0)
+            .map(|&b| b as char)
+            .collect::<String>()
+            .trim()
+            .to_string(),
+        1 | 2 => {
+            let (be, slice) = if encoding == 1 && payload.len() >= 2 {
+                if payload[0] == 0xFE && payload[1] == 0xFF {
+                    (true, &payload[2..])
+                } else if payload[0] == 0xFF && payload[1] == 0xFE {
+                    (false, &payload[2..])
+                } else {
+                    (false, payload)
+                }
+            } else {
+                (true, payload)
+            };
+            let mut units = Vec::with_capacity(slice.len() / 2);
+            for &[b0, b1] in slice.as_chunks::<2>().0 {
+                let u = if be {
+                    u16::from_be_bytes([b0, b1])
+                } else {
+                    u16::from_le_bytes([b0, b1])
+                };
+                if u == 0 {
+                    break;
+                }
+                units.push(u);
+            }
+            String::from_utf16_lossy(&units).trim().to_string()
+        }
+        3 => {
+            let end = payload
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(payload.len());
+            String::from_utf8_lossy(&payload[..end]).trim().to_string()
+        }
+        _ => String::from_utf8_lossy(payload).trim().to_string(),
+    }
+}
+
+fn parse_dsf_id3v2_tags(file: &mut File, offset: u64, art_dir: Option<&Path>) -> DsfId3Tags {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut out = DsfId3Tags::default();
+    if offset == 0 || file.seek(SeekFrom::Start(offset)).is_err() {
+        return out;
+    }
+    let mut hdr = [0u8; 10];
+    if file.read_exact(&mut hdr).is_err() || &hdr[0..3] != b"ID3" {
+        return out;
+    }
+    let major = hdr[3];
+    if major != 3 && major != 4 {
+        return out;
+    }
+    let tag_size = (((hdr[6] & 0x7F) as usize) << 21)
+        | (((hdr[7] & 0x7F) as usize) << 14)
+        | (((hdr[8] & 0x7F) as usize) << 7)
+        | ((hdr[9] & 0x7F) as usize);
+    let capped_size = tag_size.min(4 * 1024 * 1024);
+    let mut body = vec![0u8; capped_size];
+    if file.read_exact(&mut body).is_err() {
+        return out;
+    }
+
+    let mut pos = 0usize;
+    while pos + 10 <= body.len() {
+        let frame_id = &body[pos..pos + 4];
+        if frame_id[0] == 0 {
+            break;
+        }
+        let frame_size = if major == 4 {
+            (((body[pos + 4] & 0x7F) as usize) << 21)
+                | (((body[pos + 5] & 0x7F) as usize) << 14)
+                | (((body[pos + 6] & 0x7F) as usize) << 7)
+                | ((body[pos + 7] & 0x7F) as usize)
+        } else {
+            u32::from_be_bytes([body[pos + 4], body[pos + 5], body[pos + 6], body[pos + 7]])
+                as usize
+        };
+        pos += 10;
+        if frame_size == 0 || pos + frame_size > body.len() {
+            break;
+        }
+        let data = &body[pos..pos + frame_size];
+        pos += frame_size;
+
+        match frame_id {
+            b"TIT2" => out.title = decode_id3_text(data),
+            b"TPE1" => out.artist = decode_id3_text(data),
+            b"TALB" => out.album = decode_id3_text(data),
+            b"TPE2" => out.album_artist = decode_id3_text(data),
+            b"TCON" => {
+                let raw = decode_id3_text(data);
+                let parsed = crate::cloud::tag_parser::parse_multi_value_tag(&raw);
+                if !parsed.is_empty() {
+                    out.genre = parsed.join("; ");
+                }
+            }
+            b"TYER" | b"TDRC" => {
+                if out.year.is_none() {
+                    out.year = parse_year_tag(&decode_id3_text(data));
+                }
+            }
+            b"TRCK" => out.track_number = parse_number_tag(&decode_id3_text(data)),
+            b"TPOS" => out.disc_number = parse_number_tag(&decode_id3_text(data)),
+            b"APIC" if out.artwork_path.is_none() => {
+                if let Some(dir) = art_dir {
+                    if data.len() > 4 {
+                        let enc = data[0];
+                        if let Some(mime_end) = data[1..].iter().position(|&b| b == 0) {
+                            let after_mime = 1 + mime_end + 1;
+                            if after_mime + 1 < data.len() {
+                                let desc_start = after_mime + 1; // skip picture type byte
+                                let img_start = if enc == 1 || enc == 2 {
+                                    data[desc_start..]
+                                        .as_chunks::<2>()
+                                        .0
+                                        .iter()
+                                        .position(|&c| c == [0, 0])
+                                        .map(|i| desc_start + i * 2 + 2)
+                                } else {
+                                    data[desc_start..]
+                                        .iter()
+                                        .position(|&b| b == 0)
+                                        .map(|i| desc_start + i + 1)
+                                };
+                                if let Some(start) = img_start {
+                                    let img_bytes = &data[start..];
+                                    if !img_bytes.is_empty() {
+                                        let _ = fs::create_dir_all(dir);
+                                        let mut hasher = sha2::Sha256::default();
+                                        sha2::Digest::update(&mut hasher, img_bytes);
+                                        let hash = format!("{:x}", sha2::Digest::finalize(hasher));
+                                        let art_file = dir.join(format!("art_{}.img", &hash[..16]));
+                                        if !art_file.exists() {
+                                            let _ = fs::write(&art_file, img_bytes);
+                                        }
+                                        out.artwork_path =
+                                            Some(art_file.to_string_lossy().to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Extracts metadata from a local audio file on disk.
 ///
 /// Supports native DSD (.dsf) container inspection and Symphonia format probing for
-/// PCM/compressed streams (FLAC, WAV, ALAC, MP3, AAC, Opus, AIFF).
+/// PCM/compressed streams (FLAC, WAV, ALAC, MP3, AAC, OGG Vorbis, AIFF).
 pub fn extract_local_metadata(
     path: &Path,
     file_size: u64,
     folder_path: &str,
     art_dir: Option<&Path>,
 ) -> Result<LocalTrackInfo, LocalScanError> {
+    let mtime_secs = fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -199,25 +433,59 @@ pub fn extract_local_metadata(
         let mut file = File::open(path)?;
         match DsfReader::open(&mut file) {
             Ok(dsf) => {
-                let hdr = dsf.header();
+                let hdr = *dsf.header();
+                let dsd_codec = match hdr.sample_rate {
+                    5_644_800 => "DSD128",
+                    11_289_600 => "DSD256",
+                    22_579_200 => "DSD512",
+                    _ => "DSD64",
+                };
+                let id3 = parse_dsf_id3v2_tags(&mut file, hdr.metadata_offset, art_dir);
+                let title = if id3.title.is_empty() {
+                    fallback_title
+                } else {
+                    id3.title
+                };
+                let artist = if id3.artist.is_empty() {
+                    "Unknown Artist".to_string()
+                } else {
+                    id3.artist
+                };
+                let album = if id3.album.is_empty() {
+                    "Unknown Album".to_string()
+                } else {
+                    id3.album
+                };
+                let album_artist = if id3.album_artist.is_empty() {
+                    artist.clone()
+                } else {
+                    id3.album_artist
+                };
+                let genre = if id3.genre.is_empty() {
+                    "DSD".to_string()
+                } else {
+                    id3.genre
+                };
                 return Ok(LocalTrackInfo {
                     path: path.to_string_lossy().to_string(),
                     name: file_name,
                     folder_path: folder_path.to_string(),
                     size_bytes: file_size,
-                    title: fallback_title,
-                    artist: "Unknown Artist".to_string(),
-                    album: "Unknown Album".to_string(),
-                    album_artist: "Unknown Artist".to_string(),
-                    genre: "DSD".to_string(),
-                    year: None,
-                    track_number: fallback_track,
-                    disc_number: Some(1),
+                    title,
+                    artist,
+                    album,
+                    album_artist,
+                    genre,
+                    year: id3.year,
+                    track_number: id3.track_number.or(fallback_track),
+                    disc_number: id3.disc_number.or(Some(1)),
                     duration_ms: hdr.duration_ms,
                     sample_rate: hdr.sample_rate,
                     channels: (hdr.channel_num as u8).max(1),
                     bits_per_sample: 1,
-                    artwork_path: None,
+                    artwork_path: id3.artwork_path,
+                    codec: dsd_codec.to_string(),
+                    mtime_secs,
                     ..Default::default()
                 });
             }
@@ -242,6 +510,8 @@ pub fn extract_local_metadata(
                     channels: 2,
                     bits_per_sample: 1,
                     artwork_path: None,
+                    codec: "DSF".to_string(),
+                    mtime_secs,
                     ..Default::default()
                 });
             }
@@ -283,6 +553,8 @@ pub fn extract_local_metadata(
                 channels: 2,
                 bits_per_sample: 16,
                 artwork_path: None,
+                codec: ext.to_uppercase(),
+                mtime_secs,
                 ..Default::default()
             });
         }
@@ -292,6 +564,7 @@ pub fn extract_local_metadata(
     let mut sample_rate = 44100;
     let mut channels = 2;
     let mut bits_per_sample = 16;
+    let mut codec = ext.to_uppercase();
 
     if let Some(track) = probed.format.default_track() {
         if let Some(tb) = track.codec_params.time_base {
@@ -307,6 +580,7 @@ pub fn extract_local_metadata(
             .map(|c| c.count() as u8)
             .unwrap_or(2);
         bits_per_sample = track.codec_params.bits_per_sample.unwrap_or(16) as u8;
+        codec = codec_label_from_symphonia(track.codec_params.codec, &ext);
     }
 
     // Uncompressed PCM duration fallback if n_frames was missing
@@ -334,35 +608,40 @@ pub fn extract_local_metadata(
     let mut artwork_path = None;
     let mut replay_gain = crate::cloud::tag_parser::ReplayGainTags::default();
 
-    // Check embedded artwork
-    if let Some(metadata) = probed.format.metadata().current() {
-        if let Some(visual) = metadata.visuals().first() {
-            if let Some(art_dir) = art_dir {
-                let _ = fs::create_dir_all(art_dir);
-                let mut hasher = sha2::Sha256::default();
-                sha2::Digest::update(&mut hasher, &visual.data);
-                let hash = format!("{:x}", sha2::Digest::finalize(hasher));
-                let art_file = art_dir.join(format!("art_{}.img", &hash[..16]));
-                if !art_file.exists() {
-                    let _ = fs::write(&art_file, &visual.data);
+    // Helper to ingest one Symphonia metadata revision (handles both container
+    // metadata like Vorbis/MP4 atoms and prepended ID3v2 headers in probed.metadata).
+    let mut ingest_revision = |metadata: &symphonia::core::meta::MetadataRevision| {
+        if artwork_path.is_none() {
+            if let Some(visual) = metadata.visuals().first() {
+                if let Some(art_dir) = art_dir {
+                    let _ = fs::create_dir_all(art_dir);
+                    let mut hasher = sha2::Sha256::default();
+                    sha2::Digest::update(&mut hasher, &visual.data);
+                    let hash = format!("{:x}", sha2::Digest::finalize(hasher));
+                    let art_file = art_dir.join(format!("art_{}.img", &hash[..16]));
+                    if !art_file.exists() {
+                        let _ = fs::write(&art_file, &visual.data);
+                    }
+                    artwork_path = Some(art_file.to_string_lossy().to_string());
                 }
-                artwork_path = Some(art_file.to_string_lossy().to_string());
             }
         }
 
         for tag in metadata.tags() {
             replay_gain.ingest_tag(&tag.key, &tag.value.to_string());
             match tag.std_key {
-                Some(symphonia::core::meta::StandardTagKey::TrackTitle) => {
+                Some(symphonia::core::meta::StandardTagKey::TrackTitle) if title.is_empty() => {
                     title = tag.value.to_string().trim().to_string();
                 }
-                Some(symphonia::core::meta::StandardTagKey::Artist) => {
+                Some(symphonia::core::meta::StandardTagKey::Artist) if artist.is_empty() => {
                     artist = tag.value.to_string().trim().to_string();
                 }
-                Some(symphonia::core::meta::StandardTagKey::Album) => {
+                Some(symphonia::core::meta::StandardTagKey::Album) if album.is_empty() => {
                     album = tag.value.to_string().trim().to_string();
                 }
-                Some(symphonia::core::meta::StandardTagKey::AlbumArtist) => {
+                Some(symphonia::core::meta::StandardTagKey::AlbumArtist)
+                    if album_artist.is_empty() =>
+                {
                     album_artist = tag.value.to_string().trim().to_string();
                 }
                 Some(symphonia::core::meta::StandardTagKey::Genre) => {
@@ -380,7 +659,7 @@ pub fn extract_local_metadata(
                         }
                     }
                 }
-                Some(symphonia::core::meta::StandardTagKey::Date) => {
+                Some(symphonia::core::meta::StandardTagKey::Date) if year.is_none() => {
                     year = parse_year_tag(&tag.value.to_string());
                 }
                 Some(symphonia::core::meta::StandardTagKey::TrackNumber) => {
@@ -389,10 +668,21 @@ pub fn extract_local_metadata(
                     }
                 }
                 Some(symphonia::core::meta::StandardTagKey::DiscNumber) => {
-                    disc_number = parse_number_tag(&tag.value.to_string());
+                    if let Some(num) = parse_number_tag(&tag.value.to_string()) {
+                        disc_number = Some(num);
+                    }
                 }
                 _ => {}
             }
+        }
+    };
+
+    if let Some(metadata) = probed.format.metadata().current() {
+        ingest_revision(metadata);
+    }
+    if let Some(probed_meta) = probed.metadata.get() {
+        if let Some(metadata) = probed_meta.current() {
+            ingest_revision(metadata);
         }
     }
 
@@ -431,6 +721,8 @@ pub fn extract_local_metadata(
         replay_gain_album_gain: replay_gain.album_gain_db,
         replay_gain_track_peak: replay_gain.track_peak,
         replay_gain_album_peak: replay_gain.album_peak,
+        codec,
+        mtime_secs,
     })
 }
 
@@ -451,7 +743,7 @@ pub fn scan_local_directory<F>(
 where
     F: FnMut(&LocalScanProgress),
 {
-    let empty_index: HashMap<String, (u64, String)> = HashMap::new();
+    let empty_index: HashMap<String, (u64, i64, String)> = HashMap::new();
     let res = scan_local_directory_incremental(
         root_path,
         root_label,
@@ -463,13 +755,13 @@ where
 }
 
 /// Recursively scans `root_path` incrementally, skipping Symphonia metadata
-/// probing for already-indexed files whose `(size_bytes, folder_path)` have
-/// not changed since the last scan.
+/// probing for already-indexed files whose `(size_bytes, mtime_secs, folder_path)`
+/// have not changed since the last scan.
 pub fn scan_local_directory_incremental<F>(
     root_path: &Path,
     root_label: &str,
     art_dir: Option<&Path>,
-    existing_index: &HashMap<String, (u64, String)>,
+    existing_index: &HashMap<String, (u64, i64, String)>,
     mut on_progress: F,
 ) -> Result<IncrementalLocalScanResult, LocalScanError>
 where
@@ -581,11 +873,21 @@ where
                 if size_bytes == 0 {
                     continue; // Skip 0-byte corrupt files
                 }
+                let mtime_secs = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
 
                 let path_str = path.to_string_lossy();
-                if let Some((indexed_size, indexed_folder)) = existing_index.get(path_str.as_ref())
+                if let Some((indexed_size, indexed_mtime, indexed_folder)) =
+                    existing_index.get(path_str.as_ref())
                 {
-                    if *indexed_size == size_bytes && indexed_folder == &folder_path {
+                    if *indexed_size == size_bytes
+                        && *indexed_mtime == mtime_secs
+                        && indexed_folder == &folder_path
+                    {
                         skipped_unchanged += 1;
                         files_found += 1;
                         continue;
@@ -810,16 +1112,31 @@ mod tests {
             .iter()
             .any(|t| t.folder_path == "Music / Data"));
 
-        // Second pass with unchanged sizes must fast-skip all files.
+        // Second pass with unchanged sizes & mtimes must fast-skip all files.
         let mut index = HashMap::new();
         for t in &first.new_or_updated {
-            index.insert(t.path.clone(), (t.size_bytes, t.folder_path.clone()));
+            index.insert(
+                t.path.clone(),
+                (t.size_bytes, t.mtime_secs, t.folder_path.clone()),
+            );
         }
         let second = scan_local_directory_incremental(&temp_dir, "Music", None, &index, |_| {})
             .expect("second incremental scan");
         assert_eq!(second.total_found, 2);
         assert_eq!(second.skipped_unchanged, 2);
         assert!(second.new_or_updated.is_empty());
+
+        // Simulate an in-place tag edit where size is unchanged but mtime differs.
+        let mut stale_mtime_index = index.clone();
+        if let Some(entry) = stale_mtime_index.get_mut(&first.new_or_updated[0].path) {
+            entry.1 = entry.1.saturating_sub(10);
+        }
+        let mtime_rescan =
+            scan_local_directory_incremental(&temp_dir, "Music", None, &stale_mtime_index, |_| {})
+                .expect("mtime rescan");
+        assert_eq!(mtime_rescan.total_found, 2);
+        assert_eq!(mtime_rescan.skipped_unchanged, 1);
+        assert_eq!(mtime_rescan.new_or_updated.len(), 1);
 
         // Modify track_a size and add track_c; only those two should re-probe.
         fs::write(&track_a, b"synthetic flac bytes A - modified longer").unwrap();

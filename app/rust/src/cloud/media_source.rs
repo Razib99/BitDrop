@@ -337,6 +337,33 @@ pub fn abort_staged_fetches() {
     }
 }
 
+/// Propagates a freshly renewed OAuth bearer token to all live sparse caches
+/// (active track, staged next track, and any open prebuffer readers) that were
+/// still holding the expired `rejected` token.
+pub fn propagate_refreshed_token(rejected: &str, refreshed: &str) {
+    let update_cache = |cache: &Arc<SparseTrackCache>| {
+        if let Some(context) = cache.fetch_ctx.lock().as_mut() {
+            if context.auth_token.as_deref() == Some(rejected) {
+                context.auth_token = Some(refreshed.to_string());
+            }
+        }
+    };
+    if let Some(cache) = ACTIVE_CACHE.lock().upgrade() {
+        update_cache(&cache);
+    }
+    if let Some(cache) = STAGED_CACHE.lock().upgrade() {
+        update_cache(&cache);
+    }
+    let live: Vec<Arc<SparseTrackCache>> = OPEN_CACHES
+        .lock()
+        .values()
+        .filter_map(|w| w.upgrade())
+        .collect();
+    for cache in live {
+        update_cache(&cache);
+    }
+}
+
 pub fn forget_cached_ranges() {
     let mut guard = CACHED.lock();
     guard.clear();
@@ -902,17 +929,42 @@ impl SparseTrackCache {
                 );
             }
             let began = std::time::Instant::now();
-            let response = HTTP_CLIENT.get(&ctx.url).headers(headers).send().await?;
+            let mut response = HTTP_CLIENT
+                .get(&ctx.url)
+                .headers(headers.clone())
+                .send()
+                .await?;
             record_network_request(began.elapsed().as_millis().min(u32::MAX as u128) as u32);
             if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-                if let Some(ref rejected) = token {
-                    if let Some(refreshed) = crate::cloud::auth::refresh_token(rejected).await {
+                let refreshed = if let Some(ref rejected) = token {
+                    if let Some(new_token) = crate::cloud::auth::refresh_token(rejected).await {
                         if let Some(context) = self.fetch_ctx.lock().as_mut() {
-                            context.auth_token = Some(refreshed);
+                            context.auth_token = Some(new_token.clone());
                         }
+                        propagate_refreshed_token(rejected, &new_token);
+                        Some(new_token)
+                    } else {
+                        None
                     }
+                } else {
+                    None
+                };
+
+                if let Some(new_token) = refreshed {
+                    headers.insert(
+                        AUTHORIZATION,
+                        HeaderValue::from_str(&format!("Bearer {}", new_token))?,
+                    );
+                    let retry_began = std::time::Instant::now();
+                    response = HTTP_CLIENT.get(&ctx.url).headers(headers).send().await?;
+                    record_network_request(
+                        retry_began.elapsed().as_millis().min(u32::MAX as u128) as u32
+                    );
                 }
-                anyhow::bail!("Cloud session expired or authorization was rejected");
+
+                if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                    anyhow::bail!("Cloud session expired or authorization was rejected");
+                }
             }
             validate_range_response(
                 &response,

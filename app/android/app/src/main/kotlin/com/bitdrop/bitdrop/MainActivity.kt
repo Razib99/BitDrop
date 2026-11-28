@@ -95,7 +95,12 @@ class MainActivity : AudioServiceActivity() {
                 "getAudioPermissionStatus" -> result.success(getAudioPermissionStatus())
                 "requestAudioPermission" -> requestAudioPermission(result)
                 "openAppSettings" -> result.success(openAppSettings())
-                "discoverMusicDirectories" -> result.success(discoverMusicDirectories())
+                "discoverMusicDirectories" -> {
+                    Thread {
+                        val dirs = discoverMusicDirectories()
+                        runOnUiThread { result.success(dirs) }
+                    }.start()
+                }
                 else -> result.notImplemented()
             }
         }
@@ -865,7 +870,8 @@ class MainActivity : AudioServiceActivity() {
 
     private fun discoverMusicDirectories(): List<Map<String, Any>> {
         val roots = discoverStorageRoots()
-        val standardNames = listOf("Music", "Download", "Audiobooks", "Audio", "FLAC")
+        val standardNames = listOf("Music", "Download", "Audiobooks", "Audio", "FLAC", "DSD")
+        val audioExts = setOf("flac", "wav", "alac", "m4a", "aac", "mp4", "mp3", "ogg", "aiff", "aif", "dsf")
         val excludedTopFolders = setOf(
             "android",
             "alarms",
@@ -926,19 +932,28 @@ class MainActivity : AudioServiceActivity() {
                             } ?: continue
                             val (rootDir, isRemovable) = matchedRoot
                             val rel = filePath.removePrefix("${rootDir.absolutePath}/")
-                            val topSegment = rel.substringBefore('/', missingDelimiterValue = "")
-                            if (topSegment.isEmpty() || topSegment.startsWith(".")) continue
-                            if (excludedTopFolders.contains(topSegment.lowercase())) continue
-
-                            val folder = File(rootDir, topSegment)
-                            if (!folder.exists() || !folder.isDirectory) continue
+                            val hasSubdir = rel.contains('/')
+                            val folder: File
+                            val label: String
+                            if (!hasSubdir) {
+                                // Audio file placed directly in volume root (common on SD cards).
+                                if (!isRemovable) continue
+                                folder = rootDir
+                                label = "SD Card"
+                            } else {
+                                val topSegment = rel.substringBefore('/')
+                                if (topSegment.isEmpty() || topSegment.startsWith(".")) continue
+                                if (excludedTopFolders.contains(topSegment.lowercase())) continue
+                                folder = File(rootDir, topSegment)
+                                if (!folder.exists() || !folder.isDirectory) continue
+                                label = if (isRemovable) "SD Card · $topSegment" else topSegment
+                            }
 
                             val key = folder.absolutePath
                             val existing = discovered[key]
                             if (existing != null) {
                                 existing.audioCount += 1
                             } else {
-                                val label = if (isRemovable) "SD Card · $topSegment" else topSegment
                                 discovered[key] = FoundDir(key, label, isRemovable, 1)
                             }
                         }
@@ -946,6 +961,43 @@ class MainActivity : AudioServiceActivity() {
                 }
             } catch (_: Exception) {
                 // Ignore MediaStore query failures; standard directories above still apply.
+            }
+
+            // 3. Probe top-level directories directly for formats MediaStore often ignores (e.g. .dsf)
+            //    and audio placed directly at removable SD card root.
+            for ((rootDir, isRemovable) in roots) {
+                val children = rootDir.listFiles() ?: continue
+                var rootDirectAudio = 0
+                for (child in children) {
+                    val name = child.name
+                    if (name.startsWith(".")) continue
+                    if (child.isFile) {
+                        val ext = child.extension.lowercase()
+                        if (isRemovable && audioExts.contains(ext)) {
+                            rootDirectAudio += 1
+                        }
+                    } else if (child.isDirectory && !excludedTopFolders.contains(name.lowercase())) {
+                        val key = child.absolutePath
+                        if (!discovered.containsKey(key)) {
+                            val hasDirectAudio = child.listFiles()?.any { f ->
+                                f.isFile && audioExts.contains(f.extension.lowercase())
+                            } == true
+                            if (hasDirectAudio) {
+                                val label = if (isRemovable) "SD Card · $name" else name
+                                discovered[key] = FoundDir(key, label, isRemovable, 1)
+                            }
+                        }
+                    }
+                }
+                if (isRemovable && rootDirectAudio > 0) {
+                    val key = rootDir.absolutePath
+                    val existing = discovered[key]
+                    if (existing != null) {
+                        if (existing.audioCount == 0) existing.audioCount = rootDirectAudio
+                    } else {
+                        discovered[key] = FoundDir(key, "SD Card", true, rootDirectAudio)
+                    }
+                }
             }
         }
 

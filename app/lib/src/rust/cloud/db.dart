@@ -36,6 +36,9 @@ class CloudTrackRow {
   final double? replayGainTrackPeak;
   final double? replayGainAlbumPeak;
 
+  /// Probed audio codec name (e.g. "FLAC", "ALAC", "AAC", "MP3", "OGG", "DSD64").
+  final String codec;
+
   const CloudTrackRow({
     required this.fileId,
     required this.name,
@@ -59,6 +62,7 @@ class CloudTrackRow {
     this.replayGainAlbumGain,
     this.replayGainTrackPeak,
     this.replayGainAlbumPeak,
+    required this.codec,
   });
 
   @override
@@ -84,7 +88,8 @@ class CloudTrackRow {
       replayGainTrackGain.hashCode ^
       replayGainAlbumGain.hashCode ^
       replayGainTrackPeak.hashCode ^
-      replayGainAlbumPeak.hashCode;
+      replayGainAlbumPeak.hashCode ^
+      codec.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -112,5 +117,6 @@ class CloudTrackRow {
           replayGainTrackGain == other.replayGainTrackGain &&
           replayGainAlbumGain == other.replayGainAlbumGain &&
           replayGainTrackPeak == other.replayGainTrackPeak &&
-          replayGainAlbumPeak == other.replayGainAlbumPeak;
+          replayGainAlbumPeak == other.replayGainAlbumPeak &&
+          codec == other.codec;
 }

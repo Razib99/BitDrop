@@ -129,15 +129,18 @@ void main() {
       expect(extras['ext'], 'flac');
     });
 
-    test('CloudLibrary.codecFor maps file extensions to correct Codec enum', () {
+    test('CloudLibrary.codecFor maps probed codecs and file extensions truthfully', () {
       expect(CloudLibrary.codecFor('song.flac'), Codec.flac);
       expect(CloudLibrary.codecFor('track.wav'), Codec.wav);
       expect(CloudLibrary.codecFor('audio.mp3'), Codec.mp3);
-      expect(CloudLibrary.codecFor('song.m4a'), Codec.alac);
+      expect(CloudLibrary.codecFor('song.m4a'), Codec.aac);
+      expect(CloudLibrary.codecFor('song.m4a', probedCodec: 'ALAC'), Codec.alac);
+      expect(CloudLibrary.codecFor('song.m4a', probedCodec: 'AAC'), Codec.aac);
       expect(CloudLibrary.codecFor('song.aac'), Codec.aac);
-      expect(CloudLibrary.codecFor('song.ogg'), Codec.opus);
+      expect(CloudLibrary.codecFor('song.ogg'), Codec.ogg);
+      expect(CloudLibrary.codecFor('song.opus'), Codec.opus);
       expect(CloudLibrary.codecFor('track.dsf'), Codec.dsf);
-      expect(CloudLibrary.codecFor('track.dff'), Codec.dsf);
+      expect(CloudLibrary.codecFor('track.dff'), Codec.dff);
       expect(CloudLibrary.codecFor('unknown.xyz'), Codec.flac);
     });
   });

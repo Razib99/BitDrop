@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// A discovered local directory on the user's device containing or intended for audio.
 @immutable
@@ -155,6 +156,20 @@ class LocalStorageBridge {
         debugPrint('[storage-bridge] discoverMusicDirectories failed: $e');
         return const [];
       }
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      try {
+        final docs = await getApplicationDocumentsDirectory();
+        if (docs.existsSync()) {
+          return [
+            DiscoveredMusicDirectory(path: docs.path, label: 'On My iPhone'),
+          ];
+        }
+      } catch (e) {
+        debugPrint('[storage-bridge] iOS documents dir probe failed: $e');
+      }
+      return const [];
     }
 
     // Desktop fallback: probe standard user Music / Downloads directories.

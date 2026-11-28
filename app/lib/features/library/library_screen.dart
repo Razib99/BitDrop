@@ -7,6 +7,7 @@ import '../../core_api/enums.dart';
 import '../../core_api/models.dart';
 import '../../core_api/settings.dart';
 import '../../core_api/queries.dart';
+import '../../core_live/cloud_library.dart';
 import '../../l10n/l10n.dart';
 import '../../providers/core_providers.dart';
 import '../../routing/routes.dart';
@@ -404,8 +405,11 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
 
   @override
   Widget build(BuildContext context) {
+    final trackSort = ref.watch(trackSortProvider);
+    final trackDesc = ref.watch(trackSortDescProvider);
     final query = TrackQuery(
-      sort: ref.watch(trackSortProvider),
+      sort: trackSort,
+      descending: trackDesc,
       filters: ref.watch(libraryFiltersProvider),
     );
     final async = ref.watch(tracksProvider(query));
@@ -479,27 +483,33 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
                     ref,
                     SetFavorite(trackId: t.id, favorite: !t.favorite),
                   ),
-                  onDownload: () => sendCommand(
-                    ref,
-                    t.availability == Availability.pinned ||
-                            t.availability == Availability.cached ||
-                            t.availability == Availability.downloading
-                        ? Unpin(id: t.id, kind: 'track')
-                        : Pin(id: t.id, kind: 'track'),
-                  ),
+                  onDownload: CloudLibrary.isLocalTrackId(t.id)
+                      ? null
+                      : () => sendCommand(
+                            ref,
+                            t.availability == Availability.pinned ||
+                                    t.availability == Availability.cached ||
+                                    t.availability == Availability.downloading
+                                ? Unpin(id: t.id, kind: 'track')
+                                : Pin(id: t.id, kind: 'track'),
+                          ),
                 );
               },
             ),
             ),
-            _AlphabetScrubber(
-              letters: _letters(paged.items),
-              onPick: (index) => _controller.jumpTo(
-                (index * 64).toDouble().clamp(
-                      0,
-                      _controller.position.maxScrollExtent,
-                    ),
+            if (!trackDesc &&
+                (trackSort == TrackSort.title ||
+                    trackSort == TrackSort.artist ||
+                    trackSort == TrackSort.album))
+              _AlphabetScrubber(
+                letters: _letters(paged.items, trackSort),
+                onPick: (index) => _controller.jumpTo(
+                  (index * 64).toDouble().clamp(
+                        0,
+                        _controller.position.maxScrollExtent,
+                      ),
+                ),
               ),
-            ),
           ],
         );
       },
@@ -513,15 +523,19 @@ class _TracksTabState extends ConsumerState<_TracksTab> {
   }
 
   /// First row index for each initial letter present in the list.
-  Map<String, int> _letters(List<Track> tracks) {
+  Map<String, int> _letters(List<Track> tracks, TrackSort sort) {
     final out = <String, int>{};
     for (var i = 0; i < tracks.length; i++) {
-      final title = tracks[i].title;
-      if (title.isEmpty) {
+      final label = switch (sort) {
+        TrackSort.artist => tracks[i].artist,
+        TrackSort.album => tracks[i].albumTitle,
+        _ => tracks[i].title,
+      };
+      if (label.isEmpty) {
         out.putIfAbsent('#', () => i);
         continue;
       }
-      final ch = title[0].toUpperCase();
+      final ch = label[0].toUpperCase();
       final code = ch.codeUnitAt(0);
       final key = (code >= 65 && code <= 90) ? ch : '#';
       out.putIfAbsent(key, () => i);
@@ -937,7 +951,12 @@ class _FavoritesTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final filters = ref.watch(libraryFiltersProvider);
-    final query = TrackQuery(albumId: 'album-favorites', filters: filters);
+    final query = TrackQuery(
+      albumId: 'album-favorites',
+      sort: ref.watch(trackSortProvider),
+      descending: ref.watch(trackSortDescProvider),
+      filters: filters,
+    );
     final async = ref.watch(tracksProvider(query));
     final settings = ref.watch(settingsValueProvider);
     final selection = ref.watch(selectionProvider);

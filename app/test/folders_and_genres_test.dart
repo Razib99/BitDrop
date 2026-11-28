@@ -162,6 +162,7 @@ void main() {
         sizeBytes: BigInt.from(65000000),
         artworkPath: '/data/user/0/cache/art.jpg',
         tagsRead: true,
+        codec: 'FLAC',
       );
 
       final track = CloudLibrary.trackFromRow(row);
@@ -290,6 +291,45 @@ void main() {
       expect(albums.items.length, 1);
       expect(albums.items.first.title, 'Moonlight Sonata');
       expect(albums.items.first.genre, 'Classical');
+    });
+
+    test('LibraryFilters splits multi-value semicolon-delimited genres', () {
+      const multiTrack = Track(
+        id: 'multi-1',
+        title: 'Hybrid',
+        artist: 'Artist',
+        albumTitle: 'Album',
+        albumId: 'alb-1',
+        durationMs: 240000,
+        format: AudioFormat(
+          codec: Codec.flac,
+          bitDepth: 24,
+          sampleRate: 96000,
+        ),
+        availability: Availability.cached,
+        sizeBytes: 40000000,
+        artwork: Artwork(seed: 1, dominantColor: 0xFF112233),
+        genre: 'Jazz; Electronic',
+      );
+      final multiAlbum = Album(
+        id: 'alb-1',
+        title: 'Album',
+        artist: 'Artist',
+        artistId: 'art-1',
+        trackCount: 1,
+        durationMs: 240000,
+        sizeBytes: 40000000,
+        format: multiTrack.format,
+        availability: Availability.cached,
+        artwork: multiTrack.artwork,
+        genre: 'Jazz; Electronic',
+      );
+
+      expect(const LibraryFilters(genre: 'Jazz').matchesTrack(multiTrack), isTrue);
+      expect(const LibraryFilters(genre: 'electronic').matchesTrack(multiTrack), isTrue);
+      expect(const LibraryFilters(genre: 'Rock').matchesTrack(multiTrack), isFalse);
+      expect(const LibraryFilters(genre: 'Electronic').matchesAlbum(multiAlbum), isTrue);
+      expect(const LibraryFilters(genre: 'Rock').matchesAlbum(multiAlbum), isFalse);
     });
   });
 }

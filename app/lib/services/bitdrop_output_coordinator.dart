@@ -432,8 +432,11 @@ class BitDropOutputCoordinator {
       dspChain: dspChain,
       volume: dsp ? VolumeMode.softwareDithered : VolumeMode.system,
       device: device,
-      sourceLabel:
-          cloud?.trackById(currentTrackId) != null ? 'Google Drive' : 'This device',
+      sourceLabel: currentTrackId.isNotEmpty &&
+              !CloudLibrary.isLocalTrackId(currentTrackId) &&
+              cloud?.trackById(currentTrackId) != null
+          ? 'Google Drive'
+          : 'This device',
       decoderLabel: source.codec == Codec.dsf
           ? '${source.shortLabel} -> 176.4 kHz / 24-bit Polyphase FIR Decimation'
           : '${source.codec.label} -> '

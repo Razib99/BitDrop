@@ -38,6 +38,8 @@ pub struct CloudTrackRow {
     pub replay_gain_album_gain: Option<f64>,
     pub replay_gain_track_peak: Option<f64>,
     pub replay_gain_album_peak: Option<f64>,
+    /// Probed audio codec name (e.g. "FLAC", "ALAC", "AAC", "MP3", "OGG", "DSD64").
+    pub codec: String,
 }
 
 /// Materialized album summary row for instant rendering without runtime GROUP BY.
@@ -139,6 +141,7 @@ pub struct TrackTagUpdate {
     pub replay_gain_album_gain: Option<f64>,
     pub replay_gain_track_peak: Option<f64>,
     pub replay_gain_album_peak: Option<f64>,
+    pub codec: String,
 }
 
 /// Record of a completed audio chunk with CRC32 integrity checksum.
@@ -285,7 +288,10 @@ impl MetadataDb {
                 replay_gain_track_gain REAL,
                 replay_gain_album_gain REAL,
                 replay_gain_track_peak REAL,
-                replay_gain_album_peak REAL
+                replay_gain_album_peak REAL,
+                source_kind            TEXT NOT NULL DEFAULT 'drive',
+                codec                  TEXT NOT NULL DEFAULT '',
+                mtime_secs             INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )?;
@@ -313,6 +319,31 @@ impl MetadataDb {
         );
         let _ = conn.execute(
             "ALTER TABLE tracks ADD COLUMN replay_gain_album_peak REAL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE tracks ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'drive'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE tracks ADD COLUMN codec TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE tracks ADD COLUMN mtime_secs INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        // Backfill legacy local rows whose file_id is an absolute filesystem path
+        let _ = conn.execute(
+            "UPDATE tracks SET source_kind = 'local'
+             WHERE source_kind = 'drive'
+               AND (file_id LIKE '/%'
+                    OR (length(file_id) >= 3 AND substr(file_id, 2, 1) = ':'
+                        AND (substr(file_id, 3, 1) = '\\' OR substr(file_id, 3, 1) = '/')))",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tracks_source_kind ON tracks(source_kind)",
             [],
         );
 
@@ -655,12 +686,20 @@ impl MetadataDb {
     pub fn get_local_indexed_sizes(
         &self,
         root_label: &str,
-    ) -> Result<std::collections::HashMap<String, (u64, String)>> {
+    ) -> Result<std::collections::HashMap<String, (u64, i64, String)>> {
         self.library().get_local_indexed_sizes(root_label)
     }
 
     pub fn prune_missing_local_tracks(&mut self, root_label: &str) -> Result<usize> {
         self.library().prune_missing_local_tracks(root_label)
+    }
+
+    pub fn remove_local_folder_tracks(&mut self, root_label: &str) -> Result<Vec<String>> {
+        self.library().remove_local_folder_tracks(root_label)
+    }
+
+    pub fn clear_drive_tracks(&mut self) -> Result<()> {
+        self.library().clear_drive_tracks()
     }
 
     pub fn batch_update_tags(&mut self, updates: &[TrackTagUpdate]) -> Result<()> {
@@ -957,6 +996,7 @@ mod tests {
                 replay_gain_album_gain: Some(-4.8),
                 replay_gain_track_peak: Some(0.94),
                 replay_gain_album_peak: Some(0.98),
+                ..Default::default()
             },
             TrackTagUpdate {
                 file_id: "id_2".to_string(),
@@ -1859,6 +1899,83 @@ mod tests {
         let albums_final = db.list_albums_summary().unwrap();
         assert_eq!(albums_final.len(), 1);
         assert_eq!(albums_final[0].album, "Album B");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_drive_and_local_source_isolation() {
+        let mut db = MetadataDb::new_in_memory().unwrap();
+        let temp_dir = std::env::temp_dir().join("bitdrop_source_isolation_test");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let local_path = temp_dir.join("01 - Shared.flac");
+        std::fs::write(&local_path, b"local flac bytes").unwrap();
+
+        // Save a user setting in app_kv to verify clear_drive_tracks preserves it.
+        db.set_kv("user_theme", "oled_dark").unwrap();
+
+        // Insert a local track and a Drive track in the exact same folder name & filename ("Music").
+        db.batch_insert_local_tracks(&[LocalTrackInfo {
+            path: local_path.to_string_lossy().to_string(),
+            name: "01 - Shared.flac".into(),
+            folder_path: "Music".into(),
+            size_bytes: 16,
+            title: "Local Shared".into(),
+            artist: "Local Artist".into(),
+            album: "Local Album".into(),
+            album_artist: "Local Artist".into(),
+            codec: "FLAC".into(),
+            mtime_secs: 1_700_000_000,
+            ..Default::default()
+        }])
+        .unwrap();
+
+        let replaced = db
+            .batch_insert_placeholders(&[TrackPlaceholder {
+                file_id: "drive_id_shared_1".into(),
+                name: "01 - Shared.flac".into(),
+                folder_path: "Music".into(),
+                size_bytes: 4096,
+            }])
+            .unwrap();
+        // Drive insert must NEVER treat the local track as a replaced Drive file.
+        assert!(replaced.is_empty());
+        assert_eq!(db.list_tracks().unwrap().len(), 2);
+
+        // Pruning missing local tracks under "Music" must NEVER delete the Drive track.
+        let pruned_local = db.prune_missing_local_tracks("Music").unwrap();
+        assert_eq!(pruned_local, 0);
+        assert!(db.get_track("drive_id_shared_1").unwrap().is_some());
+
+        // Pruning missing Drive files under "Music" must NEVER delete the local track.
+        let pruned_drive = db.prune_missing_files(&["Music".into()], &[]).unwrap();
+        assert_eq!(pruned_drive, vec!["drive_id_shared_1"]);
+        assert!(db
+            .get_track(&local_path.to_string_lossy())
+            .unwrap()
+            .is_some());
+
+        // Re-insert Drive track and test clear_drive_tracks preserves local + app_kv.
+        db.insert_placeholder("drive_id_2", "02.m4a", "Music", 2048)
+            .unwrap();
+        db.clear_drive_tracks().unwrap();
+        assert!(db.get_track("drive_id_2").unwrap().is_none());
+        assert!(db
+            .get_track(&local_path.to_string_lossy())
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            db.get_kv("user_theme").unwrap().as_deref(),
+            Some("oled_dark")
+        );
+
+        // Removing local folder removes only local tracks and leaves Drive tracks intact.
+        db.insert_placeholder("drive_id_3", "03.flac", "Music", 4096)
+            .unwrap();
+        let removed_local = db.remove_local_folder_tracks("Music").unwrap();
+        assert_eq!(removed_local.len(), 1);
+        assert!(db.get_track("drive_id_3").unwrap().is_some());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

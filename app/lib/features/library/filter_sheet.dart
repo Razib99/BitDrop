@@ -36,11 +36,14 @@ class _ViewSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final grid = ref.watch(libraryGridViewProvider);
-    final sort = ref.watch(albumSortProvider);
-    final desc = ref.watch(albumSortDescProvider);
+    final albumSort = ref.watch(albumSortProvider);
+    final albumDesc = ref.watch(albumSortDescProvider);
+    final trackSort = ref.watch(trackSortProvider);
+    final trackDesc = ref.watch(trackSortDescProvider);
     final filters = ref.watch(libraryFiltersProvider);
     final notifier = ref.read(libraryFiltersProvider.notifier);
 
+    final isTrackTab = tab == LibraryTab.tracks || tab == LibraryTab.favorites;
     final showsLayout = tab == LibraryTab.albums || tab == LibraryTab.genres;
     final showsSort = tab == LibraryTab.albums ||
         tab == LibraryTab.tracks ||
@@ -110,6 +113,20 @@ class _ViewSheet extends ConsumerWidget {
                           .read(genreSortProvider.notifier)
                           .state = GenreSort.name,
                     ),
+                  ] else if (isTrackTab) ...[
+                    for (final s in TrackSort.values)
+                      BitChip(
+                        label: switch (s) {
+                          TrackSort.title => 'Title',
+                          TrackSort.artist => 'Artist',
+                          TrackSort.album => 'Album',
+                          TrackSort.duration => 'Duration',
+                          TrackSort.sampleRate => 'Sample rate',
+                        },
+                        selected: trackSort == s,
+                        onTap: () =>
+                            ref.read(trackSortProvider.notifier).state = s,
+                      ),
                   ] else ...[
                     for (final s in AlbumSort.values)
                       BitChip(
@@ -123,7 +140,7 @@ class _ViewSheet extends ConsumerWidget {
                           AlbumSort.size => 'Size',
                           AlbumSort.duration => 'Duration',
                         },
-                        selected: sort == s,
+                        selected: albumSort == s,
                         onTap: () =>
                             ref.read(albumSortProvider.notifier).state = s,
                       ),
@@ -133,9 +150,13 @@ class _ViewSheet extends ConsumerWidget {
             ),
             if (tab != LibraryTab.genres)
               SwitchListTile(
-                value: desc,
-                onChanged: (v) =>
-                    ref.read(albumSortDescProvider.notifier).state = v,
+                value: isTrackTab ? trackDesc : albumDesc,
+                onChanged: (v) => ref
+                    .read((isTrackTab
+                            ? trackSortDescProvider
+                            : albumSortDescProvider)
+                        .notifier)
+                    .state = v,
                 title: const Text('Descending'),
                 dense: true,
               ),

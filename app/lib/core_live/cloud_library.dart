@@ -144,9 +144,11 @@ class CloudLibrary {
   List<Album> get currentAlbums => _albums.value;
   bool get isScanning => _scanning;
 
-  static bool _isLocalTrackId(String id) =>
+  static bool isLocalTrackId(String id) =>
       id.startsWith('/') ||
       (Platform.isWindows && RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(id));
+
+  static bool _isLocalTrackId(String id) => isLocalTrackId(id);
 
   void _deleteDiskCacheFor(String fileId) {
     try {
@@ -320,7 +322,7 @@ class CloudLibrary {
     } catch (e) {
       debugPrint('[library] could not save folder choice: $e');
     }
-    await rust.cloudLibraryClear();
+    await rust.cloudLibraryClearDrive();
     await _reload();
   }
 
@@ -372,9 +374,8 @@ class CloudLibrary {
       await _saveExcludedLocalPaths();
     }
 
-    final pruned = await rust.cloudLibraryPruneMissing(
-      folderPrefixes: [folder.label],
-      validFileIds: const [],
+    final pruned = await rust.cloudLibraryRemoveLocalFolder(
+      rootLabel: folder.label,
     );
     if (pruned.isNotEmpty) {
       onFilesPruned?.call(pruned);
@@ -389,16 +390,15 @@ class CloudLibrary {
     _localFolders.add(const []);
     await _saveLocalFolders();
 
-    final prefixes = oldFolders.map((f) => f.label).toList();
-    if (prefixes.isNotEmpty) {
-      final pruned = await rust.cloudLibraryPruneMissing(
-        folderPrefixes: prefixes,
-        validFileIds: const [],
+    final pruned = <String>[];
+    for (final folder in oldFolders) {
+      pruned.addAll(
+        await rust.cloudLibraryRemoveLocalFolder(rootLabel: folder.label),
       );
-      if (pruned.isNotEmpty) {
-        onFilesPruned?.call(pruned);
-        await _reload();
-      }
+    }
+    if (pruned.isNotEmpty) {
+      onFilesPruned?.call(pruned);
+      await _reload();
     }
   }
 
@@ -797,23 +797,51 @@ class CloudLibrary {
     return 'cl-${key.hashCode.toUnsigned(32).toRadixString(16)}';
   }
 
-  static Codec codecFor(String name) {
+  static Codec codecFor(String name, {String? probedCodec}) {
+    final probed = probedCodec?.trim().toUpperCase() ?? '';
+    if (probed.isNotEmpty) {
+      if (probed.startsWith('DSD') || probed == 'DSF') return Codec.dsf;
+      return switch (probed) {
+        'FLAC' => Codec.flac,
+        'ALAC' => Codec.alac,
+        'WAV' || 'PCM' => Codec.wav,
+        'AIFF' || 'AIF' => Codec.aiff,
+        'MP3' => Codec.mp3,
+        'AAC' => Codec.aac,
+        'OGG' || 'VORBIS' => Codec.ogg,
+        'OPUS' => Codec.opus,
+        'DFF' => Codec.dff,
+        'APE' => Codec.ape,
+        'WV' || 'WAVPACK' => Codec.wavpack,
+        _ => _codecFromExtension(name),
+      };
+    }
+    return _codecFromExtension(name);
+  }
+
+  static Codec _codecFromExtension(String name) {
     final dot = name.lastIndexOf('.');
     final ext = dot < 0 ? '' : name.substring(dot + 1).toLowerCase();
     return switch (ext) {
       'flac' => Codec.flac,
-      'alac' || 'm4a' => Codec.alac,
+      'alac' => Codec.alac,
       'wav' || 'wave' => Codec.wav,
       'aif' || 'aiff' => Codec.aiff,
       'mp3' => Codec.mp3,
-      'aac' => Codec.aac,
-      'ogg' => Codec.opus,
-      'dsf' || 'dff' => Codec.dsf,
+      // M4A/MP4 containers are overwhelmingly AAC until Symphonia probes ALAC.
+      'aac' || 'm4a' || 'mp4' => Codec.aac,
+      'ogg' => Codec.ogg,
+      'opus' => Codec.opus,
+      'dsf' => Codec.dsf,
+      'dff' => Codec.dff,
+      'ape' => Codec.ape,
+      'wv' => Codec.wavpack,
       _ => Codec.flac,
     };
   }
 
-  static Codec _codecFor(String name) => codecFor(name);
+  static Codec _codecFor(String name, {String? probedCodec}) =>
+      codecFor(name, probedCodec: probedCodec);
 
   /// Converts an indexed SQLite track row from Rust into a model [Track].
   static Track trackFromRow(rust_db.CloudTrackRow r) => _mapTrack(
@@ -839,6 +867,7 @@ class CloudLibrary {
         replayGainAlbumGain: r.replayGainAlbumGain,
         replayGainTrackPeak: r.replayGainTrackPeak,
         replayGainAlbumPeak: r.replayGainAlbumPeak,
+        probedCodec: r.codec,
       );
 
   Track _toTrack(rust.CloudTrack r) => _mapTrack(
@@ -864,6 +893,7 @@ class CloudLibrary {
         replayGainAlbumGain: r.replayGainAlbumGain,
         replayGainTrackPeak: r.replayGainTrackPeak,
         replayGainAlbumPeak: r.replayGainAlbumPeak,
+        probedCodec: r.codec,
       );
 
   static Track _mapTrack({
@@ -889,6 +919,7 @@ class CloudLibrary {
     required double? replayGainAlbumGain,
     required double? replayGainTrackPeak,
     required double? replayGainAlbumPeak,
+    String probedCodec = '',
   }) {
     final resolvedTitle = title.isNotEmpty
         ? title
@@ -910,7 +941,7 @@ class CloudLibrary {
       // Before the tag pass the stream info is unknown; the UI shows these as
       // pending rather than printing a confident 0/0.
       format: AudioFormat(
-        codec: _codecFor(name),
+        codec: _codecFor(name, probedCodec: probedCodec),
         bitDepth: bitsPerSample == 0 ? 16 : bitsPerSample,
         sampleRate: sampleRate == 0 ? 44100 : sampleRate,
         channels: channels == 0 ? 2 : channels,

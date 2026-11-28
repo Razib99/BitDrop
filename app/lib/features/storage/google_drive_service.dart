@@ -268,22 +268,43 @@ class GoogleDriveService {
     }
   }
 
+  Future<String?>? _inFlightToken;
+  Future<String?>? _inFlightForceRefreshToken;
+
   /// A currently-valid OAuth access token, or null if signed out.
   ///
-  /// Access tokens last about an hour, so this is fetched per track rather
-  /// than cached: a long listening session would otherwise hand the engine a
-  /// token that expires mid-album. A silent re-auth is attempted first, which
-  /// also covers the roughly weekly re-consent that Google's testing mode
-  /// forces.
-  Future<String?> freshAccessToken({bool forceRefresh = false}) async {
-    if (!isPlatformSupported) return null;
+  /// Uses single-flight deduplication and a 10-second timeout so concurrent
+  /// Rust range readers encountering a 401 share one OAuth refresh instead of
+  /// stampeding Google Sign-In.
+  Future<String?> freshAccessToken({bool forceRefresh = false}) {
+    if (!isPlatformSupported) return Future.value(null);
+    if (forceRefresh) {
+      return _inFlightForceRefreshToken ??=
+          _fetchAccessToken(forceRefresh: true).whenComplete(() {
+        _inFlightForceRefreshToken = null;
+      });
+    }
+    return _inFlightToken ??=
+        _fetchAccessToken(forceRefresh: false).whenComplete(() {
+      _inFlightToken = null;
+    });
+  }
+
+  Future<String?> _fetchAccessToken({required bool forceRefresh}) async {
     try {
       var account = _googleSignIn.currentUser;
-      account ??= await _googleSignIn.signInSilently();
+      account ??= await _googleSignIn
+          .signInSilently()
+          .timeout(const Duration(seconds: 10), onTimeout: () => null);
       if (account == null) return null;
 
-      if (forceRefresh) await account.clearAuthCache();
-      final auth = await account.authentication;
+      if (forceRefresh) {
+        await account
+            .clearAuthCache()
+            .timeout(const Duration(seconds: 10), onTimeout: () {});
+      }
+      final auth = await account.authentication
+          .timeout(const Duration(seconds: 10));
       return auth.accessToken;
     } catch (e) {
       debugPrint('[drive] could not obtain access token: $e');

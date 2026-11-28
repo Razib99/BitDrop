@@ -139,6 +139,7 @@ pub struct CloudTrack {
     pub replay_gain_album_gain: Option<f64>,
     pub replay_gain_track_peak: Option<f64>,
     pub replay_gain_album_peak: Option<f64>,
+    pub codec: String,
 }
 
 impl From<CloudTrackRow> for CloudTrack {
@@ -166,6 +167,7 @@ impl From<CloudTrackRow> for CloudTrack {
             replay_gain_album_gain: r.replay_gain_album_gain,
             replay_gain_track_peak: r.replay_gain_track_peak,
             replay_gain_album_peak: r.replay_gain_album_peak,
+            codec: r.codec,
         }
     }
 }
@@ -436,7 +438,8 @@ pub fn cloud_library_read_tags(
     let meta_opts: MetadataOptions = Default::default();
     let fmt_opts: FormatOptions = Default::default();
 
-    let probed = match symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts) {
+    let mut probed = match symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts)
+    {
         Ok(p) => p,
         Err(_) => {
             let _ = with_db(|db| {
@@ -447,15 +450,14 @@ pub fn cloud_library_read_tags(
         }
     };
 
-    let mut format = probed.format;
-
     // Extract metadata
     let mut duration_ms = 0;
     let mut sample_rate = 44100;
     let mut channels = 2;
     let mut bits_per_sample = 16;
+    let mut codec = String::new();
 
-    if let Some(track) = format.default_track() {
+    if let Some(track) = probed.format.default_track() {
         if let Some(tb) = track.codec_params.time_base {
             if let Some(n_frames) = track.codec_params.n_frames {
                 let time = tb.calc_time(n_frames);
@@ -469,31 +471,48 @@ pub fn cloud_library_read_tags(
             .map(|c| c.count() as u8)
             .unwrap_or(2);
         bits_per_sample = track.codec_params.bits_per_sample.unwrap_or(16) as u8;
+        codec =
+            crate::cloud::local_scanner::codec_label_from_symphonia(track.codec_params.codec, "");
     }
 
     // Embedded artwork rides along in the metadata the probe already read,
     // so extracting it here costs no extra byte-range fetch. Written to disk
     // once and referenced by path, because handing image bytes across the FFI
     // boundary on every list rebuild would be wasteful.
-    if let Some(metadata) = format.metadata().current() {
-        if let Some(visual) = metadata.visuals().first() {
-            let art_dir = PathBuf::from(
-                CACHE_DIR
-                    .lock()
-                    .map_err(|e| e.to_string())?
-                    .clone()
-                    .unwrap_or_default(),
-            )
-            .join("artwork");
-            if std::fs::create_dir_all(&art_dir).is_ok() {
-                let art_path = art_dir.join(format!("{}.img", file_id));
-                if std::fs::write(&art_path, &visual.data).is_ok() {
-                    let _ = with_db(|db| {
-                        db.set_artwork(&file_id, &art_path.to_string_lossy())?;
-                        Ok(())
-                    });
+    let mut saved_art = false;
+    let mut try_save_visual =
+        |metadata: &symphonia::core::meta::MetadataRevision| -> Result<(), String> {
+            if saved_art {
+                return Ok(());
+            }
+            if let Some(visual) = metadata.visuals().first() {
+                let art_dir = PathBuf::from(
+                    CACHE_DIR
+                        .lock()
+                        .map_err(|e| e.to_string())?
+                        .clone()
+                        .unwrap_or_default(),
+                )
+                .join("artwork");
+                if std::fs::create_dir_all(&art_dir).is_ok() {
+                    let art_path = art_dir.join(format!("{}.img", file_id));
+                    if std::fs::write(&art_path, &visual.data).is_ok() {
+                        let _ = with_db(|db| {
+                            db.set_artwork(&file_id, &art_path.to_string_lossy())?;
+                            Ok(())
+                        });
+                        saved_art = true;
+                    }
                 }
             }
+            Ok(())
+        };
+    if let Some(metadata) = probed.format.metadata().current() {
+        try_save_visual(metadata)?;
+    }
+    if let Some(probed_meta) = probed.metadata.get() {
+        if let Some(metadata) = probed_meta.current() {
+            try_save_visual(metadata)?;
         }
     }
 
@@ -509,7 +528,7 @@ pub fn cloud_library_read_tags(
     let mut embedded_lyrics: Option<String> = None;
     let mut rg = crate::cloud::tag_parser::ReplayGainTags::default();
 
-    if let Some(metadata) = format.metadata().current() {
+    let mut ingest_tags = |metadata: &symphonia::core::meta::MetadataRevision| {
         for tag in metadata.tags() {
             rg.ingest_tag(&tag.key, &tag.value.to_string());
             if tag.key.eq_ignore_ascii_case("lyrics")
@@ -518,24 +537,28 @@ pub fn cloud_library_read_tags(
                 || tag.key.eq_ignore_ascii_case("sylt")
             {
                 let val = tag.value.to_string();
-                if !val.trim().is_empty() {
+                if !val.trim().is_empty() && embedded_lyrics.is_none() {
                     embedded_lyrics = Some(val);
                 }
             }
             match tag.std_key {
-                Some(symphonia::core::meta::StandardTagKey::TrackTitle) => {
+                Some(symphonia::core::meta::StandardTagKey::TrackTitle) if title.is_empty() => {
                     title = tag.value.to_string()
                 }
-                Some(symphonia::core::meta::StandardTagKey::Artist) => {
+                Some(symphonia::core::meta::StandardTagKey::Artist) if artist.is_empty() => {
                     artist = tag.value.to_string()
                 }
-                Some(symphonia::core::meta::StandardTagKey::Album) => album = tag.value.to_string(),
-                Some(symphonia::core::meta::StandardTagKey::AlbumArtist) => {
+                Some(symphonia::core::meta::StandardTagKey::Album) if album.is_empty() => {
+                    album = tag.value.to_string()
+                }
+                Some(symphonia::core::meta::StandardTagKey::AlbumArtist)
+                    if album_artist.is_empty() =>
+                {
                     album_artist = tag.value.to_string()
                 }
                 Some(symphonia::core::meta::StandardTagKey::Lyrics) => {
                     let val = tag.value.to_string();
-                    if !val.trim().is_empty() {
+                    if !val.trim().is_empty() && embedded_lyrics.is_none() {
                         embedded_lyrics = Some(val);
                     }
                 }
@@ -554,17 +577,29 @@ pub fn cloud_library_read_tags(
                         }
                     }
                 }
-                Some(symphonia::core::meta::StandardTagKey::Date) => {
+                Some(symphonia::core::meta::StandardTagKey::Date) if year.is_none() => {
                     year = tag.value.to_string().parse().ok()
                 }
-                Some(symphonia::core::meta::StandardTagKey::TrackNumber) => {
+                Some(symphonia::core::meta::StandardTagKey::TrackNumber)
+                    if track_number.is_none() =>
+                {
                     track_number = tag.value.to_string().parse().ok()
                 }
-                Some(symphonia::core::meta::StandardTagKey::DiscNumber) => {
+                Some(symphonia::core::meta::StandardTagKey::DiscNumber)
+                    if disc_number.is_none() =>
+                {
                     disc_number = tag.value.to_string().parse().ok()
                 }
                 _ => {}
             }
+        }
+    };
+    if let Some(metadata) = probed.format.metadata().current() {
+        ingest_tags(metadata);
+    }
+    if let Some(probed_meta) = probed.metadata.get() {
+        if let Some(metadata) = probed_meta.current() {
+            ingest_tags(metadata);
         }
     }
 
@@ -576,6 +611,7 @@ pub fn cloud_library_read_tags(
                 duration_ms = ?, sample_rate = ?, channels = ?, bits_per_sample = ?,
                 replay_gain_track_gain = ?, replay_gain_album_gain = ?,
                 replay_gain_track_peak = ?, replay_gain_album_peak = ?,
+                codec = COALESCE(NULLIF(?, ''), tracks.codec),
                 tags_read = 1
              WHERE file_id = ?",
             rusqlite::params![
@@ -595,6 +631,7 @@ pub fn cloud_library_read_tags(
                 rg.album_gain_db,
                 rg.track_peak,
                 rg.album_peak,
+                codec,
                 file_id
             ],
         )?;
@@ -1260,6 +1297,7 @@ pub fn cloud_library_scan_tags_batch(
                                 replay_gain_album_gain: rg.album_gain_db,
                                 replay_gain_track_peak: rg.track_peak,
                                 replay_gain_album_peak: rg.album_peak,
+                                codec: "FLAC".to_string(),
                             };
                         }
                     }
@@ -1274,22 +1312,23 @@ pub fn cloud_library_scan_tags_batch(
                     let mss =
                         MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
                     let mut hint = Hint::new();
-                    if let Some(ext) = name.rsplit('.').next() {
-                        hint.with_extension(ext);
+                    let ext_str = name.rsplit('.').next().unwrap_or("");
+                    if !ext_str.is_empty() {
+                        hint.with_extension(ext_str);
                     }
                     let meta_opts: MetadataOptions = Default::default();
                     let fmt_opts: FormatOptions = Default::default();
 
-                    if let Ok(probed) =
+                    if let Ok(mut probed) =
                         symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts)
                     {
-                        let mut format = probed.format;
                         let mut duration_ms = 0;
                         let mut sample_rate = 44100;
                         let mut channels = 2;
                         let mut bits_per_sample = 16;
+                        let mut codec = String::new();
 
-                        if let Some(track) = format.default_track() {
+                        if let Some(track) = probed.format.default_track() {
                             if let Some(tb) = track.codec_params.time_base {
                                 if let Some(n_frames) = track.codec_params.n_frames {
                                     let time = tb.calc_time(n_frames);
@@ -1304,6 +1343,10 @@ pub fn cloud_library_scan_tags_batch(
                                 .map(|c| c.count() as u32)
                                 .unwrap_or(2);
                             bits_per_sample = track.codec_params.bits_per_sample.unwrap_or(16);
+                            codec = crate::cloud::local_scanner::codec_label_from_symphonia(
+                                track.codec_params.codec,
+                                ext_str,
+                            );
                         }
 
                         let mut title = fallback_title.clone();
@@ -1315,49 +1358,82 @@ pub fn cloud_library_scan_tags_batch(
                         let mut track_number = 0;
                         let mut disc_number = 1;
                         let mut rg = crate::cloud::tag_parser::ReplayGainTags::default();
+                        let mut visual_bytes = None;
 
-                        if let Some(metadata) = format.metadata().current() {
-                            for tag in metadata.tags() {
-                                rg.ingest_tag(&tag.key, &tag.value.to_string());
-                                match tag.std_key {
-                                    Some(symphonia::core::meta::StandardTagKey::TrackTitle) => {
-                                        title = tag.value.to_string()
+                        let mut ingest_batch_meta =
+                            |metadata: &symphonia::core::meta::MetadataRevision| {
+                                if visual_bytes.is_none() {
+                                    if let Some(visual) = metadata.visuals().first() {
+                                        visual_bytes = Some(visual.data.to_vec());
                                     }
-                                    Some(symphonia::core::meta::StandardTagKey::Artist) => {
-                                        artist = tag.value.to_string()
-                                    }
-                                    Some(symphonia::core::meta::StandardTagKey::Album) => {
-                                        album = tag.value.to_string()
-                                    }
-                                    Some(symphonia::core::meta::StandardTagKey::AlbumArtist) => {
-                                        album_artist = tag.value.to_string()
-                                    }
-                                    Some(symphonia::core::meta::StandardTagKey::Genre) => {
-                                        let val = tag.value.to_string();
-                                        let parsed =
-                                            crate::cloud::tag_parser::parse_multi_value_tag(&val);
-                                        for p in parsed {
-                                            if !genre.split(';').any(|existing| {
-                                                existing.trim().eq_ignore_ascii_case(&p)
-                                            }) {
-                                                if !genre.is_empty() {
-                                                    genre.push_str("; ");
+                                }
+                                for tag in metadata.tags() {
+                                    rg.ingest_tag(&tag.key, &tag.value.to_string());
+                                    match tag.std_key {
+                                        Some(symphonia::core::meta::StandardTagKey::TrackTitle)
+                                            if title == fallback_title || title.is_empty() =>
+                                        {
+                                            title = tag.value.to_string()
+                                        }
+                                        Some(symphonia::core::meta::StandardTagKey::Artist)
+                                            if artist.is_empty() =>
+                                        {
+                                            artist = tag.value.to_string()
+                                        }
+                                        Some(symphonia::core::meta::StandardTagKey::Album)
+                                            if album.is_empty() =>
+                                        {
+                                            album = tag.value.to_string()
+                                        }
+                                        Some(
+                                            symphonia::core::meta::StandardTagKey::AlbumArtist,
+                                        ) if album_artist.is_empty() => {
+                                            album_artist = tag.value.to_string()
+                                        }
+                                        Some(symphonia::core::meta::StandardTagKey::Genre) => {
+                                            let val = tag.value.to_string();
+                                            let parsed =
+                                                crate::cloud::tag_parser::parse_multi_value_tag(
+                                                    &val,
+                                                );
+                                            for p in parsed {
+                                                if !genre.split(';').any(|existing| {
+                                                    existing.trim().eq_ignore_ascii_case(&p)
+                                                }) {
+                                                    if !genre.is_empty() {
+                                                        genre.push_str("; ");
+                                                    }
+                                                    genre.push_str(&p);
                                                 }
-                                                genre.push_str(&p);
                                             }
                                         }
+                                        Some(symphonia::core::meta::StandardTagKey::Date)
+                                            if year == 0 =>
+                                        {
+                                            year = tag.value.to_string().parse().unwrap_or(0)
+                                        }
+                                        Some(
+                                            symphonia::core::meta::StandardTagKey::TrackNumber,
+                                        ) if track_number == 0 => {
+                                            track_number =
+                                                tag.value.to_string().parse().unwrap_or(0)
+                                        }
+                                        Some(symphonia::core::meta::StandardTagKey::DiscNumber)
+                                            if disc_number == 1 =>
+                                        {
+                                            disc_number = tag.value.to_string().parse().unwrap_or(1)
+                                        }
+                                        _ => {}
                                     }
-                                    Some(symphonia::core::meta::StandardTagKey::Date) => {
-                                        year = tag.value.to_string().parse().unwrap_or(0)
-                                    }
-                                    Some(symphonia::core::meta::StandardTagKey::TrackNumber) => {
-                                        track_number = tag.value.to_string().parse().unwrap_or(0)
-                                    }
-                                    Some(symphonia::core::meta::StandardTagKey::DiscNumber) => {
-                                        disc_number = tag.value.to_string().parse().unwrap_or(1)
-                                    }
-                                    _ => {}
                                 }
+                            };
+
+                        if let Some(metadata) = probed.format.metadata().current() {
+                            ingest_batch_meta(metadata);
+                        }
+                        if let Some(probed_meta) = probed.metadata.get() {
+                            if let Some(metadata) = probed_meta.current() {
+                                ingest_batch_meta(metadata);
                             }
                         }
 
@@ -1382,14 +1458,6 @@ pub fn cloud_library_scan_tags_batch(
 
                         if album_artist.is_empty() {
                             album_artist = artist.clone();
-                        }
-
-                        // Check for visuals in Symphonia metadata
-                        let mut visual_bytes = None;
-                        if let Some(metadata) = format.metadata().current() {
-                            if let Some(visual) = metadata.visuals().first() {
-                                visual_bytes = Some(visual.data.to_vec());
-                            }
                         }
 
                         let album_clean = if album.is_empty() {
@@ -1455,6 +1523,7 @@ pub fn cloud_library_scan_tags_batch(
                             replay_gain_album_gain: rg.album_gain_db,
                             replay_gain_track_peak: rg.track_peak,
                             replay_gain_album_peak: rg.album_peak,
+                            codec,
                         };
                     }
 
@@ -1557,6 +1626,16 @@ pub fn cloud_library_counts() -> Result<ScanCounts, String> {
         let (total, tagged) = db.count()?;
         Ok(ScanCounts { total, tagged })
     })
+}
+
+/// Clears only Google Drive tracks, preserving local device tracks and app KV settings.
+pub fn cloud_library_clear_drive() -> Result<(), String> {
+    with_db_mut(|db| Ok(db.clear_drive_tracks()?))
+}
+
+/// Removes all indexed local tracks belonging to `root_label` without touching Google Drive tracks.
+pub fn cloud_library_remove_local_folder(root_label: String) -> Result<Vec<String>, String> {
+    with_db_mut(|db| Ok(db.remove_local_folder_tracks(root_label.trim())?))
 }
 
 pub fn cloud_library_clear() -> Result<(), String> {

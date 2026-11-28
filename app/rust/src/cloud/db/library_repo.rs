@@ -48,6 +48,7 @@ impl<'a> LibraryRepository<'a> {
             replay_gain_album_gain: r.get::<_, Option<f64>>(19)?,
             replay_gain_track_peak: r.get::<_, Option<f64>>(20)?,
             replay_gain_album_peak: r.get::<_, Option<f64>>(21)?,
+            codec: r.get::<_, Option<String>>(22)?.unwrap_or_default(),
         })
     }
 
@@ -81,16 +82,18 @@ impl<'a> LibraryRepository<'a> {
         let tx = self.conn.unchecked_transaction()?;
         {
             let mut find_stmt = tx.prepare_cached(
-                "SELECT file_id FROM tracks WHERE folder_path = ?1 AND name = ?2 AND file_id != ?3",
+                "SELECT file_id FROM tracks
+                 WHERE source_kind = 'drive' AND folder_path = ?1 AND name = ?2 AND file_id != ?3",
             )?;
             let mut del_stmt = tx.prepare_cached("DELETE FROM tracks WHERE file_id = ?1")?;
             let mut insert_stmt = tx.prepare_cached(
-                "INSERT INTO tracks (file_id, name, folder_path, size_bytes, tags_read)
-                 VALUES (?1, ?2, ?3, ?4, 0)
+                "INSERT INTO tracks (file_id, name, folder_path, size_bytes, tags_read, source_kind)
+                 VALUES (?1, ?2, ?3, ?4, 0, 'drive')
                  ON CONFLICT(file_id) DO UPDATE SET
                     name = excluded.name,
                     folder_path = excluded.folder_path,
                     size_bytes = excluded.size_bytes,
+                    source_kind = 'drive',
                     tags_read = CASE WHEN tracks.size_bytes != excluded.size_bytes THEN 0 ELSE tracks.tags_read END",
             )?;
 
@@ -145,13 +148,15 @@ impl<'a> LibraryRepository<'a> {
                     duration_ms, sample_rate, channels, bits_per_sample,
                     artwork_path, artwork_checked, tags_read,
                     replay_gain_track_gain, replay_gain_album_gain,
-                    replay_gain_track_peak, replay_gain_album_peak
+                    replay_gain_track_peak, replay_gain_album_peak,
+                    source_kind, codec, mtime_secs
                  ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6,
                     ?7, ?8, ?9, ?10, ?11, ?12,
                     ?13, ?14, ?15, ?16,
                     ?17, ?18, 1,
-                    ?19, ?20, ?21, ?22
+                    ?19, ?20, ?21, ?22,
+                    'local', ?23, ?24
                  )
                  ON CONFLICT(file_id) DO UPDATE SET
                     name = excluded.name,
@@ -175,7 +180,10 @@ impl<'a> LibraryRepository<'a> {
                     replay_gain_track_gain = COALESCE(excluded.replay_gain_track_gain, tracks.replay_gain_track_gain),
                     replay_gain_album_gain = COALESCE(excluded.replay_gain_album_gain, tracks.replay_gain_album_gain),
                     replay_gain_track_peak = COALESCE(excluded.replay_gain_track_peak, tracks.replay_gain_track_peak),
-                    replay_gain_album_peak = COALESCE(excluded.replay_gain_album_peak, tracks.replay_gain_album_peak)",
+                    replay_gain_album_peak = COALESCE(excluded.replay_gain_album_peak, tracks.replay_gain_album_peak),
+                    source_kind = 'local',
+                    codec = COALESCE(NULLIF(excluded.codec, ''), tracks.codec),
+                    mtime_secs = excluded.mtime_secs",
             )?;
 
             for item in items {
@@ -228,6 +236,8 @@ impl<'a> LibraryRepository<'a> {
                     &item.replay_gain_album_gain,
                     &item.replay_gain_track_peak,
                     &item.replay_gain_album_peak,
+                    &item.codec,
+                    item.mtime_secs,
                 ])?;
             }
         }
@@ -237,27 +247,29 @@ impl<'a> LibraryRepository<'a> {
         Ok(())
     }
 
-    /// Returns `(file_id -> (size_bytes, folder_path))` for tracks already
-    /// indexed under `root_label`, enabling O(1) incremental scan fast-skip.
+    /// Returns `(file_id -> (size_bytes, mtime_secs, folder_path))` for local tracks
+    /// already indexed under `root_label`, enabling O(1) incremental scan fast-skip
+    /// while still detecting in-place tag edits via `mtime_secs`.
     pub fn get_local_indexed_sizes(
         &self,
         root_label: &str,
-    ) -> Result<std::collections::HashMap<String, (u64, String)>> {
+    ) -> Result<std::collections::HashMap<String, (u64, i64, String)>> {
         let like_pattern = format!("{} / %", root_label);
         let mut map = std::collections::HashMap::new();
         let mut stmt = self.conn.prepare(
-            "SELECT file_id, size_bytes, folder_path FROM tracks
-             WHERE folder_path = ?1 OR folder_path LIKE ?2",
+            "SELECT file_id, size_bytes, mtime_secs, folder_path FROM tracks
+             WHERE source_kind = 'local' AND (folder_path = ?1 OR folder_path LIKE ?2)",
         )?;
         let rows = stmt.query_map(params![root_label, like_pattern], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, i64>(1)? as u64,
-                r.get::<_, String>(2)?,
+                r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                r.get::<_, String>(3)?,
             ))
         })?;
         for row in rows.flatten() {
-            map.insert(row.0, (row.1, row.2));
+            map.insert(row.0, (row.1, row.2, row.3));
         }
         Ok(map)
     }
@@ -272,7 +284,8 @@ impl<'a> LibraryRepository<'a> {
 
         {
             let mut stmt = self.conn.prepare(
-                "SELECT file_id FROM tracks WHERE folder_path = ?1 OR folder_path LIKE ?2",
+                "SELECT file_id FROM tracks
+                 WHERE source_kind = 'local' AND (folder_path = ?1 OR folder_path LIKE ?2)",
             )?;
             let rows =
                 stmt.query_map(params![root_label, like_pattern], |r| r.get::<_, String>(0))?;
@@ -291,7 +304,9 @@ impl<'a> LibraryRepository<'a> {
         let count = missing_ids.len();
         let tx = self.conn.unchecked_transaction()?;
         {
-            let mut del_stmt = tx.prepare_cached("DELETE FROM tracks WHERE file_id = ?1")?;
+            let mut del_stmt = tx.prepare_cached(
+                "DELETE FROM tracks WHERE source_kind = 'local' AND file_id = ?1",
+            )?;
             for id in &missing_ids {
                 del_stmt.execute(params![id])?;
             }
@@ -300,6 +315,50 @@ impl<'a> LibraryRepository<'a> {
 
         self.rebuild_albums_summary()?;
         Ok(count)
+    }
+
+    /// Removes all indexed local tracks belonging to `root_label` without affecting
+    /// Google Drive tracks that may share the same folder name (e.g. `"Music"`).
+    pub fn remove_local_folder_tracks(&mut self, root_label: &str) -> Result<Vec<String>> {
+        let like_pattern = format!("{} / %", root_label);
+        let mut removed_ids = Vec::new();
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT file_id FROM tracks
+                 WHERE source_kind = 'local' AND (folder_path = ?1 OR folder_path LIKE ?2)",
+            )?;
+            let rows =
+                stmt.query_map(params![root_label, like_pattern], |r| r.get::<_, String>(0))?;
+            for id in rows.flatten() {
+                removed_ids.push(id);
+            }
+        }
+
+        if removed_ids.is_empty() {
+            return Ok(removed_ids);
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut del_stmt = tx.prepare_cached(
+                "DELETE FROM tracks WHERE source_kind = 'local' AND file_id = ?1",
+            )?;
+            for id in &removed_ids {
+                del_stmt.execute(params![id])?;
+            }
+        }
+        tx.commit()?;
+
+        self.rebuild_albums_summary()?;
+        Ok(removed_ids)
+    }
+
+    /// Deletes only Google Drive tracks, preserving all local tracks and `app_kv` settings.
+    pub fn clear_drive_tracks(&mut self) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM tracks WHERE source_kind = 'drive'", [])?;
+        self.rebuild_albums_summary()?;
+        Ok(())
     }
 
     /// Batched tag update within a single transaction, updating both `tracks`
@@ -318,7 +377,8 @@ impl<'a> LibraryRepository<'a> {
                     replay_gain_track_gain = ?15,
                     replay_gain_album_gain = ?16,
                     replay_gain_track_peak = ?17,
-                    replay_gain_album_peak = ?18
+                    replay_gain_album_peak = ?18,
+                    codec = COALESCE(NULLIF(?19, ''), tracks.codec)
                  WHERE file_id = ?1",
             )?;
 
@@ -357,6 +417,7 @@ impl<'a> LibraryRepository<'a> {
                     u.replay_gain_album_gain,
                     u.replay_gain_track_peak,
                     u.replay_gain_album_peak,
+                    u.codec,
                 ])?;
 
                 let album_clean = if u.album.is_empty() {
@@ -497,7 +558,7 @@ impl<'a> LibraryRepository<'a> {
                     t.duration_ms, t.sample_rate, t.channels, t.bits_per_sample,
                     t.size_bytes, t.tags_read, t.artwork_path,
                     t.replay_gain_track_gain, t.replay_gain_album_gain,
-                    t.replay_gain_track_peak, t.replay_gain_album_peak
+                    t.replay_gain_track_peak, t.replay_gain_album_peak, t.codec
              FROM tracks_fts f
              JOIN tracks t ON t.rowid = f.rowid
              WHERE tracks_fts MATCH ?1
@@ -543,7 +604,7 @@ impl<'a> LibraryRepository<'a> {
                     duration_ms, sample_rate, channels, bits_per_sample,
                     size_bytes, tags_read, artwork_path,
                     replay_gain_track_gain, replay_gain_album_gain,
-                    replay_gain_track_peak, replay_gain_album_peak
+                    replay_gain_track_peak, replay_gain_album_peak, codec
              FROM tracks
              ORDER BY album, album_artist, disc_number, track_number, title",
         )?;
@@ -560,7 +621,7 @@ impl<'a> LibraryRepository<'a> {
                     duration_ms, sample_rate, channels, bits_per_sample,
                     size_bytes, tags_read, artwork_path,
                     replay_gain_track_gain, replay_gain_album_gain,
-                    replay_gain_track_peak, replay_gain_album_peak
+                    replay_gain_track_peak, replay_gain_album_peak, codec
              FROM tracks WHERE file_id = ?1",
         )?;
         let mut rows = stmt.query_map(params![file_id], Self::row_to_cloud_track)?;
@@ -624,7 +685,7 @@ impl<'a> LibraryRepository<'a> {
                         t.duration_ms, t.sample_rate, t.channels, t.bits_per_sample,
                         t.size_bytes, t.tags_read, t.artwork_path,
                         t.replay_gain_track_gain, t.replay_gain_album_gain,
-                        t.replay_gain_track_peak, t.replay_gain_album_peak
+                        t.replay_gain_track_peak, t.replay_gain_album_peak, t.codec
                  FROM tracks t
                  LEFT JOIN track_genres tg ON t.rowid = tg.track_id
                  LEFT JOIN genres g ON tg.genre_id = g.id
@@ -638,7 +699,7 @@ impl<'a> LibraryRepository<'a> {
                         t.duration_ms, t.sample_rate, t.channels, t.bits_per_sample,
                         t.size_bytes, t.tags_read, t.artwork_path,
                         t.replay_gain_track_gain, t.replay_gain_album_gain,
-                        t.replay_gain_track_peak, t.replay_gain_album_peak
+                        t.replay_gain_track_peak, t.replay_gain_album_peak, t.codec
                  FROM tracks t
                  JOIN track_genres tg ON t.rowid = tg.track_id
                  JOIN genres g ON tg.genre_id = g.id
@@ -787,7 +848,7 @@ impl<'a> LibraryRepository<'a> {
                             duration_ms, sample_rate, channels, bits_per_sample,
                             size_bytes, tags_read, artwork_path,
                             replay_gain_track_gain, replay_gain_album_gain,
-                            replay_gain_track_peak, replay_gain_album_peak
+                            replay_gain_track_peak, replay_gain_album_peak, codec
                      FROM tracks
                      ORDER BY folder_path, album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
                 )?
@@ -798,7 +859,7 @@ impl<'a> LibraryRepository<'a> {
                             duration_ms, sample_rate, channels, bits_per_sample,
                             size_bytes, tags_read, artwork_path,
                             replay_gain_track_gain, replay_gain_album_gain,
-                            replay_gain_track_peak, replay_gain_album_peak
+                            replay_gain_track_peak, replay_gain_album_peak, codec
                      FROM tracks
                      WHERE folder_path = '' OR folder_path = '/'
                      ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
@@ -813,7 +874,7 @@ impl<'a> LibraryRepository<'a> {
                         duration_ms, sample_rate, channels, bits_per_sample,
                         size_bytes, tags_read, artwork_path,
                         replay_gain_track_gain, replay_gain_album_gain,
-                        replay_gain_track_peak, replay_gain_album_peak
+                        replay_gain_track_peak, replay_gain_album_peak, codec
                  FROM tracks
                  WHERE folder_path = ?1 OR folder_path = ?2 OR folder_path LIKE ?3 OR folder_path LIKE ?4
                  ORDER BY folder_path, album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
@@ -830,7 +891,7 @@ impl<'a> LibraryRepository<'a> {
                         duration_ms, sample_rate, channels, bits_per_sample,
                         size_bytes, tags_read, artwork_path,
                         replay_gain_track_gain, replay_gain_album_gain,
-                        replay_gain_track_peak, replay_gain_album_peak
+                        replay_gain_track_peak, replay_gain_album_peak, codec
                  FROM tracks
                  WHERE folder_path = ?1 OR folder_path = ?2
                  ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE",
@@ -846,11 +907,11 @@ impl<'a> LibraryRepository<'a> {
         rows.collect()
     }
 
-    /// Pending unscanned files.
+    /// Pending unscanned Google Drive files.
     pub fn pending_tag_reads(&self, limit: u32) -> Result<Vec<String>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT file_id FROM tracks WHERE tags_read = 0 LIMIT ?1")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT file_id FROM tracks WHERE source_kind = 'drive' AND tags_read = 0 LIMIT ?1",
+        )?;
         let rows = stmt.query_map(params![limit], |r| r.get::<_, String>(0))?;
         rows.collect()
     }
@@ -903,7 +964,9 @@ impl<'a> LibraryRepository<'a> {
         let mut to_delete = Vec::new();
         if folder_prefixes.is_empty() {
             let mut stmt = tx.prepare(
-                "SELECT file_id FROM tracks WHERE file_id NOT IN (SELECT file_id FROM temp_valid_ids)",
+                "SELECT file_id FROM tracks
+                 WHERE source_kind = 'drive'
+                   AND file_id NOT IN (SELECT file_id FROM temp_valid_ids)",
             )?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
             for id in rows.flatten() {
@@ -913,7 +976,8 @@ impl<'a> LibraryRepository<'a> {
             for prefix in folder_prefixes {
                 let mut stmt = tx.prepare(
                     "SELECT file_id FROM tracks
-                     WHERE (folder_path = ?1 OR folder_path LIKE ?2)
+                     WHERE source_kind = 'drive'
+                       AND (folder_path = ?1 OR folder_path LIKE ?2)
                        AND file_id NOT IN (SELECT file_id FROM temp_valid_ids)",
                 )?;
                 let like_pattern = format!("{} / %", prefix);
@@ -929,7 +993,9 @@ impl<'a> LibraryRepository<'a> {
         to_delete.dedup();
 
         {
-            let mut del_stmt = tx.prepare_cached("DELETE FROM tracks WHERE file_id = ?1")?;
+            let mut del_stmt = tx.prepare_cached(
+                "DELETE FROM tracks WHERE source_kind = 'drive' AND file_id = ?1",
+            )?;
             for id in &to_delete {
                 del_stmt.execute(params![id])?;
             }
@@ -1594,6 +1660,7 @@ mod tests {
                 replay_gain_album_gain: Some(-7.2),
                 replay_gain_track_peak: Some(0.988),
                 replay_gain_album_peak: Some(0.999),
+                ..Default::default()
             },
             LocalTrackInfo {
                 path: "/music/t2.flac".into(),

@@ -302,6 +302,7 @@ final albumSortProvider = StateProvider<AlbumSort>((ref) => AlbumSort.title);
 final albumSortDescProvider = StateProvider<bool>((ref) => false);
 final libraryGridViewProvider = StateProvider<bool>((ref) => true);
 final trackSortProvider = StateProvider<TrackSort>((ref) => TrackSort.title);
+final trackSortDescProvider = StateProvider<bool>((ref) => false);
 
 /// Multi-select state for library long-press.
 final selectionProvider = StateProvider<Set<String>>((ref) => const {});

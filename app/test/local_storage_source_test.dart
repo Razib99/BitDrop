@@ -94,6 +94,7 @@ void main() {
         sizeBytes: BigInt.from(65000000),
         artworkPath: '/home/user/cache/artwork.jpg',
         tagsRead: true,
+        codec: 'FLAC',
       );
 
       final track = CloudLibrary.trackFromRow(row);
@@ -124,13 +125,14 @@ void main() {
         sizeBytes: BigInt.from(30000000),
         artworkPath: '',
         tagsRead: true,
+        codec: 'FLAC',
       );
 
       final track = CloudLibrary.trackFromRow(row);
       expect(track.availability, Availability.cloudOnly);
     });
 
-    test('DSF and DFF audio files map to Codec.dsf', () {
+    test('DSF files map to Codec.dsf and DFF files map to unsupported Codec.dff', () {
       final row = rust_db.CloudTrackRow(
         fileId: '/storage/DSD/Track01.dsf',
         name: 'Track01.dsf',
@@ -150,13 +152,23 @@ void main() {
         sizeBytes: BigInt.from(150000000),
         artworkPath: '',
         tagsRead: true,
+        codec: 'DSD64',
       );
 
       final track = CloudLibrary.trackFromRow(row);
       expect(track.format.codec, Codec.dsf);
+      expect(track.format.codec.isSupported, isTrue);
       expect(track.availability, Availability.cached);
       expect(track.format.sampleRate, 2822400);
       expect(track.format.bitDepth, 1);
+
+      expect(CloudLibrary.codecFor('Track02.dff'), Codec.dff);
+      expect(Codec.dff.isSupported, isFalse);
+      expect(CloudLibrary.codecFor('Track03.m4a', probedCodec: 'AAC'), Codec.aac);
+      expect(CloudLibrary.codecFor('Track03.m4a', probedCodec: 'ALAC'), Codec.alac);
+      expect(CloudLibrary.codecFor('Track03.m4a'), Codec.aac);
+      expect(CloudLibrary.codecFor('Track04.ogg', probedCodec: 'OGG'), Codec.ogg);
+      expect(Codec.ogg.isSupported, isTrue);
     });
 
     test('empty title falls back to filename without extension', () {
@@ -179,6 +191,7 @@ void main() {
         sizeBytes: BigInt.from(20000000),
         artworkPath: '',
         tagsRead: false,
+        codec: '',
       );
 
       final track = CloudLibrary.trackFromRow(row);

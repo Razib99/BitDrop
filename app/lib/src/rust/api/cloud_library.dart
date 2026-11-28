@@ -86,6 +86,16 @@ Future<List<CloudTrack>> cloudLibraryTracks() =>
 Future<ScanCounts> cloudLibraryCounts() =>
     RustLib.instance.api.crateApiCloudLibraryCloudLibraryCounts();
 
+/// Clears only Google Drive tracks, preserving local device tracks and app KV settings.
+Future<void> cloudLibraryClearDrive() =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryClearDrive();
+
+/// Removes all indexed local tracks belonging to `root_label` without touching Google Drive tracks.
+Future<List<String>> cloudLibraryRemoveLocalFolder(
+        {required String rootLabel}) =>
+    RustLib.instance.api.crateApiCloudLibraryCloudLibraryRemoveLocalFolder(
+        rootLabel: rootLabel);
+
 Future<void> cloudLibraryClear() =>
     RustLib.instance.api.crateApiCloudLibraryCloudLibraryClear();
 
@@ -690,6 +700,7 @@ class CloudTrack {
   final double? replayGainAlbumGain;
   final double? replayGainTrackPeak;
   final double? replayGainAlbumPeak;
+  final String codec;
 
   const CloudTrack({
     required this.fileId,
@@ -714,6 +725,7 @@ class CloudTrack {
     this.replayGainAlbumGain,
     this.replayGainTrackPeak,
     this.replayGainAlbumPeak,
+    required this.codec,
   });
 
   @override
@@ -739,7 +751,8 @@ class CloudTrack {
       replayGainTrackGain.hashCode ^
       replayGainAlbumGain.hashCode ^
       replayGainTrackPeak.hashCode ^
-      replayGainAlbumPeak.hashCode;
+      replayGainAlbumPeak.hashCode ^
+      codec.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -767,7 +780,8 @@ class CloudTrack {
           replayGainTrackGain == other.replayGainTrackGain &&
           replayGainAlbumGain == other.replayGainAlbumGain &&
           replayGainTrackPeak == other.replayGainTrackPeak &&
-          replayGainAlbumPeak == other.replayGainAlbumPeak;
+          replayGainAlbumPeak == other.replayGainAlbumPeak &&
+          codec == other.codec;
 }
 
 /// Parsed lyrics for a track, supporting both synchronized and plain formats.
